@@ -11,32 +11,102 @@ const PRESETS = [
 ] as const;
 
 const CUSTOM_PRESET_VALUE = "custom";
+const DEFAULT_TIME_SEC = 7200;
 
-const COUNTER_SIZE_STORAGE_KEY = "warhammerClock.counterSize";
-const COUNTER_SIZE_DEFAULT = "m";
+type ScoreKind = "primary" | "secondary";
+
+const SCORE_KINDS: { kind: ScoreKind; label: string }[] = [
+  { kind: "primary", label: "Primary" },
+  { kind: "secondary", label: "Secondary" },
+];
+
+/** CP effects given by a unit or a character */
+type AbilityKind = "discount" | "round-cp" | "turn-cp";
+
+const ABILITY_KINDS: Record<AbilityKind, { title: string; hint: string; short: string }> = {
+  discount: { title: "−1 CP", hint: "Stratagem, once per round", short: "−1 CP stratagem" },
+  "round-cp": { title: "+1 CP", hint: "Start of each battle round", short: "+1 CP / round" },
+  "turn-cp": { title: "+1 CP", hint: "Start of my turn", short: "+1 CP / my turn" },
+};
+
+type Ability = {
+  id: number;
+  kind: AbilityKind;
+  name: string;
+  /** Its character is gone; a reset brings it back for the next game */
+  lost: boolean;
+  /** Discount only: already used this battle round */
+  spent: boolean;
+};
+
+/** Key kept from the former "Counters" setting so saved choices survive the rename */
+const UI_SIZE_STORAGE_KEY = "warhammerClock.counterSize";
+const UI_SIZE_DEFAULT = "m";
+
+const LAYOUT_STORAGE_KEY = "warhammerClock.layout";
+const LAYOUT_DEFAULT = "rows";
 
 const app = document.querySelector<HTMLDivElement>("#app")!;
 
+/** Always H:MM:SS so the clock keeps the same width when it drops under an hour. */
 function formatTime(totalSeconds: number): string {
   const s = Math.max(0, Math.floor(totalSeconds));
-  if (s >= 3600) {
-    const h = Math.floor(s / 3600);
-    const m = Math.floor((s % 3600) / 60);
-    const sec = s % 60;
-    return `${h}:${String(m).padStart(2, "0")}:${String(sec).padStart(2, "0")}`;
-  }
-  const m = Math.floor(s / 60);
+  const h = Math.floor(s / 3600);
+  const m = Math.floor((s % 3600) / 60);
   const sec = s % 60;
-  return `${String(m).padStart(2, "0")}:${String(sec).padStart(2, "0")}`;
+  return `${h}:${String(m).padStart(2, "0")}:${String(sec).padStart(2, "0")}`;
+}
+
+function scoreCounterHtml(player: Player, corner: "tl" | "bl"): string {
+  const rows = SCORE_KINDS.map(
+    ({ kind, label }) => `
+        <div class="score-box__row">
+          <span class="score-box__kind">${label}</span>
+          <button type="button" class="mini-counter__btn" id="p${player}-${kind}-minus" aria-label="Player ${player} ${kind} minus one">−</button>
+          <span class="mini-counter__val" id="p${player}-${kind}-val">0</span>
+          <button type="button" class="mini-counter__btn" id="p${player}-${kind}-plus" aria-label="Player ${player} ${kind} plus one">+</button>
+        </div>`,
+  ).join("");
+  return `
+      <div class="mini-counter mini-counter--${corner} score-box">
+        <div class="score-box__head">
+          <span class="mini-counter__label">Score</span>
+          <span class="score-box__total" id="p${player}-score-total">0</span>
+        </div>${rows}
+      </div>`;
+}
+
+function cpCornerHtml(player: Player, corner: "tr" | "br"): string {
+  return `
+      <div class="panel-corner panel-corner--${corner}">
+        <div class="mini-counter cp-box">
+          <span class="mini-counter__label">Command points</span>
+          <div class="mini-counter__row">
+            <button type="button" class="mini-counter__btn" id="p${player}-cp-minus" aria-label="Player ${player} command points minus one">−</button>
+            <span class="mini-counter__val" id="p${player}-cp-val">1</span>
+            <button type="button" class="mini-counter__btn" id="p${player}-cp-plus" aria-label="Player ${player} command points plus one">+</button>
+          </div>
+          <span class="cp-toast" id="p${player}-cp-toast" role="status"></span>
+        </div>
+        <div class="abilities" id="p${player}-abilities"></div>
+        <button type="button" class="abilities-btn" id="p${player}-abilities-btn">Abilities</button>
+      </div>`;
 }
 
 app.innerHTML = `
   <header class="toolbar">
     <label class="toolbar-presets">
-      Counters
-      <select id="counter-size" aria-label="Score and command point counter size (Telephone is for vertical phones)">
-        <option value="s">Telephone</option>
-        <option value="m" selected>Medium</option>
+      Layout
+      <select id="layout" aria-label="Screen split between the two players">
+        <option value="rows" selected>Top / bottom</option>
+        <option value="columns">Left / right</option>
+      </select>
+    </label>
+    <label class="toolbar-presets">
+      Interface size
+      <select id="ui-size" aria-label="Size of the counters, dialogs and tooltips">
+        <option value="s">Compact</option>
+        <option value="m" selected>Standard</option>
         <option value="l">Large</option>
         <option value="xl">Extra large</option>
         <option value="uw">Ultra wide</option>
@@ -52,15 +122,19 @@ app.innerHTML = `
     <div id="manual-time-wrap" class="toolbar-manual" hidden>
       <label>
         Player 1 (min)
-        <input id="m1" type="number" min="0" max="999" step="1" value="60" />
+        <input id="m1" type="number" min="0" max="999" step="1" value="${DEFAULT_TIME_SEC / 60}" />
       </label>
       <label>
         Player 2 (min)
-        <input id="m2" type="number" min="0" max="999" step="1" value="60" />
+        <input id="m2" type="number" min="0" max="999" step="1" value="${DEFAULT_TIME_SEC / 60}" />
       </label>
     </div>
+    <label class="toolbar-toggle">
+      <input type="checkbox" id="photo-breaks" />
+      Photo breaks
+    </label>
     <div class="actions">
-      <button type="button" class="btn-secondary" id="btn-reset">Reset</button>
+      <button type="button" class="btn-ghost" id="btn-reset">Reset</button>
       <button type="button" class="btn-icon" id="btn-fullscreen" title="Enter fullscreen" aria-label="Enter fullscreen">
         <span class="fullscreen-icon fullscreen-icon--enter">
           <svg width="20" height="20" viewBox="0 0 24 24" fill="currentColor" aria-hidden="true">
@@ -77,68 +151,28 @@ app.innerHTML = `
   </header>
   <div class="board">
     <section class="panel panel--a" id="panel-1" data-player="1" tabindex="0" aria-label="Player 1 timer">
-      <div class="mini-counter mini-counter--tl">
-        <span class="mini-counter__label">Score</span>
-        <div class="mini-counter__row">
-          <button type="button" class="mini-counter__btn" id="p1-score-minus" aria-label="Player 1 score minus one">−</button>
-          <span class="mini-counter__val" id="p1-score-val">0</span>
-          <button type="button" class="mini-counter__btn" id="p1-score-plus" aria-label="Player 1 score plus one">+</button>
-        </div>
+      ${scoreCounterHtml(1, "tl")}
+      ${cpCornerHtml(1, "tr")}
+      <div class="panel-head">
+        <span class="panel-label">Player 1</span>
+        <span class="panel-turn">Player turn</span>
       </div>
-      <div class="panel-corner panel-corner--tr">
-        <div class="mini-counter">
-          <span class="mini-counter__label">Command points</span>
-          <div class="mini-counter__row">
-            <button type="button" class="mini-counter__btn" id="p1-cp-minus" aria-label="Player 1 command points minus one">−</button>
-            <span class="mini-counter__val" id="p1-cp-val">1</span>
-            <button type="button" class="mini-counter__btn" id="p1-cp-plus" aria-label="Player 1 command points plus one">+</button>
-          </div>
-        </div>
-        <div class="free-cp-stack" id="p1-free-cp-stack">
-          <button type="button" class="free-cp-add" id="p1-free-cp-add" aria-label="Add free command point token for this match">+</button>
-          <button type="button" class="free-cp-token" id="p1-free-cp" hidden aria-label="Free command point token">
-            <span class="free-cp-token__face" aria-hidden="true">
-              <span class="free-cp-token__text">CP</span>
-            </span>
-          </button>
-          <span class="free-cp-caption" id="p1-free-cp-caption">Add free CP for this match</span>
-        </div>
-      </div>
-      <span class="panel-label">Player 1</span>
       <span class="time" id="t1">1:00:00</span>
     </section>
-    <div class="turn-tracker" aria-label="Battle round" role="group">
-      <div class="turn-tracker__dots" id="turn-dots"></div>
+    <div class="turn-tracker">
+      <div class="turn-tracker__round" aria-label="Battle round" role="group">
+        <span class="turn-tracker__label" aria-hidden="true">Round</span>
+        <div class="turn-tracker__dots" id="turn-dots"></div>
+      </div>
+      <p class="key-hint" id="key-hint" aria-live="polite"></p>
     </div>
     <section class="panel panel--b" id="panel-2" data-player="2" tabindex="0" aria-label="Player 2 timer">
-      <div class="mini-counter mini-counter--bl">
-        <span class="mini-counter__label">Score</span>
-        <div class="mini-counter__row">
-          <button type="button" class="mini-counter__btn" id="p2-score-minus" aria-label="Player 2 score minus one">−</button>
-          <span class="mini-counter__val" id="p2-score-val">0</span>
-          <button type="button" class="mini-counter__btn" id="p2-score-plus" aria-label="Player 2 score plus one">+</button>
-        </div>
+      ${scoreCounterHtml(2, "bl")}
+      ${cpCornerHtml(2, "br")}
+      <div class="panel-head">
+        <span class="panel-label">Player 2</span>
+        <span class="panel-turn">Player turn</span>
       </div>
-      <div class="panel-corner panel-corner--br">
-        <div class="mini-counter">
-          <span class="mini-counter__label">Command points</span>
-          <div class="mini-counter__row">
-            <button type="button" class="mini-counter__btn" id="p2-cp-minus" aria-label="Player 2 command points minus one">−</button>
-            <span class="mini-counter__val" id="p2-cp-val">1</span>
-            <button type="button" class="mini-counter__btn" id="p2-cp-plus" aria-label="Player 2 command points plus one">+</button>
-          </div>
-        </div>
-        <div class="free-cp-stack" id="p2-free-cp-stack">
-          <button type="button" class="free-cp-add" id="p2-free-cp-add" aria-label="Add free command point token for this match">+</button>
-          <button type="button" class="free-cp-token" id="p2-free-cp" hidden aria-label="Free command point token">
-            <span class="free-cp-token__face" aria-hidden="true">
-              <span class="free-cp-token__text">CP</span>
-            </span>
-          </button>
-          <span class="free-cp-caption" id="p2-free-cp-caption">Add free CP for this match</span>
-        </div>
-      </div>
-      <span class="panel-label">Player 2</span>
       <span class="time" id="t2">1:00:00</span>
     </section>
   </div>
@@ -147,21 +181,63 @@ app.innerHTML = `
       <h2 id="turn-confirm-title"></h2>
       <p class="overlay-msg" id="turn-confirm-msg"></p>
       <div class="overlay-actions">
-        <button type="button" class="btn-primary" id="btn-turn-confirm-ok">Confirm</button>
-        <button type="button" class="btn-secondary" id="btn-turn-confirm-cancel">Cancel</button>
+        <button type="button" class="btn-secondary" id="btn-turn-confirm-cancel">Cancel <kbd>Esc</kbd></button>
+        <button type="button" class="btn-primary" id="btn-turn-confirm-ok">Confirm <kbd>Enter</kbd></button>
       </div>
     </div>
   </div>
   <div class="overlay overlay--result" id="result-overlay" role="dialog" aria-modal="true" aria-labelledby="result-title" aria-hidden="true">
     <div class="overlay-inner">
       <h2 id="result-title"></h2>
-      <p class="overlay-msg overlay-msg--scores" id="result-scores"></p>
-      <button type="button" class="btn-primary" id="btn-result-dismiss">OK</button>
+      <p class="overlay-msg" id="result-msg"></p>
+      <table class="result-table" id="result-table"></table>
+      <div class="overlay-actions">
+        <button type="button" class="btn-primary" id="btn-result-dismiss">OK <kbd>Enter</kbd></button>
+      </div>
+    </div>
+  </div>
+  <div class="overlay overlay--photo" id="photo-overlay" role="dialog" aria-modal="true" aria-labelledby="photo-title" aria-hidden="true">
+    <div class="photo-flash" aria-hidden="true"></div>
+    <div class="overlay-inner">
+      <svg class="photo-icon" viewBox="0 0 96 96" fill="none" stroke="currentColor" stroke-width="2" stroke-linejoin="round" aria-hidden="true">
+        <path d="M4 20V4h16M76 4h16v16M92 76v16H76M20 92H4V76" stroke-linecap="square" />
+        <path d="M24 38h10l4-6h20l4 6h10v30H24z" />
+        <circle cx="48" cy="52" r="9" />
+      </svg>
+      <span class="pause-badge">Clocks paused</span>
+      <h2 id="photo-title">Photo time</h2>
+      <p class="overlay-msg" id="photo-msg"></p>
+      <div class="overlay-actions">
+        <button type="button" class="btn-primary" id="btn-photo-resume">Resume clocks <kbd>Enter</kbd></button>
+      </div>
+    </div>
+  </div>
+  <div class="overlay overlay--abilities" id="abilities-overlay" role="dialog" aria-modal="true" aria-labelledby="abilities-title" aria-hidden="true">
+    <div class="overlay-inner">
+      <h2 id="abilities-title"></h2>
+      <p class="overlay-msg">CP effects of your units. Mark one as lost when its character dies. Abilities give at most 1 CP per battle round.</p>
+      <ul class="ability-list" id="ability-list"></ul>
+      <div class="ability-add">
+        <span class="ability-add__label">Add an ability</span>
+        <input type="text" id="ability-name" maxlength="24" placeholder="Unit or character (optional)" autocomplete="off" />
+        <div class="ability-add__kinds">
+          ${(Object.keys(ABILITY_KINDS) as AbilityKind[])
+            .map(
+              (kind) =>
+                `<button type="button" class="ability-kind" data-kind="${kind}"><span class="ability-kind__title">${ABILITY_KINDS[kind].title}</span><span class="ability-kind__hint">${ABILITY_KINDS[kind].hint}</span></button>`,
+            )
+            .join("")}
+        </div>
+      </div>
+      <div class="overlay-actions">
+        <button type="button" class="btn-primary" id="btn-abilities-close">Done <kbd>Esc</kbd></button>
+      </div>
     </div>
   </div>
 `;
 
-const counterSizeSelect = app.querySelector<HTMLSelectElement>("#counter-size")!;
+const layoutSelect = app.querySelector<HTMLSelectElement>("#layout")!;
+const uiSizeSelect = app.querySelector<HTMLSelectElement>("#ui-size")!;
 const presetTime = app.querySelector<HTMLSelectElement>("#preset-time")!;
 const manualTimeWrap = app.querySelector<HTMLDivElement>("#manual-time-wrap")!;
 const m1 = app.querySelector<HTMLInputElement>("#m1")!;
@@ -174,16 +250,30 @@ const t1 = app.querySelector<HTMLElement>("#t1")!;
 const t2 = app.querySelector<HTMLElement>("#t2")!;
 const board = app.querySelector<HTMLElement>(".board")!;
 const turnDots = app.querySelector<HTMLElement>("#turn-dots")!;
-const freeCpStack1 = app.querySelector<HTMLElement>("#p1-free-cp-stack")!;
-const freeCpStack2 = app.querySelector<HTMLElement>("#p2-free-cp-stack")!;
-const btnFreeCpAdd1 = app.querySelector<HTMLButtonElement>("#p1-free-cp-add")!;
-const btnFreeCpAdd2 = app.querySelector<HTMLButtonElement>("#p2-free-cp-add")!;
-const btnFreeCp1 = app.querySelector<HTMLButtonElement>("#p1-free-cp")!;
-const btnFreeCp2 = app.querySelector<HTMLButtonElement>("#p2-free-cp")!;
-const freeCpCaption1 = app.querySelector<HTMLElement>("#p1-free-cp-caption")!;
-const freeCpCaption2 = app.querySelector<HTMLElement>("#p2-free-cp-caption")!;
-const p1ScoreVal = app.querySelector<HTMLElement>("#p1-score-val")!;
-const p2ScoreVal = app.querySelector<HTMLElement>("#p2-score-val")!;
+const keyHint = app.querySelector<HTMLElement>("#key-hint")!;
+const abilitiesEl: Record<Player, HTMLElement> = {
+  1: app.querySelector<HTMLElement>("#p1-abilities")!,
+  2: app.querySelector<HTMLElement>("#p2-abilities")!,
+};
+const cpToastEl: Record<Player, HTMLElement> = {
+  1: app.querySelector<HTMLElement>("#p1-cp-toast")!,
+  2: app.querySelector<HTMLElement>("#p2-cp-toast")!,
+};
+const abilitiesOverlay = app.querySelector<HTMLElement>("#abilities-overlay")!;
+const abilitiesTitle = app.querySelector<HTMLElement>("#abilities-title")!;
+const abilityList = app.querySelector<HTMLUListElement>("#ability-list")!;
+const abilityNameInput = app.querySelector<HTMLInputElement>("#ability-name")!;
+const btnAbilitiesClose = app.querySelector<HTMLButtonElement>("#btn-abilities-close")!;
+const scoreTotalEl: Record<Player, HTMLElement> = {
+  1: app.querySelector<HTMLElement>("#p1-score-total")!,
+  2: app.querySelector<HTMLElement>("#p2-score-total")!,
+};
+const photoBreaksToggle = app.querySelector<HTMLInputElement>("#photo-breaks")!;
+const photoOverlay = app.querySelector<HTMLElement>("#photo-overlay")!;
+const photoMsg = app.querySelector<HTMLElement>("#photo-msg")!;
+const btnPhotoResume = app.querySelector<HTMLButtonElement>("#btn-photo-resume")!;
+const p1CpVal = app.querySelector<HTMLElement>("#p1-cp-val")!;
+const p2CpVal = app.querySelector<HTMLElement>("#p2-cp-val")!;
 const turnConfirmOverlay = app.querySelector<HTMLElement>("#turn-confirm-overlay")!;
 const turnConfirmTitle = app.querySelector<HTMLElement>("#turn-confirm-title")!;
 const turnConfirmMsg = app.querySelector<HTMLElement>("#turn-confirm-msg")!;
@@ -191,23 +281,28 @@ const btnTurnConfirmOk = app.querySelector<HTMLButtonElement>("#btn-turn-confirm
 const btnTurnConfirmCancel = app.querySelector<HTMLButtonElement>("#btn-turn-confirm-cancel")!;
 const resultOverlay = app.querySelector<HTMLElement>("#result-overlay")!;
 const resultTitle = app.querySelector<HTMLElement>("#result-title")!;
-const resultScores = app.querySelector<HTMLElement>("#result-scores")!;
+const resultMsg = app.querySelector<HTMLElement>("#result-msg")!;
+const resultTable = app.querySelector<HTMLTableElement>("#result-table")!;
 const btnResultDismiss = app.querySelector<HTMLButtonElement>("#btn-result-dismiss")!;
 
-let seconds1 = 3600;
-let seconds2 = 3600;
+let seconds1 = DEFAULT_TIME_SEC;
+let seconds2 = DEFAULT_TIME_SEC;
 let active: Player = 1;
 /** Whose *player turn* it is (battle round). Only Enter / next battle round changes this; Space only switches the chess clock (`active`). */
 let turnPlayer: Player = 1;
 let running = false;
 /** True after Pause mid-match; Space resumes without resetting times from inputs */
 let paused = false;
-let lastTick = 0;
+/** Wall-clock ms (`Date.now()`): advances across sleep/lock unlike `performance.now()` in some browsers */
+let lastTickWallMs = 0;
 let raf = 0;
 /** First rAF after startLoop: align clock, don’t subtract (avoids a visible second jump) */
 let alignFirstTick = false;
 
-const MAX_TICK_ELAPSED_SEC = 0.2;
+/** Cap single catch-up step (clock skew / bugs); real lock gaps can be minutes */
+const WALL_CLOCK_MAX_CATCHUP_SEC = 3600;
+
+let wakeLock: WakeLockSentinel | null = null;
 
 /** Last Space keydown (ms); used for double-tap pause */
 let lastSpaceTime = 0;
@@ -220,27 +315,56 @@ const MAX_GAME_TURN = 5;
 /** Current battle round (1–5). Each round has P1’s turn then P2’s; advancing the round puts P1 on the clock. */
 let currentGameTurn = 1;
 
-let score1 = 0;
-let score2 = 0;
+/** Clocks frozen while players photograph the table between two player turns */
+let photoBreak = false;
 let cp1 = 1;
 let cp2 = 1;
-let scoreByRound1 = Array<number>(MAX_GAME_TURN).fill(0);
-let scoreByRound2 = Array<number>(MAX_GAME_TURN).fill(0);
+/** Points per own player turn (turn 1–5 of that player); totals are always derived from these. */
+let scoreByTurn: Record<Player, Record<ScoreKind, number[]>> = { 1: emptyTurnScores(), 2: emptyTurnScores() };
+
+function emptyTurnScores(): Record<ScoreKind, number[]> {
+  return {
+    primary: Array<number>(MAX_GAME_TURN).fill(0),
+    secondary: Array<number>(MAX_GAME_TURN).fill(0),
+  };
+}
+
+function sum(values: number[]): number {
+  return values.reduce((total, n) => total + n, 0);
+}
+
+function scoreOf(player: Player, kind?: ScoreKind): number {
+  const turns = scoreByTurn[player];
+  return kind ? sum(turns[kind]) : sum(turns.primary) + sum(turns.secondary);
+}
+
+/**
+ * Points count for the scorer's latest own turn: an action started in Player 2's turn 2
+ * that completes during Player 1's turn 3 still scores for Player 2's turn 2.
+ */
+function scoringTurnIdx(player: Player): number {
+  const ownTurn = player === 1 || turnPlayer === 2 ? currentGameTurn : currentGameTurn - 1;
+  return Math.max(0, Math.min(MAX_GAME_TURN - 1, ownTurn - 1));
+}
+
+/** Manual CP added vs removed (± only) per player-turn slot (5 rounds × 2 players = 10). Not the automatic +1/turn. */
+const MAX_PLAYER_TURNS = MAX_GAME_TURN * 2;
+let cpHistoryAdded1 = Array<number>(MAX_PLAYER_TURNS).fill(0);
+let cpHistoryRemoved1 = Array<number>(MAX_PLAYER_TURNS).fill(0);
+let cpHistoryAdded2 = Array<number>(MAX_PLAYER_TURNS).fill(0);
+let cpHistoryRemoved2 = Array<number>(MAX_PLAYER_TURNS).fill(0);
 
 const MAX_PANEL_SCORE = 999;
 const MAX_PANEL_CP = 30;
 
-/** True after the free CP token was used; reset on a new battle round (not on clock switches). */
-/** Click + before Start to include the free CP token for this match (per player). */
-let freeCpPreStartOptIn1 = false;
-let freeCpPreStartOptIn2 = false;
-/** Locked when Start is pressed; if false, that player has no free CP for the whole match. */
-let freeCpInMatch1 = false;
-let freeCpInMatch2 = false;
-let freeCpConsumed1 = false;
-let freeCpConsumed2 = false;
+let abilities: Record<Player, Ability[]> = { 1: [], 2: [] };
+let nextAbilityId = 1;
+/** On top of the Command phase CP, a player gains at most 1 CP per battle round (11th edition). */
+let bonusCpGained: Record<Player, boolean> = { 1: false, 2: false };
+/** Whose abilities panel is open */
+let abilitiesPlayer: Player | null = null;
 
-type TurnConfirmKind = "start-game" | "p1-to-p2" | "next-round" | "finish-game";
+type TurnConfirmKind = "start-game" | "p1-to-p2" | "next-round" | "finish-game" | "reset";
 
 let turnConfirmKind: TurnConfirmKind | null = null;
 
@@ -260,30 +384,59 @@ function hideResultOverlay(): void {
 function openTurnConfirmModal(kind: TurnConfirmKind): void {
   turnConfirmKind = kind;
   if (kind === "start-game") {
-    turnConfirmTitle.textContent = "Start game?";
-    turnConfirmMsg.textContent = "The game is about to start. Press Confirm to launch the first timer.";
+    turnConfirmTitle.textContent = "Start the game?";
+    turnConfirmMsg.textContent = `Player 1's clock starts.${photoBreaksToggle.checked ? " Photo breaks are on." : ""}`;
   } else if (kind === "p1-to-p2") {
-    turnConfirmTitle.textContent = "Pass to Player 2 ?";
-    turnConfirmMsg.textContent =
-      "Player 2 will have the player turn.";
+    turnConfirmTitle.textContent = "End Player 1's turn?";
+    turnConfirmMsg.textContent = "Player 2 takes the player turn. Both players gain 1 CP.";
   } else if (kind === "finish-game") {
-    turnConfirmTitle.textContent = "Finish the game?";
-    turnConfirmMsg.textContent =
-      "This was the last turn of the final battle round. Ready to end the match and compare scores?";
+    turnConfirmTitle.textContent = "End the game?";
+    turnConfirmMsg.textContent = `Battle round ${MAX_GAME_TURN} is over. Scores are compared.`;
+  } else if (kind === "reset") {
+    turnConfirmTitle.textContent = "Reset the match?";
+    turnConfirmMsg.textContent = "Clocks, scores and CP go back to the start.";
   } else {
-    const nextRound = currentGameTurn + 1;
-    turnConfirmTitle.textContent = `Enter battle round ${nextRound} ?`;
-    turnConfirmMsg.textContent = `Start battle round ${nextRound} ?`;
+    turnConfirmTitle.textContent = `Start battle round ${currentGameTurn + 1}?`;
+    turnConfirmMsg.textContent = "Player 1 takes the player turn. Both players gain 1 CP.";
   }
   turnConfirmOverlay.classList.add("is-visible");
   turnConfirmOverlay.setAttribute("aria-hidden", "false");
   btnTurnConfirmOk.focus();
 }
 
-function showResultOverlay(heading: string, scoresBlock?: string): void {
+function renderResultTable(): void {
+  const cells = (primary: number, secondary: number): string =>
+    `<td class="is-group">${primary}</td><td>${secondary}</td>`;
+  const roundRows = Array.from(
+    { length: MAX_GAME_TURN },
+    (_, i) =>
+      `<tr><th scope="row">Turn ${i + 1}</th>${cells(scoreByTurn[1].primary[i], scoreByTurn[1].secondary[i])}${cells(scoreByTurn[2].primary[i], scoreByTurn[2].secondary[i])}</tr>`,
+  ).join("");
+  resultTable.innerHTML = `
+    <thead>
+      <tr>
+        <th rowspan="2"></th>
+        <th scope="colgroup" colspan="2" class="is-group is-p1">Player 1</th>
+        <th scope="colgroup" colspan="2" class="is-group is-p2">Player 2</th>
+      </tr>
+      <tr class="result-table__kinds">
+        <th scope="col" class="is-group">Pri</th><th scope="col">Sec</th>
+        <th scope="col" class="is-group">Pri</th><th scope="col">Sec</th>
+      </tr>
+    </thead>
+    <tbody>${roundRows}</tbody>
+    <tfoot>
+      <tr class="result-table__subtotal"><th scope="row">Subtotal</th>${cells(scoreOf(1, "primary"), scoreOf(1, "secondary"))}${cells(scoreOf(2, "primary"), scoreOf(2, "secondary"))}</tr>
+      <tr class="result-table__total"><th scope="row">Total</th><td colspan="2" class="is-group">${scoreOf(1)}</td><td colspan="2" class="is-group">${scoreOf(2)}</td></tr>
+    </tfoot>
+  `;
+}
+
+function showResultOverlay(heading: string, message: string, winner: Player | null): void {
   resultTitle.textContent = heading;
-  resultScores.textContent =
-    scoresBlock ?? `Player 1 — ${score1} points\nPlayer 2 — ${score2} points`;
+  resultTitle.className = winner ? `is-p${winner}` : "";
+  resultMsg.textContent = message;
+  renderResultTable();
   resultOverlay.classList.add("is-visible");
   resultOverlay.setAttribute("aria-hidden", "false");
   btnResultDismiss.focus();
@@ -298,11 +451,11 @@ function finishGameByScore(): void {
   setInputsEnabled(true);
   setActivePanels();
   updateButtons();
-  let heading: string;
-  if (score1 > score2) heading = "Player 1 wins !";
-  else if (score2 > score1) heading = "Player 2 wins !";
-  else heading = "Draw — tied score";
-  showResultOverlay(heading);
+  const total1 = scoreOf(1);
+  const total2 = scoreOf(2);
+  if (total1 > total2) showResultOverlay("Player 1 wins", "Won on points.", 1);
+  else if (total2 > total1) showResultOverlay("Player 2 wins", "Won on points.", 2);
+  else showResultOverlay("Draw", "Tied on points.", null);
 }
 
 function applyTurnConfirm(): void {
@@ -316,18 +469,44 @@ function applyTurnConfirm(): void {
   if (kind === "p1-to-p2") {
     turnPlayer = 2;
     gainCpBothPlayers();
+    applyAbilityCp(2, ["turn-cp"]);
     if (active !== 2) {
       active = 2;
-      if (running) lastTick = performance.now();
+      if (running) lastTickWallMs = Date.now();
     }
     setActivePanels();
+    if (photoBreaksToggle.checked) startPhotoBreak();
     return;
   }
   if (kind === "finish-game") {
     finishGameByScore();
     return;
   }
+  if (kind === "reset") {
+    reset();
+    return;
+  }
   advanceGameTurn();
+  if (photoBreaksToggle.checked) startPhotoBreak();
+}
+
+function startPhotoBreak(): void {
+  photoBreak = true;
+  stopLoop();
+  app.classList.add("is-photo-break");
+  photoMsg.textContent = `Photograph the table. Player ${turnPlayer}'s clock starts when you resume.`;
+  photoOverlay.classList.add("is-visible");
+  photoOverlay.setAttribute("aria-hidden", "false");
+  btnPhotoResume.focus();
+}
+
+function endPhotoBreak(): void {
+  if (!photoBreak) return;
+  photoBreak = false;
+  app.classList.remove("is-photo-break");
+  photoOverlay.classList.remove("is-visible");
+  photoOverlay.setAttribute("aria-hidden", "true");
+  if (running) startLoop();
 }
 
 function readMinutes(): { a: number; b: number } {
@@ -337,28 +516,52 @@ function readMinutes(): { a: number; b: number } {
   };
 }
 
-const COUNTER_SIZES = new Set(["s", "m", "l", "xl", "uw"]);
+const UI_SIZES = new Set(["s", "m", "l", "xl", "uw"]);
+const LAYOUTS = new Set(["rows", "columns"]);
 
-function applyCounterSize(size: string): void {
-  const v = COUNTER_SIZES.has(size) ? size : COUNTER_SIZE_DEFAULT;
-  app.dataset.counterSize = v;
+/** Set on <html> so the tooltips, appended to <body>, scale too */
+function applyUiSize(size: string): void {
+  const v = UI_SIZES.has(size) ? size : UI_SIZE_DEFAULT;
+  document.documentElement.dataset.uiSize = v;
   try {
-    localStorage.setItem(COUNTER_SIZE_STORAGE_KEY, v);
+    localStorage.setItem(UI_SIZE_STORAGE_KEY, v);
   } catch {
     /* quota / private mode */
   }
 }
 
-function loadCounterSize(): void {
-  let stored = COUNTER_SIZE_DEFAULT;
+function loadUiSize(): void {
+  let stored = UI_SIZE_DEFAULT;
   try {
-    stored = localStorage.getItem(COUNTER_SIZE_STORAGE_KEY) ?? COUNTER_SIZE_DEFAULT;
+    stored = localStorage.getItem(UI_SIZE_STORAGE_KEY) ?? UI_SIZE_DEFAULT;
   } catch {
     /* ignore */
   }
-  if (!COUNTER_SIZES.has(stored)) stored = COUNTER_SIZE_DEFAULT;
-  counterSizeSelect.value = stored;
-  applyCounterSize(stored);
+  if (!UI_SIZES.has(stored)) stored = UI_SIZE_DEFAULT;
+  uiSizeSelect.value = stored;
+  applyUiSize(stored);
+}
+
+function applyLayout(layout: string): void {
+  const v = LAYOUTS.has(layout) ? layout : LAYOUT_DEFAULT;
+  document.documentElement.dataset.layout = v;
+  try {
+    localStorage.setItem(LAYOUT_STORAGE_KEY, v);
+  } catch {
+    /* quota / private mode */
+  }
+}
+
+function loadLayout(): void {
+  let stored = LAYOUT_DEFAULT;
+  try {
+    stored = localStorage.getItem(LAYOUT_STORAGE_KEY) ?? LAYOUT_DEFAULT;
+  } catch {
+    /* ignore */
+  }
+  if (!LAYOUTS.has(stored)) stored = LAYOUT_DEFAULT;
+  layoutSelect.value = stored;
+  applyLayout(stored);
 }
 
 function updateManualInputsVisibility(): void {
@@ -391,15 +594,24 @@ function syncInputsFromState(): void {
   m2.value = String(Math.round(seconds2 / 60));
 }
 
+/** The hour digit is dimmed under an hour, like an unlit segment. */
+function renderTime(el: HTMLElement, totalSeconds: number): void {
+  const [h, m, s] = formatTime(totalSeconds).split(":");
+  el.innerHTML = `<span class="time__h${h === "0" ? " is-zero" : ""}">${h}:</span>${m}:${s}`;
+}
+
 function applyTimesToDisplay(): void {
-  t1.textContent = formatTime(seconds1);
-  t2.textContent = formatTime(seconds2);
+  renderTime(t1, seconds1);
+  renderTime(t2, seconds2);
 }
 
 function setActivePanels(): void {
   if (!running) {
-    panel1.classList.remove("is-active", "is-idle", "is-turn");
-    panel2.classList.remove("is-active", "is-idle", "is-turn");
+    panel1.classList.remove("is-active", "is-idle");
+    panel2.classList.remove("is-active", "is-idle");
+    // Keep showing whose player turn it is while the clocks are paused
+    panel1.classList.toggle("is-turn", paused && turnPlayer === 1);
+    panel2.classList.toggle("is-turn", paused && turnPlayer === 2);
     return;
   }
   const activePanel = active === 1 ? panel1 : panel2;
@@ -416,40 +628,98 @@ function setInputsEnabled(on: boolean): void {
   presetTime.disabled = !on;
   m1.disabled = !on;
   m2.disabled = !on;
+  photoBreaksToggle.disabled = !on;
+}
+
+function renderKeyHint(): void {
+  if (running) {
+    keyHint.innerHTML =
+      "<kbd>Enter</kbd> end turn <span class=\"key-hint__sep\"></span> <kbd>Space</kbd> switch clock <span class=\"key-hint__sep\"></span> <kbd>Space</kbd><kbd>Space</kbd> pause";
+  } else if (paused) {
+    keyHint.innerHTML = "<span class=\"key-hint__status\">Paused</span> <kbd>Space</kbd> resume";
+  } else {
+    keyHint.innerHTML = "<kbd>Enter</kbd> start the game";
+  }
 }
 
 function updateButtons(): void {
   /* Start / pause are keyboard-driven only (Enter / Space / double-space). */
   app.classList.toggle("match-started", running || paused);
+  app.classList.toggle("is-paused", paused && !running);
+  renderKeyHint();
 }
 
-function tick(now: number): void {
+async function tryAcquireWakeLock(): Promise<void> {
+  if (!("wakeLock" in navigator)) return;
+  try {
+    wakeLock = await navigator.wakeLock.request("screen");
+    wakeLock.addEventListener("release", () => {
+      wakeLock = null;
+    });
+  } catch {
+    /* Not visible, denied, or unsupported */
+  }
+}
+
+async function releaseWakeLock(): Promise<void> {
+  try {
+    await wakeLock?.release();
+  } catch {
+    /* already released */
+  }
+  wakeLock = null;
+}
+
+/** Returns true if the match ended (time ran out). */
+function subtractActivePlayerTime(elapsedSec: number): boolean {
+  if (elapsedSec <= 0) return false;
+  if (active === 1) {
+    seconds1 -= elapsedSec;
+    if (seconds1 <= 0) {
+      seconds1 = 0;
+      endGame(2);
+      return true;
+    }
+  } else {
+    seconds2 -= elapsedSec;
+    if (seconds2 <= 0) {
+      seconds2 = 0;
+      endGame(1);
+      return true;
+    }
+  }
+  return false;
+}
+
+/**
+ * After screen lock / sleep, rAF may not run. Apply wall-clock elapsed time so the
+ * timer matches real time when the tab is active again.
+ */
+function applyWallClockCatchUp(): void {
+  if (!running || alignFirstTick || photoBreak) return;
+  const wallNow = Date.now();
+  const rawElapsed = (wallNow - lastTickWallMs) / 1000;
+  if (rawElapsed <= 0) return;
+  lastTickWallMs = wallNow;
+  const elapsed = Math.min(rawElapsed, WALL_CLOCK_MAX_CATCHUP_SEC);
+  if (subtractActivePlayerTime(elapsed)) return;
+  applyTimesToDisplay();
+}
+
+function tick(_now: number): void {
   if (!running) return;
+  const wallNow = Date.now();
   if (alignFirstTick) {
-    lastTick = now;
+    lastTickWallMs = wallNow;
     alignFirstTick = false;
     raf = requestAnimationFrame(tick);
     return;
   }
-  const rawElapsed = (now - lastTick) / 1000;
-  lastTick = now;
-  const elapsed = Math.min(rawElapsed, MAX_TICK_ELAPSED_SEC);
+  const rawElapsed = (wallNow - lastTickWallMs) / 1000;
+  lastTickWallMs = wallNow;
+  const elapsed = Math.min(Math.max(rawElapsed, 0), WALL_CLOCK_MAX_CATCHUP_SEC);
 
-  if (active === 1) {
-    seconds1 -= elapsed;
-    if (seconds1 <= 0) {
-      seconds1 = 0;
-      endGame(2);
-      return;
-    }
-  } else {
-    seconds2 -= elapsed;
-    if (seconds2 <= 0) {
-      seconds2 = 0;
-      endGame(1);
-      return;
-    }
-  }
+  if (subtractActivePlayerTime(elapsed)) return;
 
   applyTimesToDisplay();
   raf = requestAnimationFrame(tick);
@@ -457,7 +727,7 @@ function tick(now: number): void {
 
 function startLoop(): void {
   cancelAnimationFrame(raf);
-  lastTick = performance.now();
+  lastTickWallMs = Date.now();
   alignFirstTick = true;
   raf = requestAnimationFrame(tick);
 }
@@ -472,13 +742,14 @@ function switchTurn(): void {
   if (!running) return;
   active = active === 1 ? 2 : 1;
   setActivePanels();
-  lastTick = performance.now();
+  lastTickWallMs = Date.now();
 }
 
 function endGame(winner: Player): void {
   running = false;
   paused = true;
   lastSpaceTime = 0;
+  void releaseWakeLock();
   stopLoop();
   hideTurnConfirmModal();
   syncInputsFromState();
@@ -488,10 +759,7 @@ function endGame(winner: Player): void {
   applyTimesToDisplay();
   syncPresetSelectFromState();
   const loser: Player = winner === 1 ? 2 : 1;
-  showResultOverlay(
-    "Game over",
-    `Player ${loser} ran out of time.\n\nPlayer ${winner} wins!\n\nPlayer 1 — ${score1} points\nPlayer 2 — ${score2} points`,
-  );
+  showResultOverlay(`Player ${winner} wins`, `Player ${loser} ran out of time.`, winner);
   panel1.classList.toggle("is-flag", seconds1 <= 0);
   panel2.classList.toggle("is-flag", seconds2 <= 0);
 }
@@ -508,18 +776,19 @@ function start(): void {
   turnPlayer = 1;
   lastSpaceTime = 0;
   running = true;
-  freeCpInMatch1 = freeCpPreStartOptIn1;
-  freeCpInMatch2 = freeCpPreStartOptIn2;
-  freeCpConsumed1 = false;
-  freeCpConsumed2 = false;
   cp1 = 1;
   cp2 = 1;
+  cpHistoryAdded1 = Array<number>(MAX_PLAYER_TURNS).fill(0);
+  cpHistoryRemoved1 = Array<number>(MAX_PLAYER_TURNS).fill(0);
+  cpHistoryAdded2 = Array<number>(MAX_PLAYER_TURNS).fill(0);
+  cpHistoryRemoved2 = Array<number>(MAX_PLAYER_TURNS).fill(0);
   renderMiniCounters();
-  renderFreeCpTokens();
+  startRoundAbilities();
   setInputsEnabled(false);
   setActivePanels();
   applyTimesToDisplay();
   updateButtons();
+  void tryAcquireWakeLock();
   startLoop();
 }
 
@@ -527,6 +796,7 @@ function pause(): void {
   running = false;
   paused = true;
   lastSpaceTime = 0;
+  void releaseWakeLock();
   stopLoop();
   syncInputsFromState();
   setInputsEnabled(true);
@@ -538,6 +808,7 @@ function reset(): void {
   running = false;
   paused = false;
   lastSpaceTime = 0;
+  void releaseWakeLock();
   stopLoop();
   hideTurnConfirmModal();
   hideResultOverlay();
@@ -555,28 +826,37 @@ function reset(): void {
   setActivePanels();
   updateButtons();
   renderTurnDots();
-  score1 = 0;
-  score2 = 0;
-  scoreByRound1 = Array<number>(MAX_GAME_TURN).fill(0);
-  scoreByRound2 = Array<number>(MAX_GAME_TURN).fill(0);
+  endPhotoBreak();
+  scoreByTurn = { 1: emptyTurnScores(), 2: emptyTurnScores() };
   cp1 = 1;
   cp2 = 1;
+  cpHistoryAdded1 = Array<number>(MAX_PLAYER_TURNS).fill(0);
+  cpHistoryRemoved1 = Array<number>(MAX_PLAYER_TURNS).fill(0);
+  cpHistoryAdded2 = Array<number>(MAX_PLAYER_TURNS).fill(0);
+  cpHistoryRemoved2 = Array<number>(MAX_PLAYER_TURNS).fill(0);
   renderMiniCounters();
-  freeCpPreStartOptIn1 = false;
-  freeCpPreStartOptIn2 = false;
-  freeCpInMatch1 = false;
-  freeCpInMatch2 = false;
-  freeCpConsumed1 = false;
-  freeCpConsumed2 = false;
-  renderFreeCpTokens();
+  closeAbilities();
+  for (const player of [1, 2] as const) {
+    bonusCpGained[player] = false;
+    for (const ability of abilities[player]) {
+      ability.lost = false;
+      ability.spent = false;
+    }
+    renderAbilities(player);
+  }
 }
 
 function renderMiniCounters(): void {
-  p1ScoreVal.textContent = String(score1);
-  p2ScoreVal.textContent = String(score2);
-  app.querySelector<HTMLElement>("#p1-cp-val")!.textContent = String(cp1);
-  app.querySelector<HTMLElement>("#p2-cp-val")!.textContent = String(cp2);
+  for (const player of [1, 2] as const) {
+    scoreTotalEl[player].textContent = String(scoreOf(player));
+    for (const { kind } of SCORE_KINDS) {
+      app.querySelector<HTMLElement>(`#p${player}-${kind}-val`)!.textContent = String(scoreOf(player, kind));
+    }
+  }
+  p1CpVal.textContent = String(cp1);
+  p2CpVal.textContent = String(cp2);
   updateVisibleScoreTooltip();
+  updateVisibleCpTooltip();
 }
 
 const scoreTooltipEl = document.createElement("div");
@@ -599,7 +879,7 @@ function placeScoreTooltip(target: HTMLElement): void {
 }
 
 function showScoreTooltip(target: HTMLElement): void {
-  const player: Player = target === p1ScoreVal ? 1 : 2;
+  const player: Player = target === scoreTotalEl[1] ? 1 : 2;
   renderScoreTooltipContent(player);
   scoreTooltipEl.hidden = false;
   scoreTooltipEl.classList.add("is-visible");
@@ -620,18 +900,26 @@ function bindScoreTooltip(target: HTMLElement): void {
 }
 
 function renderScoreTooltipContent(player: Player): void {
-  const rounds = player === 1 ? scoreByRound1 : scoreByRound2;
+  const { primary, secondary } = scoreByTurn[player];
   scoreTooltipEl.innerHTML = "";
+  const legend = document.createElement("div");
+  legend.className = "score-tooltip__legend";
+  legend.textContent = "Primary / secondary";
+  scoreTooltipEl.appendChild(legend);
   for (let i = 0; i < MAX_GAME_TURN; i++) {
     const row = document.createElement("div");
     row.className = "score-tooltip__row";
-    const isCurrent = i + 1 === currentGameTurn;
+    const isCurrent = i === scoringTurnIdx(player);
     if (isCurrent) row.classList.add("is-current");
 
+    if (primary[i] === 0 && secondary[i] === 0) row.classList.add("is-empty");
     const label = document.createElement("span");
-    const n = rounds[i];
-    label.textContent = `Round ${i + 1}: ${n} point${n === 1 ? "" : "s"}`;
+    label.textContent = `Turn ${i + 1}`;
     row.appendChild(label);
+    const value = document.createElement("span");
+    value.className = "score-tooltip__value";
+    value.textContent = `${primary[i]} / ${secondary[i]}`;
+    row.appendChild(value);
 
     if (isCurrent) {
       const marker = document.createElement("span");
@@ -646,103 +934,225 @@ function renderScoreTooltipContent(player: Player): void {
 
 function updateVisibleScoreTooltip(): void {
   if (!activeScoreTooltipTarget || scoreTooltipEl.hidden) return;
-  const player: Player = activeScoreTooltipTarget === p1ScoreVal ? 1 : 2;
+  const player: Player = activeScoreTooltipTarget === scoreTotalEl[1] ? 1 : 2;
   renderScoreTooltipContent(player);
   placeScoreTooltip(activeScoreTooltipTarget);
 }
 
-function isFreeCpStackHidden(player: Player): boolean {
-  const inMatch = player === 1 ? freeCpInMatch1 : freeCpInMatch2;
-  const consumed = player === 1 ? freeCpConsumed1 : freeCpConsumed2;
-  if (!running && !paused) return false;
-  return !inMatch || consumed;
+const cpTooltipEl = document.createElement("div");
+cpTooltipEl.className = "score-tooltip";
+cpTooltipEl.hidden = true;
+document.body.appendChild(cpTooltipEl);
+let activeCpTooltipTarget: HTMLElement | null = null;
+
+function placeCpTooltip(target: HTMLElement): void {
+  const PAD = 8;
+  const GAP = 10;
+  const r = target.getBoundingClientRect();
+  const t = cpTooltipEl.getBoundingClientRect();
+  let left = r.left + r.width / 2 - t.width / 2;
+  left = Math.max(PAD, Math.min(left, window.innerWidth - t.width - PAD));
+  let top = r.top - t.height - GAP;
+  if (top < PAD) top = Math.min(window.innerHeight - t.height - PAD, r.bottom + GAP);
+  cpTooltipEl.style.left = `${left}px`;
+  cpTooltipEl.style.top = `${top}px`;
 }
 
-function renderFreeCpTokens(): void {
-  freeCpStack1.classList.toggle("is-hidden", isFreeCpStackHidden(1));
-  freeCpStack2.classList.toggle("is-hidden", isFreeCpStackHidden(2));
-
-  const idleBeforeStart = !running && !paused;
-  const showAdd1 = idleBeforeStart && !freeCpPreStartOptIn1;
-  const showAdd2 = idleBeforeStart && !freeCpPreStartOptIn2;
-  btnFreeCpAdd1.hidden = !showAdd1;
-  btnFreeCp1.hidden = showAdd1;
-  btnFreeCpAdd2.hidden = !showAdd2;
-  btnFreeCp2.hidden = showAdd2;
-
-  const preview1 = idleBeforeStart && freeCpPreStartOptIn1;
-  const preview2 = idleBeforeStart && freeCpPreStartOptIn2;
-  btnFreeCp1.classList.toggle("free-cp-token--prestart", preview1);
-  btnFreeCp2.classList.toggle("free-cp-token--prestart", preview2);
-
-  btnFreeCp1.setAttribute("aria-label", "Free command point token");
-  btnFreeCp2.setAttribute("aria-label", "Free command point token");
-
-  freeCpCaption1.textContent =
-    showAdd1 || preview1 ? "Add free CP for this match" : "Free command point";
-  freeCpCaption2.textContent =
-    showAdd2 || preview2 ? "Add free CP for this match" : "Free command point";
+function showCpTooltip(target: HTMLElement): void {
+  const player: Player = target === p1CpVal ? 1 : 2;
+  renderCpTooltipContent(player);
+  cpTooltipEl.hidden = false;
+  cpTooltipEl.classList.add("is-visible");
+  activeCpTooltipTarget = target;
+  placeCpTooltip(target);
 }
 
-function optInFreeCpBeforeStart(player: Player): void {
-  if (running || paused) return;
-  if (player === 1) freeCpPreStartOptIn1 = true;
-  else freeCpPreStartOptIn2 = true;
-  renderFreeCpTokens();
+function hideCpTooltip(): void {
+  cpTooltipEl.classList.remove("is-visible");
+  cpTooltipEl.hidden = true;
+  activeCpTooltipTarget = null;
 }
 
-function optOutFreeCpBeforeStart(player: Player): void {
-  if (running || paused) return;
-  if (player === 1) freeCpPreStartOptIn1 = false;
-  else freeCpPreStartOptIn2 = false;
-  renderFreeCpTokens();
+function bindCpTooltip(target: HTMLElement): void {
+  target.addEventListener("mouseenter", () => showCpTooltip(target));
+  target.addEventListener("mousemove", () => placeCpTooltip(target));
+  target.addEventListener("mouseleave", hideCpTooltip);
 }
 
-function handleFreeCpTokenClick(player: Player): void {
-  const idleBeforeStart = !running && !paused;
-  const preview =
-    player === 1 ? idleBeforeStart && freeCpPreStartOptIn1 : idleBeforeStart && freeCpPreStartOptIn2;
-  if (preview) {
-    optOutFreeCpBeforeStart(player);
+function formatCpHistoryAddedRemoved(added: number, removed: number): string {
+  return `+${added} / −${removed}`;
+}
+
+function renderCpTooltipContent(player: Player): void {
+  const addedHist = player === 1 ? cpHistoryAdded1 : cpHistoryAdded2;
+  const removedHist = player === 1 ? cpHistoryRemoved1 : cpHistoryRemoved2;
+  cpTooltipEl.innerHTML = "";
+  const legend = document.createElement("div");
+  legend.className = "score-tooltip__legend";
+  legend.textContent = "CP gained / spent by hand";
+  cpTooltipEl.appendChild(legend);
+  const matchActive = running || paused;
+  const curSlot = matchActive ? currentPlayerTurnSlot() : -1;
+  for (let i = 0; i < MAX_PLAYER_TURNS; i++) {
+    const row = document.createElement("div");
+    row.className = "score-tooltip__row";
+    const isCurrent = i === curSlot;
+    if (isCurrent) row.classList.add("is-current");
+
+    const round = Math.floor(i / 2) + 1;
+    const turnOwner: Player = i % 2 === 0 ? 1 : 2;
+    if (addedHist[i] === 0 && removedHist[i] === 0) row.classList.add("is-empty");
+    const label = document.createElement("span");
+    label.textContent = `Round ${round} · P${turnOwner}`;
+    row.appendChild(label);
+    const value = document.createElement("span");
+    value.className = "score-tooltip__value";
+    value.textContent = formatCpHistoryAddedRemoved(addedHist[i], removedHist[i]);
+    row.appendChild(value);
+
+    if (isCurrent) {
+      const marker = document.createElement("span");
+      marker.className = "score-tooltip__current-marker";
+      marker.textContent = "←";
+      marker.setAttribute("aria-hidden", "true");
+      row.appendChild(marker);
+    }
+    cpTooltipEl.appendChild(row);
+  }
+}
+
+function updateVisibleCpTooltip(): void {
+  if (!activeCpTooltipTarget || cpTooltipEl.hidden) return;
+  const player: Player = activeCpTooltipTarget === p1CpVal ? 1 : 2;
+  renderCpTooltipContent(player);
+  placeCpTooltip(activeCpTooltipTarget);
+}
+
+function activeAbilities(player: Player, kind: AbilityKind): Ability[] {
+  return abilities[player].filter((ability) => ability.kind === kind && !ability.lost);
+}
+
+function gainCp(player: Player): void {
+  if (player === 1) cp1 = clampPanelCp(cp1 + 1);
+  else cp2 = clampPanelCp(cp2 + 1);
+  renderMiniCounters();
+}
+
+/** Grants the +1 CP of the abilities triggering now, within the per-round cap. */
+function applyAbilityCp(player: Player, kinds: ("round-cp" | "turn-cp")[]): void {
+  const [source] = kinds.flatMap((kind) => activeAbilities(player, kind));
+  if (!source) return;
+  if (bonusCpGained[player]) {
+    showCpToast(player, "CP cap reached", false);
     return;
   }
-  spendFreeCpToken(player);
+  bonusCpGained[player] = true;
+  gainCp(player);
+  showCpToast(player, source.name ? `+1 CP · ${source.name}` : "+1 CP", true);
+  renderAbilities(player);
+}
+
+/** Start of a battle round: discounts come back, the CP cap resets, then CP abilities trigger. */
+function startRoundAbilities(): void {
+  for (const player of [1, 2] as const) {
+    bonusCpGained[player] = false;
+    for (const ability of abilities[player]) ability.spent = false;
+  }
+  // A new round is also the start of Player 1's turn
+  applyAbilityCp(1, ["round-cp", "turn-cp"]);
+  applyAbilityCp(2, ["round-cp"]);
+  renderAbilities(1);
+  renderAbilities(2);
+}
+
+const CP_TOAST_MS = 3500;
+const cpToastTimers: Record<Player, number> = { 1: 0, 2: 0 };
+
+function showCpToast(player: Player, text: string, gained: boolean): void {
+  const toast = cpToastEl[player];
+  toast.textContent = text;
+  toast.classList.toggle("is-capped", !gained);
+  toast.classList.add("is-visible");
+  window.clearTimeout(cpToastTimers[player]);
+  cpToastTimers[player] = window.setTimeout(() => toast.classList.remove("is-visible"), CP_TOAST_MS);
+}
+
+const CP_COIN_SVG = `
+  <svg class="cp-coin__hex" viewBox="0 0 64 64" aria-hidden="true">
+    <polygon class="cp-coin__outer" points="32,2 58,17 58,47 32,62 6,47 6,17" />
+    <polygon class="cp-coin__inner" points="32,9 52,20.5 52,43.5 32,55 12,43.5 12,20.5" />
+    <path class="cp-coin__ticks" d="M32 2v5M32 57v5M6 17l4.3 2.5M58 17l-4.3 2.5M6 47l4.3-2.5M58 47l-4.3-2.5" />
+  </svg>`;
+
+function cpCoinEl(ability: Ability): HTMLButtonElement {
+  const coin = document.createElement("button");
+  coin.type = "button";
+  coin.className = "cp-coin";
+  coin.classList.toggle("is-spent", ability.spent);
+  coin.dataset.abilityId = String(ability.id);
+  const owner = ability.name || "Stratagem";
+  coin.setAttribute(
+    "aria-label",
+    ability.spent ? `${owner}: −1 CP already used this battle round` : `${owner}: use −1 CP on a stratagem`,
+  );
+  coin.innerHTML = `
+    <span class="cp-coin__face" aria-hidden="true">${CP_COIN_SVG}
+      <span class="cp-coin__value">−1</span>
+      <span class="cp-coin__unit">CP</span>
+    </span>
+    <span class="cp-coin__caption" aria-hidden="true"></span>`;
+  coin.querySelector(".cp-coin__caption")!.textContent = ability.spent ? "Next round" : owner;
+  return coin;
+}
+
+function renderAbilities(player: Player): void {
+  const coins = document.createElement("div");
+  coins.className = "abilities__coins";
+  const chips = document.createElement("div");
+  chips.className = "abilities__chips";
+  for (const ability of abilities[player]) {
+    if (ability.lost) continue;
+    if (ability.kind === "discount") {
+      coins.appendChild(cpCoinEl(ability));
+    } else {
+      const chip = document.createElement("span");
+      chip.className = "ability-chip";
+      const short = ABILITY_KINDS[ability.kind].short;
+      chip.textContent = ability.name ? `${short} · ${ability.name}` : short;
+      chips.appendChild(chip);
+    }
+  }
+  abilitiesEl[player].replaceChildren(...[coins, chips].filter((group) => group.childElementCount > 0));
 }
 
 function prefersReducedMotion(): boolean {
   return window.matchMedia("(prefers-reduced-motion: reduce)").matches;
 }
 
-const FREE_CP_ANIM_MS = 900;
+const CP_COIN_ANIM_MS = 900;
 
-function spendFreeCpToken(player: Player): void {
+function spendCpCoin(player: Player, coin: HTMLButtonElement): void {
   if (!running && !paused) return;
-  if (player === 1 && !freeCpInMatch1) return;
-  if (player === 2 && !freeCpInMatch2) return;
-  if (player === 1 && freeCpConsumed1) return;
-  if (player === 2 && freeCpConsumed2) return;
-  const btn = player === 1 ? btnFreeCp1 : btnFreeCp2;
-  if (btn.classList.contains("is-animating")) return;
+  const ability = abilities[player].find(({ id }) => String(id) === coin.dataset.abilityId);
+  if (!ability || ability.spent || coin.classList.contains("is-animating")) return;
 
-  const face = btn.querySelector<HTMLElement>(".free-cp-token__face")!;
+  const face = coin.querySelector<HTMLElement>(".cp-coin__face")!;
   let completed = false;
   let fallbackTimer = 0;
 
   function finish(): void {
-    if (completed) return;
+    if (completed || !ability) return;
     completed = true;
     window.clearTimeout(fallbackTimer);
-    btn.classList.remove("is-animating");
     face.removeEventListener("animationend", onEnd);
-    if (player === 1) freeCpConsumed1 = true;
-    else freeCpConsumed2 = true;
-    renderFreeCpTokens();
+    ability.spent = true;
+    renderAbilities(player);
   }
 
   function onEnd(e: AnimationEvent): void {
     const n = e.animationName;
     /* WebKit sometimes omits or prefixes the name; empty means “this element’s animation” */
-    if (n && !n.includes("freeCpTokenFlipFade")) return;
+    if (n && !n.includes("cpCoinFlip")) return;
     finish();
   }
 
@@ -751,28 +1161,107 @@ function spendFreeCpToken(player: Player): void {
     return;
   }
 
-  btn.classList.add("is-animating");
+  coin.classList.add("is-animating");
   face.addEventListener("animationend", onEnd);
-  fallbackTimer = window.setTimeout(() => finish(), FREE_CP_ANIM_MS);
+  fallbackTimer = window.setTimeout(() => finish(), CP_COIN_ANIM_MS);
 }
 
-function clampPanelScore(n: number): number {
-  return Math.max(0, Math.min(MAX_PANEL_SCORE, n));
+function openAbilities(player: Player): void {
+  abilitiesPlayer = player;
+  abilitiesTitle.textContent = `Player ${player} abilities`;
+  abilitiesTitle.className = `is-p${player}`;
+  abilityNameInput.value = "";
+  renderAbilityList();
+  abilitiesOverlay.classList.add("is-visible");
+  abilitiesOverlay.setAttribute("aria-hidden", "false");
+  abilityNameInput.focus();
 }
 
-function adjustScore(player: Player, delta: number): void {
-  if (delta === 0) return;
-  const current = player === 1 ? score1 : score2;
-  const next = clampPanelScore(current + delta);
-  const appliedDelta = next - current;
-  if (appliedDelta === 0) return;
-  const roundIdx = Math.max(0, Math.min(MAX_GAME_TURN - 1, currentGameTurn - 1));
-  if (player === 1) {
-    score1 = next;
-    scoreByRound1[roundIdx] = clampPanelScore(scoreByRound1[roundIdx] + appliedDelta);
+function closeAbilities(): void {
+  if (abilitiesPlayer === null) return;
+  abilitiesPlayer = null;
+  abilitiesOverlay.classList.remove("is-visible");
+  abilitiesOverlay.setAttribute("aria-hidden", "true");
+  (document.activeElement as HTMLElement | null)?.blur();
+}
+
+function renderAbilityList(): void {
+  if (abilitiesPlayer === null) return;
+  const rows = abilities[abilitiesPlayer].map((ability) => {
+    const row = document.createElement("li");
+    row.className = "ability-row";
+    row.classList.toggle("is-lost", ability.lost);
+    row.dataset.abilityId = String(ability.id);
+    const kind = document.createElement("span");
+    kind.className = "ability-row__kind";
+    kind.textContent = ABILITY_KINDS[ability.kind].short;
+    const name = document.createElement("span");
+    name.className = "ability-row__name";
+    name.textContent = ability.name || "—";
+    const toggle = document.createElement("button");
+    toggle.type = "button";
+    toggle.className = "btn-secondary btn-sm";
+    toggle.dataset.action = "toggle";
+    toggle.textContent = ability.lost ? "Restore" : "Lost";
+    toggle.title = ability.lost ? "Its character is back" : "Its character is gone";
+    const remove = document.createElement("button");
+    remove.type = "button";
+    remove.className = "btn-icon btn-sm";
+    remove.dataset.action = "delete";
+    remove.setAttribute("aria-label", "Delete ability");
+    remove.textContent = "✕";
+    row.append(kind, name, toggle, remove);
+    return row;
+  });
+  if (rows.length === 0) {
+    const empty = document.createElement("li");
+    empty.className = "ability-list__empty";
+    empty.textContent = "No ability yet.";
+    rows.push(empty);
+  }
+  abilityList.replaceChildren(...rows);
+}
+
+function addAbility(kind: AbilityKind): void {
+  if (abilitiesPlayer === null) return;
+  abilities[abilitiesPlayer].push({
+    id: nextAbilityId++,
+    kind,
+    name: abilityNameInput.value.trim(),
+    lost: false,
+    spent: false,
+  });
+  abilityNameInput.value = "";
+  abilityNameInput.focus();
+  renderAbilityList();
+  renderAbilities(abilitiesPlayer);
+}
+
+function handleAbilityRowAction(action: string, id: number): void {
+  if (abilitiesPlayer === null) return;
+  const player = abilitiesPlayer;
+  if (action === "delete") {
+    abilities[player] = abilities[player].filter((ability) => ability.id !== id);
   } else {
-    score2 = next;
-    scoreByRound2[roundIdx] = clampPanelScore(scoreByRound2[roundIdx] + appliedDelta);
+    const ability = abilities[player].find((candidate) => candidate.id === id);
+    if (ability) ability.lost = !ability.lost;
+  }
+  renderAbilityList();
+  renderAbilities(player);
+}
+
+function adjustScore(player: Player, kind: ScoreKind, delta: 1 | -1): void {
+  const turns = scoreByTurn[player][kind];
+  const turnIdx = scoringTurnIdx(player);
+  if (delta > 0) {
+    if (sum(turns) >= MAX_PANEL_SCORE) return;
+    turns[turnIdx] += 1;
+  } else {
+    // A minus corrects the latest points scored: this turn first, then the turns before it
+    let idx = turnIdx;
+    while (idx >= 0 && turns[idx] === 0) idx--;
+    if (idx < 0) return;
+    turns[idx] -= 1;
   }
   renderMiniCounters();
 }
@@ -781,37 +1270,96 @@ function clampPanelCp(n: number): number {
   return Math.max(0, Math.min(MAX_PANEL_CP, n));
 }
 
-/** Both players gain 1 CP when a new player turn or battle round begins (Enter confirmed). */
+function playerTurnSlotIndex(round: number, player: Player): number {
+  return (round - 1) * 2 + (player - 1);
+}
+
+function currentPlayerTurnSlot(): number {
+  return playerTurnSlotIndex(currentGameTurn, turnPlayer);
+}
+
+function recordCpManualAdjust(player: Player, slot: number, applied: number): void {
+  if (applied === 0 || slot < 0 || slot >= MAX_PLAYER_TURNS) return;
+  if (applied > 0) {
+    if (player === 1) cpHistoryAdded1[slot] += applied;
+    else cpHistoryAdded2[slot] += applied;
+  } else {
+    const r = -applied;
+    if (player === 1) cpHistoryRemoved1[slot] += r;
+    else cpHistoryRemoved2[slot] += r;
+  }
+}
+
+function adjustCp(player: Player, delta: number): void {
+  if (delta === 0) return;
+  const current = player === 1 ? cp1 : cp2;
+  const next = clampPanelCp(current + delta);
+  const applied = next - current;
+  if (applied === 0) return;
+  if (player === 1) cp1 = next;
+  else cp2 = next;
+  if (running || paused) {
+    const slot = currentPlayerTurnSlot();
+    recordCpManualAdjust(player, slot, applied);
+  }
+  renderMiniCounters();
+}
+
+/**
+ * Both players gain 1 CP when a new player turn begins (Enter confirmed).
+ * Not recorded in manual CP history (tooltip: added/removed per turn only).
+ */
 function gainCpBothPlayers(): void {
   cp1 = clampPanelCp(cp1 + 1);
   cp2 = clampPanelCp(cp2 + 1);
   renderMiniCounters();
 }
 
+const scoreActions = ([1, 2] as const).flatMap((player) =>
+  SCORE_KINDS.flatMap(({ kind }): [string, () => void][] => [
+    [`p${player}-${kind}-minus`, () => { adjustScore(player, kind, -1); }],
+    [`p${player}-${kind}-plus`, () => { adjustScore(player, kind, 1); }],
+  ]),
+);
+
 const miniCounterActions: [string, () => void][] = [
-  ["p1-score-minus", () => { adjustScore(1, -1); }],
-  ["p1-score-plus", () => { adjustScore(1, 1); }],
-  ["p1-cp-minus", () => { cp1 = clampPanelCp(cp1 - 1); renderMiniCounters(); }],
-  ["p1-cp-plus", () => { cp1 = clampPanelCp(cp1 + 1); renderMiniCounters(); }],
-  ["p2-score-minus", () => { adjustScore(2, -1); }],
-  ["p2-score-plus", () => { adjustScore(2, 1); }],
-  ["p2-cp-minus", () => { cp2 = clampPanelCp(cp2 - 1); renderMiniCounters(); }],
-  ["p2-cp-plus", () => { cp2 = clampPanelCp(cp2 + 1); renderMiniCounters(); }],
+  ...scoreActions,
+  ["p1-cp-minus", () => { adjustCp(1, -1); }],
+  ["p1-cp-plus", () => { adjustCp(1, 1); }],
+  ["p2-cp-minus", () => { adjustCp(2, -1); }],
+  ["p2-cp-plus", () => { adjustCp(2, 1); }],
 ];
 for (const [id, handler] of miniCounterActions) {
   app.querySelector<HTMLButtonElement>(`#${id}`)!.addEventListener("click", handler);
 }
 
-btnFreeCpAdd1.addEventListener("click", () => optInFreeCpBeforeStart(1));
-btnFreeCpAdd2.addEventListener("click", () => optInFreeCpBeforeStart(2));
-btnFreeCp1.addEventListener("click", () => handleFreeCpTokenClick(1));
-btnFreeCp2.addEventListener("click", () => handleFreeCpTokenClick(2));
+for (const player of [1, 2] as const) {
+  app.querySelector<HTMLButtonElement>(`#p${player}-abilities-btn`)!.addEventListener("click", () => openAbilities(player));
+  abilitiesEl[player].addEventListener("click", (e) => {
+    const coin = (e.target as HTMLElement).closest<HTMLButtonElement>(".cp-coin");
+    if (coin) spendCpCoin(player, coin);
+  });
+}
+app.querySelectorAll<HTMLButtonElement>(".ability-kind").forEach((btn) => {
+  btn.addEventListener("click", () => addAbility(btn.dataset.kind as AbilityKind));
+});
+abilityList.addEventListener("click", (e) => {
+  const btn = (e.target as HTMLElement).closest<HTMLButtonElement>("button[data-action]");
+  const row = btn?.closest<HTMLElement>(".ability-row");
+  if (btn && row) handleAbilityRowAction(btn.dataset.action!, Number(row.dataset.abilityId));
+});
+btnAbilitiesClose.addEventListener("click", closeAbilities);
 
 function renderTurnDots(): void {
   turnDots.innerHTML = "";
   for (let i = 1; i <= MAX_GAME_TURN; i++) {
     const dot = document.createElement("span");
     dot.className = "turn-dot";
+    const num = document.createElement("span");
+    num.className = "turn-dot__num";
+    num.textContent = String(i);
+    num.setAttribute("aria-hidden", "true");
+    dot.appendChild(num);
     dot.setAttribute("role", "img");
     dot.setAttribute(
       "aria-label",
@@ -831,12 +1379,10 @@ function advanceGameTurn(): void {
   active = 1;
   turnPlayer = 1;
   gainCpBothPlayers();
+  startRoundAbilities();
   lastSpaceTime = 0;
   activeBeforeSpaceSequence = 1;
-  freeCpConsumed1 = false;
-  freeCpConsumed2 = false;
-  renderFreeCpTokens();
-  if (running) lastTick = performance.now();
+  if (running) lastTickWallMs = Date.now();
   setActivePanels();
   renderTurnDots();
 }
@@ -860,18 +1406,29 @@ function resume(): void {
   setActivePanels();
   applyTimesToDisplay();
   updateButtons();
+  void tryAcquireWakeLock();
   startLoop();
 }
 
-btnReset.addEventListener("click", reset);
+btnReset.addEventListener("click", () => {
+  if (running || paused) openTurnConfirmModal("reset");
+  else reset();
+});
 btnFullscreen.addEventListener("click", toggleFullscreen);
 btnTurnConfirmOk.addEventListener("click", applyTurnConfirm);
 btnTurnConfirmCancel.addEventListener("click", hideTurnConfirmModal);
 btnResultDismiss.addEventListener("click", hideResultOverlay);
-bindScoreTooltip(p1ScoreVal);
-bindScoreTooltip(p2ScoreVal);
+btnPhotoResume.addEventListener("click", endPhotoBreak);
+// A focused checkbox would swallow Enter / Space, the game shortcuts
+photoBreaksToggle.addEventListener("change", () => photoBreaksToggle.blur());
+bindScoreTooltip(scoreTotalEl[1]);
+bindScoreTooltip(scoreTotalEl[2]);
+bindCpTooltip(p1CpVal);
+bindCpTooltip(p2CpVal);
 window.addEventListener("scroll", hideScoreTooltip, true);
 window.addEventListener("resize", hideScoreTooltip);
+window.addEventListener("scroll", hideCpTooltip, true);
+window.addEventListener("resize", hideCpTooltip);
 
 function isTypingTarget(el: EventTarget | null): boolean {
   if (!(el instanceof HTMLElement)) return false;
@@ -882,7 +1439,7 @@ function isTypingTarget(el: EventTarget | null): boolean {
 function shouldIgnoreSpaceLike(el: EventTarget | null): boolean {
   if (!(el instanceof HTMLElement)) return false;
   if (el.closest(".mini-counter")) return true;
-  if (el.closest(".free-cp-stack")) return true;
+  if (el.closest(".panel-corner")) return true;
   return isTypingTarget(el);
 }
 
@@ -910,9 +1467,26 @@ function handleSpaceLikeInput(): void {
 }
 
 window.addEventListener("keydown", (e) => {
+  // The abilities panel is a form: keys keep their usual meaning there
+  if (abilitiesOverlay.classList.contains("is-visible")) {
+    if (e.key === "Escape") {
+      e.preventDefault();
+      closeAbilities();
+    }
+    return;
+  }
   if ((e.code === "Enter" || e.code === "Space") && isButtonTarget(e.target)) {
     /* Keep Enter/Space bound to global turn/timer shortcuts, not focused button activation. */
     e.preventDefault();
+  }
+  if (photoOverlay.classList.contains("is-visible")) {
+    if ((e.code === "Enter" && !e.repeat) || e.key === "Escape") {
+      e.preventDefault();
+      endPhotoBreak();
+    } else if (e.code === "Space") {
+      e.preventDefault();
+    }
+    return;
   }
   if (resultOverlay.classList.contains("is-visible")) {
     if (e.code === "Enter" && !e.repeat) {
@@ -986,11 +1560,13 @@ app.addEventListener("pointerup", (e) => {
 board.addEventListener("pointerdown", (e) => {
   /* Touch / pen only — mouse clicks use Start / Space, not board taps */
   if (e.pointerType === "mouse") return;
+  if (abilitiesOverlay.classList.contains("is-visible")) return;
+  if (photoOverlay.classList.contains("is-visible")) return;
   if (resultOverlay.classList.contains("is-visible")) return;
   if (turnConfirmOverlay.classList.contains("is-visible")) return;
   if ((e.target as HTMLElement).closest(".turn-tracker")) return;
   if ((e.target as HTMLElement).closest(".mini-counter")) return;
-  if ((e.target as HTMLElement).closest(".free-cp-stack")) return;
+  if ((e.target as HTMLElement).closest(".panel-corner")) return;
   if (shouldIgnoreSpaceLike(e.target)) return;
   e.preventDefault();
   handleSpaceLikeInput();
@@ -1017,19 +1593,30 @@ presetTime.addEventListener("change", () => {
   });
 });
 
-counterSizeSelect.addEventListener("change", () => {
-  applyCounterSize(counterSizeSelect.value);
+uiSizeSelect.addEventListener("change", () => {
+  applyUiSize(uiSizeSelect.value);
 });
 
-presetTime.value = String(PRESETS[0].sec);
-loadCounterSize();
+layoutSelect.addEventListener("change", () => {
+  applyLayout(layoutSelect.value);
+});
+
+// A focused select would swallow Enter / Space, the game shortcuts
+[layoutSelect, uiSizeSelect, presetTime].forEach((select) => {
+  select.addEventListener("change", () => select.blur());
+});
+
+presetTime.value = String(DEFAULT_TIME_SEC);
+loadLayout();
+loadUiSize();
 updateManualInputsVisibility();
 applyTimesToDisplay();
 setActivePanels();
 updateButtons();
 renderTurnDots();
 renderMiniCounters();
-renderFreeCpTokens();
+renderAbilities(1);
+renderAbilities(2);
 
 function syncFullscreenLabel(): void {
   const inFs = !!document.fullscreenElement;
@@ -1044,3 +1631,14 @@ function syncFullscreenLabel(): void {
 
 document.addEventListener("fullscreenchange", syncFullscreenLabel);
 syncFullscreenLabel();
+
+document.addEventListener("visibilitychange", () => {
+  if (document.visibilityState === "visible") {
+    applyWallClockCatchUp();
+    if (running) void tryAcquireWakeLock();
+  }
+});
+
+window.addEventListener("pageshow", (e) => {
+  if (e.persisted) applyWallClockCatchUp();
+});
