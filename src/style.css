@@ -33,83 +33,17 @@
   font-family: var(--font-ui);
 }
 
-/* Factions: a neutral dark base, each player's colors come from their army */
+/* Factions: a neutral dark base, each player's colors come from their army (set from factions.ts) */
 :root[data-theme="factions"] {
   --bg: #08090b;
   --surface: #111317;
   --text: #ecebe7;
   --muted: #8a8b90;
   --faint: #43454b;
-}
-
-:root[data-theme="factions"][data-p1-faction="aeldari"] {
-  --p1: #1fc8d6;
-  --p1-time: #dff9fb;
-}
-
-:root[data-theme="factions"][data-p2-faction="aeldari"] {
-  --p2: #1fc8d6;
-  --p2-time: #dff9fb;
-}
-
-:root[data-theme="factions"][data-p1-faction="chaos-space-marines"] {
-  --p1: #e0313f;
-  --p1-time: #ffe0e2;
-}
-
-:root[data-theme="factions"][data-p2-faction="chaos-space-marines"] {
-  --p2: #e0313f;
-  --p2-time: #ffe0e2;
-}
-
-:root[data-theme="factions"][data-p1-faction="imperial-fists"] {
-  --p1: #f5c518;
-  --p1-time: #fff2c2;
-}
-
-:root[data-theme="factions"][data-p2-faction="imperial-fists"] {
-  --p2: #f5c518;
-  --p2-time: #fff2c2;
-}
-
-:root[data-theme="factions"][data-p1-faction="necrons"] {
-  --p1: #2ee68a;
-  --p1-time: #dcffee;
-}
-
-:root[data-theme="factions"][data-p2-faction="necrons"] {
-  --p2: #2ee68a;
-  --p2-time: #dcffee;
-}
-
-:root[data-theme="factions"][data-p1-faction="orks"] {
-  --p1: #8cc63f;
-  --p1-time: #eef7d8;
-}
-
-:root[data-theme="factions"][data-p2-faction="orks"] {
-  --p2: #8cc63f;
-  --p2-time: #eef7d8;
-}
-
-:root[data-theme="factions"][data-p1-faction="tyranids"] {
-  --p1: #b45fe0;
-  --p1-time: #f1e5cf;
-}
-
-:root[data-theme="factions"][data-p2-faction="tyranids"] {
-  --p2: #b45fe0;
-  --p2-time: #f1e5cf;
-}
-
-:root[data-theme="factions"][data-p1-faction="ultramarines"] {
-  --p1: #3d7cf0;
-  --p1-time: #e2ebff;
-}
-
-:root[data-theme="factions"][data-p2-faction="ultramarines"] {
-  --p2: #3d7cf0;
-  --p2-time: #e2ebff;
+  --p1: var(--fx1, #f5c518);
+  --p1-time: var(--fx1-time, #fff2c2);
+  --p2: var(--fx2, #b45fe0);
+  --p2-time: var(--fx2-time, #f1e5cf);
 }
 
 /* War zone: dark warm greys, orange, and hazard tape on the no man's land between the players */
@@ -710,43 +644,48 @@ body {
   color: var(--p2);
 }
 
-/* A native list, styled: the chevron says it opens, the edge takes the faction color */
+/* Faction lists, drawn by the app: the button shows the choice and its colors, the edge the player's */
 .select {
   position: relative;
   display: flex;
 }
 
-.select select {
+.picker__button {
   flex: 1;
-  appearance: none;
+  display: flex;
+  align-items: center;
+  gap: 0.55rem;
+  min-width: 0;
   padding: 0.45rem 2rem 0.45rem 0.7rem;
   border: 1px solid var(--line-strong);
   border-radius: 4px;
   background: var(--surface);
   color: var(--text);
-  color-scheme: dark;
   font-family: var(--font-ui);
   font-size: 0.78rem;
   font-weight: 600;
-  cursor: pointer;
+  letter-spacing: 0;
+  text-align: left;
   transition: border-color 0.15s ease;
 }
 
-.faction-row:has(.is-p1) .select select {
+.faction-row:has(.is-p1) .picker__button {
   border-left: 3px solid var(--p1);
 }
 
-.faction-row:has(.is-p2) .select select {
+.faction-row:has(.is-p2) .picker__button {
   border-left: 3px solid var(--p2);
 }
 
-.select select:hover {
+.picker__button:hover,
+.picker__button[aria-expanded="true"] {
   border-color: rgba(255, 255, 255, 0.35);
 }
 
-.select select:focus-visible {
-  outline: 2px solid var(--text);
-  outline-offset: 2px;
+.picker__label {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 
 .select .icon {
@@ -757,7 +696,113 @@ body {
   height: 1rem;
   color: var(--muted);
   transform: translateY(-50%);
+  transition: transform 0.15s ease;
   pointer-events: none;
+}
+
+.picker__button[aria-expanded="true"] .icon {
+  transform: translateY(-50%) rotate(180deg);
+}
+
+/* Two-tone dot: the faction's color and its accent */
+.picker__swatch {
+  flex: none;
+  width: 0.8rem;
+  height: 0.8rem;
+  border-radius: 50%;
+  background: linear-gradient(135deg, var(--sw-a) 0 55%, var(--sw-b) 55%);
+  box-shadow: 0 0 0 1px rgba(255, 255, 255, 0.18);
+}
+
+/* The menu sits at the bottom of the panel: the list opens upward, over the settings above */
+.picker__list {
+  position: absolute;
+  bottom: calc(100% + 4px);
+  left: 0;
+  right: 0;
+  z-index: 5;
+  max-height: 18rem;
+  overflow-y: auto;
+  padding: 0 0.3rem 0.3rem;
+  border: 1px solid var(--line-strong);
+  border-radius: 6px;
+  background: var(--surface);
+  box-shadow: 0 -14px 36px rgba(0, 0, 0, 0.6);
+  scrollbar-width: thin;
+}
+
+.picker__list[hidden] {
+  display: none;
+}
+
+.picker__group {
+  position: sticky;
+  top: 0;
+  z-index: 1;
+  padding: 0.55rem 0.5rem 0.3rem;
+  background: var(--surface);
+  font-size: 0.58rem;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.16em;
+  color: var(--muted);
+}
+
+.picker__list > .picker__option:first-child {
+  margin-top: 0.3rem;
+}
+
+.picker__option {
+  display: flex;
+  align-items: center;
+  gap: 0.55rem;
+  padding: 0.42rem 0.5rem;
+  border-radius: 4px;
+  color: var(--text);
+  font-size: 0.78rem;
+  font-weight: 500;
+  cursor: pointer;
+}
+
+.picker__option:hover,
+.picker__option:focus {
+  outline: none;
+  background: rgba(255, 255, 255, 0.07);
+}
+
+.picker__option[aria-selected="true"] {
+  background: color-mix(in srgb, var(--sw-a) 16%, transparent);
+  font-weight: 700;
+}
+
+.picker__option[aria-selected="true"]::after {
+  content: "✓";
+  margin-left: auto;
+  color: var(--sw-a);
+}
+
+/* The chapter list hangs under Space Marines, linked to it by an elbow */
+.faction-row__chapter {
+  position: relative;
+  display: flex;
+  grid-column: 2;
+  margin-left: 1rem;
+}
+
+.faction-row__chapter[hidden] {
+  display: none;
+}
+
+.faction-row__chapter::before {
+  content: "";
+  position: absolute;
+  top: -0.6rem;
+  left: -0.75rem;
+  width: 0.6rem;
+  height: calc(50% + 0.6rem);
+  border-left: 1px solid var(--line-strong);
+  border-bottom: 1px solid var(--line-strong);
+  border-bottom-left-radius: 3px;
 }
 
 .settings__section[hidden] {
@@ -1054,8 +1099,8 @@ kbd {
 /* ---------- Faction decor of a player's half ---------- */
 
 /*
- * Each faction sets a glow from the player's edge (--fx-glow), a texture over the half
- * (--fx-texture) and a band along the edge (--fx-band, --fx-band-v when the halves sit side by side).
+ * A glow from the player's edge in their color, a texture over the half (--fx-texture) and a band
+ * along the edge (--fx-band, --fx-band-v when the halves sit side by side).
  * --edge is that edge, for the gradients that start from it.
  */
 :root[data-theme="factions"] .panel {
@@ -1087,7 +1132,7 @@ kbd {
 :root[data-theme="factions"] .panel::before {
   inset: 0;
   background:
-    radial-gradient(var(--glow-size) at var(--edge), var(--fx-glow, transparent), transparent 60%),
+    radial-gradient(var(--glow-size) at var(--edge), color-mix(in srgb, var(--fx-a, transparent) 13%, transparent), transparent 60%),
     var(--fx-texture, none);
 }
 
@@ -1126,81 +1171,194 @@ kbd {
   right: 0;
 }
 
-/* Aeldari: wraithbone and sea green, long graceful lines, spirit stones */
-.panel[data-faction="aeldari"] {
-  --fx-glow: rgba(31, 200, 214, 0.11);
-  --fx-texture:
-    radial-gradient(circle at 16% 68%, rgba(31, 200, 214, 0.4) 0 3px, rgba(31, 200, 214, 0.08) 4px 16px, transparent 17px),
-    radial-gradient(circle at 84% 32%, rgba(31, 200, 214, 0.4) 0 3px, rgba(31, 200, 214, 0.08) 4px 16px, transparent 17px),
-    repeating-linear-gradient(115deg, rgba(239, 230, 210, 0.035) 0 1px, transparent 1px 30px);
+/*
+ * Patterns, drawn with the faction's color (--fx-a) and accent (--fx-b), both set on the panel.
+ * Bands first, then textures.
+ */
+.panel[data-band="hazard"] {
+  --fx-band: repeating-linear-gradient(-45deg, var(--fx-a) 0 12px, var(--fx-b) 12px 24px);
+}
+
+.panel[data-band="trim"] {
+  --fx-band: linear-gradient(180deg, var(--fx-b) 0 2px, var(--fx-a) 2px 8px, var(--fx-b) 8px);
+  --fx-band-v: linear-gradient(90deg, var(--fx-b) 0 2px, var(--fx-a) 2px 8px, var(--fx-b) 8px);
+}
+
+.panel[data-band="checks"] {
+  --fx-band: conic-gradient(#0b0b0a 25%, var(--fx-b) 0 50%, #0b0b0a 0 75%, var(--fx-b) 0) 0 0 / 10px 10px;
+}
+
+/* A glowing dashed seam */
+.panel[data-band="dashes"] {
   --fx-band:
-    radial-gradient(circle, #1fc8d6 0 3px, transparent 3.5px) 0 50% / 26px 10px repeat-x,
-    linear-gradient(180deg, transparent 4px, rgba(239, 230, 210, 0.5) 4px 6px, transparent 6px);
+    repeating-linear-gradient(90deg, var(--fx-a) 0 18px, transparent 18px 26px) 0 50% / 100% 3px no-repeat,
+    linear-gradient(color-mix(in srgb, var(--fx-a) 16%, transparent), color-mix(in srgb, var(--fx-a) 16%, transparent));
   --fx-band-v:
-    radial-gradient(circle, #1fc8d6 0 3px, transparent 3.5px) 50% 0 / 10px 26px repeat-y,
-    linear-gradient(90deg, transparent 4px, rgba(239, 230, 210, 0.5) 4px 6px, transparent 6px);
+    repeating-linear-gradient(180deg, var(--fx-a) 0 18px, transparent 18px 26px) 50% 0 / 3px 100% no-repeat,
+    linear-gradient(color-mix(in srgb, var(--fx-a) 16%, transparent), color-mix(in srgb, var(--fx-a) 16%, transparent));
 }
 
-/* Chaos Space Marines: crimson and brass, the rays of the eight-pointed star */
-.panel[data-faction="chaos-space-marines"] {
-  --fx-glow: rgba(224, 49, 63, 0.12);
-  --fx-texture: repeating-conic-gradient(from 0deg at var(--edge), rgba(224, 49, 63, 0.07) 0 2.5deg, transparent 2.5deg 22.5deg);
-  --fx-band: repeating-linear-gradient(45deg, #c8892c 0 4px, #5c0f18 4px 12px);
-}
-
-/* Imperial Fists: yellow and black, fortress masonry, siege chevrons on the edge */
-.panel[data-faction="imperial-fists"] {
-  --fx-glow: rgba(245, 197, 24, 0.1);
-  --fx-texture:
-    repeating-linear-gradient(0deg, rgba(245, 197, 24, 0.045) 0 1px, transparent 1px 32px),
-    repeating-linear-gradient(90deg, rgba(245, 197, 24, 0.03) 0 1px, transparent 1px 64px);
-  --fx-band: repeating-linear-gradient(-45deg, #f5c518 0 12px, #0b0b0a 12px 24px);
-}
-
-/* Necrons: gauss green on dark metal, circuit lines and glyph nodes, a glowing dashed seam */
-.panel[data-faction="necrons"] {
-  --fx-glow: rgba(46, 230, 138, 0.11);
-  --fx-texture:
-    radial-gradient(circle, rgba(46, 230, 138, 0.22) 0 1.5px, transparent 2px) 0 0 / 48px 48px,
-    repeating-linear-gradient(90deg, rgba(46, 230, 138, 0.045) 0 1px, transparent 1px 48px),
-    repeating-linear-gradient(0deg, rgba(46, 230, 138, 0.03) 0 1px, transparent 1px 96px);
+/* Stones or beads strung on a thin line */
+.panel[data-band="beads"] {
   --fx-band:
-    repeating-linear-gradient(90deg, #2ee68a 0 18px, transparent 18px 26px) 0 50% / 100% 3px no-repeat,
-    linear-gradient(rgba(46, 230, 138, 0.16), rgba(46, 230, 138, 0.16));
+    radial-gradient(circle, var(--fx-a) 0 3px, transparent 3.5px) 0 50% / 26px 10px repeat-x,
+    linear-gradient(180deg, transparent 4px, color-mix(in srgb, var(--fx-b) 55%, transparent) 4px 6px, transparent 6px);
   --fx-band-v:
-    repeating-linear-gradient(180deg, #2ee68a 0 18px, transparent 18px 26px) 50% 0 / 3px 100% no-repeat,
-    linear-gradient(rgba(46, 230, 138, 0.16), rgba(46, 230, 138, 0.16));
+    radial-gradient(circle, var(--fx-a) 0 3px, transparent 3.5px) 50% 0 / 10px 26px repeat-y,
+    linear-gradient(90deg, transparent 4px, color-mix(in srgb, var(--fx-b) 55%, transparent) 4px 6px, transparent 6px);
 }
 
-/* Orks: green, scrap plates with rivets and rust scratches, Goff checks on the edge */
-.panel[data-faction="orks"] {
-  --fx-glow: rgba(140, 198, 63, 0.1);
+.panel[data-band="spines"] {
+  --fx-band: radial-gradient(circle at var(--edge), var(--fx-a) 0 5px, transparent 6px) 0 0 / 22px 10px repeat-x;
+  --fx-band-v: radial-gradient(circle at var(--edge), var(--fx-a) 0 5px, transparent 6px) 0 0 / 10px 22px repeat-y;
+}
+
+/* Teeth pointing into the player's half from their edge */
+.panel--a[data-band="fangs"] {
+  --fx-band:
+    linear-gradient(135deg, var(--fx-b) 25%, transparent 25%) 0 0 / 10px 10px repeat-x,
+    linear-gradient(225deg, var(--fx-b) 25%, transparent 25%) 0 0 / 10px 10px repeat-x;
+  --fx-band-v:
+    linear-gradient(135deg, var(--fx-b) 25%, transparent 25%) 0 0 / 10px 10px repeat-y,
+    linear-gradient(45deg, var(--fx-b) 25%, transparent 25%) 0 0 / 10px 10px repeat-y;
+}
+
+.panel--b[data-band="fangs"] {
+  --fx-band:
+    linear-gradient(45deg, var(--fx-b) 25%, transparent 25%) 0 0 / 10px 10px repeat-x,
+    linear-gradient(315deg, var(--fx-b) 25%, transparent 25%) 0 0 / 10px 10px repeat-x;
+  --fx-band-v:
+    linear-gradient(225deg, var(--fx-b) 25%, transparent 25%) 0 0 / 10px 10px repeat-y,
+    linear-gradient(315deg, var(--fx-b) 25%, transparent 25%) 0 0 / 10px 10px repeat-y;
+}
+
+.panel[data-band="stripes"] {
+  --fx-band: repeating-linear-gradient(45deg, var(--fx-b) 0 4px, color-mix(in srgb, var(--fx-a) 35%, #0b0b0a) 4px 12px);
+}
+
+/* A metal strip and its rivets */
+.panel[data-band="rivets"] {
+  --fx-band: radial-gradient(circle, var(--fx-a) 0 1.8px, transparent 2.3px) 0 50% / 16px 10px repeat-x, var(--fx-b);
+  --fx-band-v: radial-gradient(circle, var(--fx-a) 0 1.8px, transparent 2.3px) 50% 0 / 10px 16px repeat-y, var(--fx-b);
+}
+
+/* Fortress masonry */
+.panel[data-texture="masonry"] {
+  --fx-texture:
+    repeating-linear-gradient(0deg, color-mix(in srgb, var(--fx-a) 4.5%, transparent) 0 1px, transparent 1px 32px),
+    repeating-linear-gradient(90deg, color-mix(in srgb, var(--fx-a) 3%, transparent) 0 1px, transparent 1px 64px);
+}
+
+/* A heraldic lattice in the accent color */
+.panel[data-texture="lattice"] {
+  --fx-texture:
+    repeating-linear-gradient(45deg, color-mix(in srgb, var(--fx-b) 6%, transparent) 0 1px, transparent 1px 44px),
+    repeating-linear-gradient(-45deg, color-mix(in srgb, var(--fx-b) 6%, transparent) 0 1px, transparent 1px 44px);
+}
+
+/* Circuit lines and glyph nodes */
+.panel[data-texture="circuit"] {
+  --fx-texture:
+    radial-gradient(circle, color-mix(in srgb, var(--fx-a) 22%, transparent) 0 1.5px, transparent 2px) 0 0 / 48px 48px,
+    repeating-linear-gradient(90deg, color-mix(in srgb, var(--fx-a) 4.5%, transparent) 0 1px, transparent 1px 48px),
+    repeating-linear-gradient(0deg, color-mix(in srgb, var(--fx-a) 3%, transparent) 0 1px, transparent 1px 96px);
+}
+
+/* Living glows and carapace ridges */
+.panel[data-texture="carapace"] {
+  --fx-texture:
+    radial-gradient(55% 75% at 12% 25%, color-mix(in srgb, var(--fx-a) 16%, transparent), transparent 70%),
+    radial-gradient(45% 65% at 88% 75%, color-mix(in srgb, var(--fx-a) 10%, transparent), transparent 70%),
+    repeating-radial-gradient(circle at 50% 130%, color-mix(in srgb, var(--fx-b) 3.5%, transparent) 0 2px, transparent 2px 24px);
+}
+
+/* Scrap plates: rivets, rust and scratches */
+.panel[data-texture="scrap"] {
   --fx-texture:
     radial-gradient(circle, rgba(220, 220, 210, 0.12) 0 1.5px, transparent 2px) 0 0 / 56px 56px,
     repeating-linear-gradient(-60deg, rgba(196, 98, 45, 0.05) 0 2px, transparent 2px 19px),
     repeating-linear-gradient(30deg, rgba(0, 0, 0, 0.2) 0 1px, transparent 1px 23px);
-  --fx-band: conic-gradient(#0b0b0a 25%, #e9e4d8 0 50%, #0b0b0a 0 75%, #e9e4d8 0) 0 0 / 10px 10px;
 }
 
-/* Tyranids: violet and bone, living glows, carapace ridges, a row of spines on the edge */
-.panel[data-faction="tyranids"] {
-  --fx-glow: rgba(180, 95, 224, 0.08);
-  --fx-texture:
-    radial-gradient(55% 75% at 12% 25%, rgba(180, 95, 224, 0.16), transparent 70%),
-    radial-gradient(45% 65% at 88% 75%, rgba(180, 95, 224, 0.1), transparent 70%),
-    repeating-radial-gradient(circle at 50% 130%, rgba(241, 229, 207, 0.035) 0 2px, transparent 2px 24px);
-  --fx-band: radial-gradient(circle at var(--edge), rgba(180, 95, 224, 0.75) 0 5px, transparent 6px) 0 0 / 22px 10px repeat-x;
-  --fx-band-v: radial-gradient(circle at var(--edge), rgba(180, 95, 224, 0.75) 0 5px, transparent 6px) 0 0 / 10px 22px repeat-y;
+/* Rays from the player's edge */
+.panel[data-texture="rays"] {
+  --fx-texture: repeating-conic-gradient(from 0deg at var(--edge), color-mix(in srgb, var(--fx-a) 7%, transparent) 0 2.5deg, transparent 2.5deg 22.5deg);
 }
 
-/* Ultramarines: blue and gold, a heraldic lattice, a gold-trimmed edge */
-.panel[data-faction="ultramarines"] {
-  --fx-glow: rgba(61, 124, 240, 0.2);
+/* Two glowing stones and long graceful lines */
+.panel[data-texture="gems"] {
   --fx-texture:
-    repeating-linear-gradient(45deg, rgba(212, 175, 55, 0.06) 0 1px, transparent 1px 44px),
-    repeating-linear-gradient(-45deg, rgba(212, 175, 55, 0.06) 0 1px, transparent 1px 44px);
-  --fx-band: linear-gradient(180deg, #d4af37 0 2px, #2c62d6 2px 8px, #d4af37 8px);
-  --fx-band-v: linear-gradient(90deg, #d4af37 0 2px, #2c62d6 2px 8px, #d4af37 8px);
+    radial-gradient(circle at 16% 68%, color-mix(in srgb, var(--fx-a) 40%, transparent) 0 3px, color-mix(in srgb, var(--fx-a) 8%, transparent) 4px 16px, transparent 17px),
+    radial-gradient(circle at 84% 32%, color-mix(in srgb, var(--fx-a) 40%, transparent) 0 3px, color-mix(in srgb, var(--fx-a) 8%, transparent) 4px 16px, transparent 17px),
+    repeating-linear-gradient(115deg, color-mix(in srgb, var(--fx-b) 3.5%, transparent) 0 1px, transparent 1px 30px);
+}
+
+/* Armour plates, their seams and rivets */
+.panel[data-texture="plates"] {
+  --fx-texture:
+    radial-gradient(circle, color-mix(in srgb, var(--fx-a) 18%, transparent) 0 1.5px, transparent 2px) 0 6px / 40px 56px,
+    repeating-linear-gradient(0deg, color-mix(in srgb, var(--fx-a) 6%, transparent) 0 1px, transparent 1px 56px);
+}
+
+/* Embers floating up from a fiery edge */
+.panel[data-texture="embers"] {
+  --fx-texture:
+    radial-gradient(90% 60% at var(--edge), color-mix(in srgb, var(--fx-b) 12%, transparent), transparent 70%),
+    radial-gradient(circle at 12% 78%, color-mix(in srgb, var(--fx-b) 70%, transparent) 0 1.5px, transparent 2.5px),
+    radial-gradient(circle at 27% 34%, color-mix(in srgb, var(--fx-b) 50%, transparent) 0 1px, transparent 2px),
+    radial-gradient(circle at 44% 70%, color-mix(in srgb, var(--fx-b) 60%, transparent) 0 1.5px, transparent 2.5px),
+    radial-gradient(circle at 63% 22%, color-mix(in srgb, var(--fx-b) 50%, transparent) 0 1px, transparent 2px),
+    radial-gradient(circle at 79% 61%, color-mix(in srgb, var(--fx-b) 70%, transparent) 0 1.5px, transparent 2.5px),
+    radial-gradient(circle at 91% 28%, color-mix(in srgb, var(--fx-b) 50%, transparent) 0 1px, transparent 2px);
+}
+
+/* Claw marks, three by three */
+.panel[data-texture="claws"] {
+  --fx-texture: repeating-linear-gradient(
+    60deg,
+    transparent 0 40px,
+    color-mix(in srgb, var(--fx-a) 8%, transparent) 40px 42px,
+    transparent 42px 48px,
+    color-mix(in srgb, var(--fx-a) 8%, transparent) 48px 50px,
+    transparent 50px 56px,
+    color-mix(in srgb, var(--fx-a) 8%, transparent) 56px 58px,
+    transparent 58px 150px
+  );
+}
+
+/* Rings of light from the player's edge */
+.panel[data-texture="halo"] {
+  --fx-texture: repeating-radial-gradient(circle at var(--edge), color-mix(in srgb, var(--fx-b) 7%, transparent) 0 1px, transparent 1px 30px);
+}
+
+.panel[data-texture="camo"] {
+  --fx-texture:
+    radial-gradient(28% 22% at 20% 30%, color-mix(in srgb, var(--fx-a) 9%, transparent) 60%, transparent 62%),
+    radial-gradient(22% 30% at 70% 65%, color-mix(in srgb, var(--fx-a) 7%, transparent) 60%, transparent 62%),
+    radial-gradient(18% 16% at 45% 85%, rgba(0, 0, 0, 0.25) 60%, transparent 62%),
+    radial-gradient(20% 18% at 85% 20%, rgba(0, 0, 0, 0.25) 60%, transparent 62%);
+}
+
+.panel[data-texture="streaks"] {
+  --fx-texture: repeating-linear-gradient(115deg, color-mix(in srgb, var(--fx-a) 4.5%, transparent) 0 1px, transparent 1px 22px);
+}
+
+/* Rot: bubbles and spores */
+.panel[data-texture="bubbles"] {
+  --fx-texture:
+    radial-gradient(circle at 15% 70%, transparent 0 9px, color-mix(in srgb, var(--fx-a) 16%, transparent) 9px 10px, transparent 10.5px),
+    radial-gradient(circle at 78% 30%, transparent 0 14px, color-mix(in srgb, var(--fx-a) 14%, transparent) 14px 15px, transparent 15.5px),
+    radial-gradient(circle at 60% 82%, transparent 0 6px, color-mix(in srgb, var(--fx-a) 16%, transparent) 6px 7px, transparent 7.5px),
+    radial-gradient(circle at 32% 22%, transparent 0 5px, color-mix(in srgb, var(--fx-a) 14%, transparent) 5px 6px, transparent 6.5px),
+    radial-gradient(circle, color-mix(in srgb, var(--fx-a) 10%, transparent) 0 1px, transparent 1.5px) 0 0 / 34px 34px;
+}
+
+/* A clean triangular grid */
+.panel[data-texture="hexgrid"] {
+  --fx-texture:
+    repeating-linear-gradient(0deg, color-mix(in srgb, var(--fx-a) 6.5%, transparent) 0 1px, transparent 1px 36px),
+    repeating-linear-gradient(60deg, color-mix(in srgb, var(--fx-a) 6.5%, transparent) 0 1px, transparent 1px 36px),
+    repeating-linear-gradient(120deg, color-mix(in srgb, var(--fx-a) 6.5%, transparent) 0 1px, transparent 1px 36px);
 }
 
 .panel-head {
@@ -2352,12 +2510,12 @@ kbd {
   font-size: 0.85rem;
 }
 
-/* End of a turn: one tab per player who can score */
+/* Tabs in the bottom bar, beside the button: no room taken above the cards */
 .cards-switch {
   display: flex;
   align-items: center;
-  gap: 0.4rem;
-  margin: -0.4rem 0 1rem;
+  gap: 0.3rem;
+  margin-right: 0.6rem;
 }
 
 .cards-switch[hidden] {
@@ -2367,13 +2525,13 @@ kbd {
 .cards-switch__side {
   display: flex;
   align-items: center;
-  gap: 0.55rem;
-  padding: 0.4rem 0.8rem;
+  gap: 0.45rem;
+  padding: 0.35rem 0.65rem;
   border: 1px solid var(--line-strong);
   border-radius: 4px;
   background: var(--surface);
   color: var(--muted);
-  font-size: 0.7rem;
+  font-size: 0.64rem;
   font-weight: 700;
   text-transform: uppercase;
   letter-spacing: 0.14em;
@@ -2412,6 +2570,28 @@ kbd {
   font-size: 0.75rem;
   letter-spacing: 0;
   text-align: center;
+}
+
+.cards-actions .cards-switch__link {
+  min-height: 0;
+  padding: 0.3rem 0.4rem;
+  border: none;
+  background: transparent;
+  color: var(--faint);
+  font-size: 0.66rem;
+  font-weight: 500;
+  letter-spacing: 0.02em;
+  text-decoration: underline;
+  text-decoration-color: transparent;
+  text-underline-offset: 3px;
+  transition:
+    color 0.15s ease,
+    text-decoration-color 0.15s ease;
+}
+
+.cards-actions .cards-switch__link:hover {
+  color: var(--muted);
+  text-decoration-color: currentColor;
 }
 
 .cards-switch kbd {
@@ -2459,6 +2639,7 @@ kbd {
   bottom: 0;
   z-index: 3;
   align-self: stretch;
+  align-items: center;
   justify-content: center;
   margin-top: 0.5rem;
   padding: 1.5rem 0 1rem;

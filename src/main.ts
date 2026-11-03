@@ -1,6 +1,7 @@
 import "./style.css";
 import { getLang, setLang, t, type Lang, type StringKey } from "./i18n";
-import { SECONDARY_BY_ID, SECONDARY_CARDS, type SecondaryCard } from "./secondaries";
+import { SECONDARY_BY_ID, SECONDARY_CARDS, type SecondaryCard, type Text } from "./secondaries";
+import { FACTION_BY_ID, FACTIONS, SPACE_MARINES, SPACE_MARINES_NAME, type FactionGroup } from "./factions";
 import {
   DISPOSITIONS,
   primaryFor,
@@ -70,17 +71,15 @@ const LANG_STORAGE_KEY = "warhammerClock.lang";
 
 const THEME_STORAGE_KEY = "warhammerClock.theme";
 
-/** Factions theme: each player's half takes the look of their army */
-const FACTIONS: { id: string; name: StringKey }[] = [
-  { id: "aeldari", name: "factionAeldari" },
-  { id: "chaos-space-marines", name: "factionChaosSpaceMarines" },
-  { id: "imperial-fists", name: "factionImperialFists" },
-  { id: "necrons", name: "factionNecrons" },
-  { id: "orks", name: "factionOrks" },
-  { id: "tyranids", name: "factionTyranids" },
-  { id: "ultramarines", name: "factionUltramarines" },
-];
 const FACTION_DEFAULTS: Record<Player, string> = { 1: "imperial-fists", 2: "tyranids" };
+/** Picking Space Marines starts on this chapter */
+const DEFAULT_CHAPTER = "ultramarines";
+const FACTION_GROUPS: { group: FactionGroup; label: StringKey }[] = [
+  { group: "imperium", label: "factionImperium" },
+  { group: "chaos", label: "factionChaos" },
+  { group: "xenos", label: "factionXenos" },
+];
+let factionOf: Record<Player, string> = { ...FACTION_DEFAULTS };
 const factionStorageKey = (player: Player): string => `warhammerClock.faction.p${player}`;
 const THEME_DEFAULT = "clean";
 
@@ -97,6 +96,15 @@ function formatTime(totalSeconds: number): string {
 
 const svgIcon = (body: string, viewBox = "0 0 24 24"): string =>
   `<svg class="icon" viewBox="${viewBox}" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">${body}</svg>`;
+
+/** A list drawn by the app, where the system's would break the look: a button and its options */
+const pickerHtml = (id: string): string => `
+  <span class="select picker">
+    <button type="button" class="picker__button" id="${id}" aria-haspopup="listbox" aria-expanded="false">
+      <span class="picker__swatch"></span><span class="picker__label"></span>${ICON_CHEVRON}
+    </button>
+    <div class="picker__list" role="listbox" hidden></div>
+  </span>`;
 
 /** A tiny clock screen in the theme's own colors: player 1's clock running, player 2's waiting */
 const themePreviewHtml = (theme: string): string =>
@@ -269,12 +277,8 @@ app.innerHTML = `
                   (player) => `
               <div class="faction-row">
                 <label class="faction-row__player is-p${player}" for="p${player}-faction" data-i18n="player" data-v-n="${player}"></label>
-                <span class="select">
-                  <select id="p${player}-faction">
-                    ${FACTIONS.map((faction) => `<option value="${faction.id}" data-i18n="${faction.name}"></option>`).join("")}
-                  </select>
-                  ${ICON_CHEVRON}
-                </span>
+                ${pickerHtml(`p${player}-faction`)}
+                <span class="faction-row__chapter" id="p${player}-chapter-wrap" hidden>${pickerHtml(`p${player}-chapter`)}</span>
               </div>`,
                 )
                 .join("")}
@@ -351,9 +355,9 @@ app.innerHTML = `
     <div class="cards-stage">
       <h2 class="cards-title" id="cards-title"></h2>
       <p class="cards-sub" id="cards-sub"></p>
-      <div class="cards-switch" id="cards-switch" role="group" data-i18n-aria="switchSideAria" hidden></div>
       <div class="cards-row" id="cards-row"></div>
       <div class="overlay-actions cards-actions">
+        <div class="cards-switch" id="cards-switch" role="group" data-i18n-aria="switchSideAria" hidden></div>
         <button type="button" class="btn-primary" id="btn-cards-close"><span data-i18n="continue"></span> <kbd data-i18n="keyEnter"></kbd></button>
       </div>
     </div>
@@ -397,9 +401,17 @@ app.innerHTML = `
 
 const themeOptions = app.querySelector<HTMLElement>("#theme-options")!;
 const factionsSection = app.querySelector<HTMLElement>("#factions-section")!;
-const factionSelect: Record<Player, HTMLSelectElement> = {
-  1: app.querySelector<HTMLSelectElement>("#p1-faction")!,
-  2: app.querySelector<HTMLSelectElement>("#p2-faction")!,
+const factionPickerEl: Record<Player, HTMLElement> = {
+  1: app.querySelector<HTMLElement>("#p1-faction")!.closest<HTMLElement>(".picker")!,
+  2: app.querySelector<HTMLElement>("#p2-faction")!.closest<HTMLElement>(".picker")!,
+};
+const chapterPickerEl: Record<Player, HTMLElement> = {
+  1: app.querySelector<HTMLElement>("#p1-chapter")!.closest<HTMLElement>(".picker")!,
+  2: app.querySelector<HTMLElement>("#p2-chapter")!.closest<HTMLElement>(".picker")!,
+};
+const chapterWrap: Record<Player, HTMLElement> = {
+  1: app.querySelector<HTMLElement>("#p1-chapter-wrap")!,
+  2: app.querySelector<HTMLElement>("#p2-chapter-wrap")!,
 };
 const layoutOptions = app.querySelector<HTMLElement>("#layout-options")!;
 const uiSizeOptions = app.querySelector<HTMLElement>("#ui-size-options")!;
@@ -794,6 +806,7 @@ function foldTimePicker(): void {
 }
 
 function closePopovers(): void {
+  closePicker();
   for (const [button, panel] of POPOVERS) {
     panel.hidden = true;
     button.setAttribute("aria-expanded", "false");
@@ -824,16 +837,197 @@ function applyTheme(theme: string): void {
 }
 
 /** On <html> for the player colors used everywhere, on the panel for its own decor */
-function applyFaction(player: Player, faction: string): void {
-  const v = FACTIONS.some(({ id }) => id === faction) ? faction : FACTION_DEFAULTS[player];
-  document.documentElement.dataset[`p${player}Faction`] = v;
-  (player === 1 ? panel1 : panel2).dataset.faction = v;
-  factionSelect[player].value = v;
+function applyFaction(player: Player, id: string): void {
+  const faction = FACTION_BY_ID.get(id) ?? FACTION_BY_ID.get(FACTION_DEFAULTS[player])!;
+  factionOf = { ...factionOf, [player]: faction.id };
+  const root = document.documentElement.style;
+  root.setProperty(`--fx${player}`, faction.color);
+  root.setProperty(`--fx${player}-time`, faction.time);
+  const panel = player === 1 ? panel1 : panel2;
+  panel.dataset.band = faction.band;
+  panel.dataset.texture = faction.texture;
+  panel.style.setProperty("--fx-a", faction.color);
+  panel.style.setProperty("--fx-b", faction.accent);
+  showFactionChoice(player);
   try {
-    localStorage.setItem(factionStorageKey(player), v);
+    localStorage.setItem(factionStorageKey(player), faction.id);
   } catch {
     /* quota / private mode */
   }
+}
+
+/** A chapter shows as Space Marines in the first list, the chapter itself in the second */
+function showFactionChoice(player: Player): void {
+  const faction = FACTION_BY_ID.get(factionOf[player])!;
+  setPickerValue(factionPickerEl[player], faction.chapter ? { ...faction, name: SPACE_MARINES_NAME } : faction);
+  setPickerValue(chapterPickerEl[player], faction);
+  chapterWrap[player].hidden = !faction.chapter;
+}
+
+function refreshFactionPickers(): void {
+  closePicker();
+  showFactionChoice(1);
+  showFactionChoice(2);
+}
+
+type PickerOption = { value: string; name: string; color: string; accent: string };
+type PickerGroup = { label: string; options: PickerOption[] };
+type Picker = { root: HTMLElement; groups: () => PickerGroup[]; selected: () => string; pick: (value: string) => void };
+
+const toPickerOption = ({ id, name, color, accent }: { id: string; name: Text; color: string; accent: string }): PickerOption => ({
+  value: id,
+  name: name[getLang()],
+  color,
+  accent,
+});
+
+const byLocalName = (a: { name: Text }, b: { name: Text }): number =>
+  a.name[getLang()].localeCompare(b.name[getLang()], getLang());
+
+/** Factions by group, in the language's order; Space Marines is one entry, its chapters a second list */
+function factionGroups(): PickerGroup[] {
+  const spaceMarines = { ...FACTION_BY_ID.get(SPACE_MARINES)!, name: SPACE_MARINES_NAME };
+  return FACTION_GROUPS.map(({ group, label }) => ({
+    label: t(label),
+    options: [
+      ...FACTIONS.filter((faction) => faction.group === group && !faction.chapter),
+      ...(group === "imperium" ? [spaceMarines] : []),
+    ]
+      .sort(byLocalName)
+      .map(toPickerOption),
+  }));
+}
+
+/** "Other chapter" closes the list, after the named chapters */
+function chapterGroups(): PickerGroup[] {
+  const chapters = FACTIONS.filter(({ chapter }) => chapter).sort(
+    (a, b) => Number(a.id === SPACE_MARINES) - Number(b.id === SPACE_MARINES) || byLocalName(a, b),
+  );
+  return [{ label: "", options: chapters.map(toPickerOption) }];
+}
+
+const factionPickers: Picker[] = ([1, 2] as const).flatMap((player) => [
+  {
+    root: factionPickerEl[player],
+    groups: factionGroups,
+    selected: () => (FACTION_BY_ID.get(factionOf[player])!.chapter ? SPACE_MARINES : factionOf[player]),
+    pick: (value: string) => {
+      // Space Marines again keeps the chapter already chosen
+      if (value === SPACE_MARINES && FACTION_BY_ID.get(factionOf[player])!.chapter) return;
+      applyFaction(player, value === SPACE_MARINES ? DEFAULT_CHAPTER : value);
+    },
+  },
+  {
+    root: chapterPickerEl[player],
+    groups: chapterGroups,
+    selected: () => factionOf[player],
+    pick: (value: string) => applyFaction(player, value),
+  },
+]);
+
+/* ---------- Pickers: the list opens upward, over the menu above it ---------- */
+
+let openPicker: Picker | null = null;
+
+const pickerButton = (picker: Picker): HTMLButtonElement => picker.root.querySelector<HTMLButtonElement>(".picker__button")!;
+const pickerList = (picker: Picker): HTMLElement => picker.root.querySelector<HTMLElement>(".picker__list")!;
+const pickerOptions = (picker: Picker): HTMLElement[] => [...pickerList(picker).querySelectorAll<HTMLElement>('[role="option"]')];
+
+function swatchEl({ color, accent }: { color: string; accent: string }): HTMLElement {
+  const swatch = document.createElement("span");
+  swatch.className = "picker__swatch";
+  swatch.style.setProperty("--sw-a", color);
+  swatch.style.setProperty("--sw-b", accent);
+  return swatch;
+}
+
+function setPickerValue(root: HTMLElement, value: { name: Text; color: string; accent: string }): void {
+  root.querySelector(".picker__label")!.textContent = value.name[getLang()];
+  root.querySelector(".picker__swatch")!.replaceWith(swatchEl(value));
+}
+
+function openPickerList(picker: Picker): void {
+  closePicker();
+  const selected = picker.selected();
+  const items = picker.groups().flatMap(({ label, options }) => {
+    const rows = options.map((option) => {
+      const row = document.createElement("div");
+      row.className = "picker__option";
+      row.setAttribute("role", "option");
+      row.setAttribute("aria-selected", String(option.value === selected));
+      row.tabIndex = -1;
+      row.dataset.value = option.value;
+      row.style.setProperty("--sw-a", option.color);
+      const name = document.createElement("span");
+      name.textContent = option.name;
+      row.append(swatchEl(option), name);
+      return row;
+    });
+    if (!label) return rows;
+    // Each group holds its header, which stays on top while its own factions scroll by
+    const section = document.createElement("div");
+    section.setAttribute("role", "group");
+    section.setAttribute("aria-label", label);
+    const header = document.createElement("div");
+    header.className = "picker__group";
+    header.setAttribute("aria-hidden", "true");
+    header.textContent = label;
+    section.append(header, ...rows);
+    return [section];
+  });
+  const list = pickerList(picker);
+  list.replaceChildren(...items);
+  list.hidden = false;
+  pickerButton(picker).setAttribute("aria-expanded", "true");
+  openPicker = picker;
+  const options = pickerOptions(picker);
+  focusPickerOption(options.find((row) => row.getAttribute("aria-selected") === "true") ?? options[0]);
+}
+
+function closePicker(refocus = false): void {
+  if (!openPicker) return;
+  const picker = openPicker;
+  openPicker = null;
+  pickerList(picker).hidden = true;
+  pickerButton(picker).setAttribute("aria-expanded", "false");
+  if (refocus) pickerButton(picker).focus();
+}
+
+function focusPickerOption(row: HTMLElement | undefined): void {
+  if (!row) return;
+  row.focus({ preventScroll: true });
+  row.scrollIntoView({ block: "nearest" });
+}
+
+function choosePickerOption(picker: Picker, value: string): void {
+  picker.pick(value);
+  closePicker(true);
+}
+
+const foldAccents = (text: string): string => text.normalize("NFD").replace(/\p{M}/gu, "").toLowerCase();
+
+/** Arrows, Home and End move, Enter or Space picks, Escape closes, a letter jumps to the next name with it */
+function onPickerKey(picker: Picker, e: KeyboardEvent): void {
+  const options = pickerOptions(picker);
+  const index = options.indexOf(document.activeElement as HTMLElement);
+  const at = (i: number): HTMLElement => options[Math.max(0, Math.min(options.length - 1, i))];
+  if (e.key === "Tab") {
+    closePicker();
+    return;
+  }
+  if (e.key === "ArrowDown") focusPickerOption(at(index + 1));
+  else if (e.key === "ArrowUp") focusPickerOption(at(index - 1));
+  else if (e.key === "Home") focusPickerOption(at(0));
+  else if (e.key === "End") focusPickerOption(at(options.length - 1));
+  else if ((e.key === "Enter" || e.key === " ") && index >= 0) choosePickerOption(picker, options[index].dataset.value!);
+  else if (e.key === "Escape") closePicker(true);
+  else if (e.key.length === 1 && /\p{L}/u.test(e.key)) {
+    const letter = foldAccents(e.key);
+    const after = [...options.slice(index + 1), ...options.slice(0, index + 1)];
+    focusPickerOption(after.find((row) => foldAccents(row.textContent ?? "").startsWith(letter)));
+  } else return;
+  e.preventDefault();
+  e.stopPropagation();
 }
 
 function loadFactions(): void {
@@ -912,6 +1106,7 @@ function applyLang(value: string): void {
     /* quota / private mode */
   }
   applyTranslations();
+  refreshFactionPickers();
   renderKeyHint();
   renderTurnDots();
   renderMiniCounters();
@@ -1990,6 +2185,10 @@ function cardsTabs(): CardsTab[] {
 }
 
 function renderCardsSwitch(): void {
+  if (cardsMode === "hand" || cardsMode === "scored") {
+    renderScoredLink();
+    return;
+  }
   const tabs = cardsTabs();
   cardsSwitch.hidden = tabs.length === 0;
   if (cardsSwitch.hidden) return;
@@ -2007,6 +2206,19 @@ function renderCardsSwitch(): void {
   const key = document.createElement("kbd");
   key.textContent = SWITCH_KEY;
   cardsSwitch.replaceChildren(...buttons, key);
+}
+
+/** Scored cards are a rare detour, to undo a misclick: a quiet link, only once something is scored */
+function renderScoredLink(): void {
+  const scored = cardsPlayer === null ? 0 : secondaries[cardsPlayer].scored.length;
+  cardsSwitch.hidden = cardsMode === "hand" && scored === 0;
+  if (cardsSwitch.hidden) return;
+  const link = document.createElement("button");
+  link.type = "button";
+  link.className = "cards-switch__link";
+  link.dataset.tab = cardsMode === "hand" ? "scored" : "hand";
+  link.textContent = cardsMode === "hand" ? t("seeScored", { n: scored }) : t("backToHand");
+  cardsSwitch.replaceChildren(link);
 }
 
 function showCardsTab(value: string): void {
@@ -2201,7 +2413,8 @@ function secondaryCardEl(player: Player, id: string, index: number, deal: boolea
     undo.className = "sec-action sec-action--undo";
     undo.textContent = t("unscoreBtn");
     actions.push(undo);
-  } else {
+  } else if (cardsMode === "draw") {
+    // A new card for 1 CP: only while drawing, never later from the hand
     const swapCard = document.createElement("button");
     swapCard.type = "button";
     swapCard.className = "sec-action sec-action--discard";
@@ -2759,7 +2972,7 @@ cardsRow.addEventListener("click", (e) => {
       if (option) scoreSecondary(player, id, repeatTotal(option), cardEl);
       break;
     case "swap":
-      swapSecondary(player, id, cardEl);
+      if (cardsMode === "draw") swapSecondary(player, id, cardEl);
       break;
     case "redraw":
       redrawSecondary(player, id);
@@ -3071,9 +3284,25 @@ timePicker.addEventListener("mouseenter", () => {
 });
 
 onSegmentedPick(themeOptions, applyTheme);
-for (const player of [1, 2] as const) {
-  factionSelect[player].addEventListener("change", () => applyFaction(player, factionSelect[player].value));
+for (const picker of factionPickers) {
+  const button = pickerButton(picker);
+  button.addEventListener("click", () => (openPicker === picker ? closePicker(true) : openPickerList(picker)));
+  // The bar's own keys (Enter starts the game) must not reach it while a list is at hand
+  button.addEventListener("keydown", (e) => {
+    if (!["Enter", " ", "ArrowDown", "ArrowUp"].includes(e.key)) return;
+    e.preventDefault();
+    e.stopPropagation();
+    openPickerList(picker);
+  });
+  pickerList(picker).addEventListener("keydown", (e) => onPickerKey(picker, e));
+  pickerList(picker).addEventListener("click", (e) => {
+    const row = (e.target as HTMLElement).closest<HTMLElement>('[role="option"]');
+    if (row) choosePickerOption(picker, row.dataset.value!);
+  });
 }
+document.addEventListener("pointerdown", (e) => {
+  if (openPicker && !openPicker.root.contains(e.target as Node)) closePicker();
+});
 onSegmentedPick(uiSizeOptions, applyUiSize);
 onSegmentedPick(layoutOptions, applyLayout);
 onSegmentedPick(langOptions, applyLang);
