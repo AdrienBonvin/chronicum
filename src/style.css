@@ -2699,6 +2699,7 @@ kbd {
 .overlay--cards[data-mode="hand"] .sec-card.is-dealt,
 .overlay--cards[data-mode="scored"] .sec-card.is-dealt,
 .overlay--cards[data-mode="mission"] .sec-card.is-dealt,
+.overlay--cards[data-mode="command"] .sec-card.is-dealt,
 .overlay--cards[data-mode="end-turn"] .sec-card.is-dealt {
   animation-duration: 0.4s;
   animation-delay: calc(var(--i, 0) * 60ms);
@@ -2738,6 +2739,12 @@ kbd {
 
 .sec-card.is-discarded {
   animation: cardDiscarded 0.4s ease-in forwards;
+  pointer-events: none;
+}
+
+/* Redrawn for free: back into the deck, the deal played backwards */
+.sec-card.is-returned {
+  animation: cardPutAway 0.45s cubic-bezier(0.75, 0, 0.8, 0.1) forwards;
   pointer-events: none;
 }
 

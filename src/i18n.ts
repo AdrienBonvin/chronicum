@@ -192,6 +192,8 @@ const EN = {
 
   // End of a turn
   endTurnScoringTitle: "End of player {n} turn",
+  commandTitle: "Player {n} Command phase",
+  commandSub: "Score what your primary gives at the end of your Command phase, or continue",
   endTurnScoringSub: "Score what you achieved, then end the turn",
   endTurnOpponentSub: "Player {n} can also score these at the end of this turn",
   endTurnBtn: "End turn",
@@ -386,6 +388,8 @@ const FR: Record<StringKey, string> = {
 
   // Fin d'un tour
   endTurnScoringTitle: "Fin du tour du joueur {n}",
+  commandTitle: "Phase de commandement du joueur {n}",
+  commandSub: "Marquez ce que votre primaire rapporte en fin de phase de commandement, ou continuez",
   endTurnScoringSub: "Marquez ce qui est rempli, puis terminez le tour",
   endTurnOpponentSub: "Le joueur {n} peut aussi les marquer à la fin de ce tour",
   endTurnBtn: "Terminer le tour",

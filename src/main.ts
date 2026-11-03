@@ -1986,7 +1986,7 @@ const WHEN_KEYS = { yours: "whenYours", any: "whenAny", opponent: "whenOpponent"
  * primaries reveal, one player's primary, or what scores at the end of a turn
  */
 let cardsPlayer: Player | null = null;
-let cardsMode: "draw" | "hand" | "scored" | "primary" | "mission" | "end-turn" = "hand";
+let cardsMode: "draw" | "hand" | "scored" | "primary" | "mission" | "command" | "end-turn" = "hand";
 /** The turn end waiting behind the end-of-turn scoring */
 let endTurnKind: TurnConfirmKind | null = null;
 /** Players who had something to score when it opened: with both, a switch goes from one to the other */
@@ -2023,7 +2023,11 @@ function startTurnSecondaries(player: Player): void {
   if (!secondaryCardsOn()) return;
   const drawn = drawSecondaries(player, 2);
   renderHandButtons();
-  if (drawn.length === 0) return;
+  if (drawn.length === 0) {
+    // Nothing left to draw: the Command phase scores still come up
+    if (!photoBreak && primaryScoresInCommand(player)) openCards(player, "command");
+    return;
+  }
   if (photoBreak) pendingDraw = { player, drawn };
   else openCards(player, "draw", drawn);
 }
@@ -2104,6 +2108,8 @@ function openCards(player: Player, mode: typeof cardsMode, drawn: string[] = [])
 
 function closeCards(putAway = true): void {
   if (cardsPlayer === null) return;
+  // The draw opens the turn, in its Command phase: once it is put away, the primary scores of that phase come up
+  const commandNext = putAway && cardsMode === "draw" && primaryScoresInCommand(cardsPlayer) ? cardsPlayer : null;
   cardsPlayer = null;
   drawnIds = [];
   endTurnKind = null;
@@ -2112,11 +2118,12 @@ function closeCards(putAway = true): void {
   const count = cardsRow.querySelectorAll(".sec-card").length;
   if (!putAway || count === 0 || prefersReducedMotion()) {
     hideCards();
-    return;
+  } else {
+    cardsRow.style.setProperty("--n", String(count));
+    cardsOverlay.classList.add("is-closing");
+    putAwayTimer = window.setTimeout(hideCards, PUT_AWAY_MS + (count - 1) * PUT_AWAY_STAGGER_MS);
   }
-  cardsRow.style.setProperty("--n", String(count));
-  cardsOverlay.classList.add("is-closing");
-  putAwayTimer = window.setTimeout(hideCards, PUT_AWAY_MS + (count - 1) * PUT_AWAY_STAGGER_MS);
+  if (commandNext !== null) openCards(commandNext, "command");
 }
 
 function hideCards(): void {
@@ -2142,6 +2149,18 @@ function scoresAtTurnEnd(owner: Player, when: SecondaryCard["when"] | PrimarySec
 
 function turnEndSecondaries(owner: Player): string[] {
   return secondaries[owner].hand.filter((id) => scoresAtTurnEnd(owner, SECONDARY_BY_ID.get(id)!.when));
+}
+
+/** Which primary lines score in the view: at a turn end or in the Command phase, only that moment's */
+function scoresInView(owner: Player, when: PrimarySection["when"]): boolean {
+  if (cardsMode === "end-turn") return scoresAtTurnEnd(owner, when);
+  if (cardsMode === "command") return when === "command";
+  return true;
+}
+
+function primaryScoresInCommand(owner: Player): boolean {
+  const card = primaryCards[owner];
+  return !!card && card.sections.some((section) => section.when === "command" && sectionOpen(owner, section));
 }
 
 function primaryScoresAtTurnEnd(owner: Player): boolean {
@@ -2269,6 +2288,9 @@ function renderCards(dealIds: string[] = []): void {
   if (cardsMode === "end-turn") {
     cardsTitle.textContent = t("endTurnScoringTitle", { n: turnPlayer });
     cardsSub.textContent = player === turnPlayer ? t("endTurnScoringSub") : t("endTurnOpponentSub", { n: player });
+  } else if (cardsMode === "command") {
+    cardsTitle.textContent = t("commandTitle", { n: player });
+    cardsSub.textContent = t("commandSub");
   } else if (cardsMode === "mission") {
     cardsTitle.textContent = t("missionTitle", { n: player });
     cardsSub.textContent = "";
@@ -2281,7 +2303,8 @@ function renderCards(dealIds: string[] = []): void {
     cardsSub.textContent = cardsMode === "draw" ? `${deck} · ${t("scoreFromHand")}` : deck;
   }
   // The primary card stays apart from the hand: on its own, or at a turn end when it scores
-  const withPrimary = cardsMode === "mission" || (cardsMode === "end-turn" && primaryScoresAtTurnEnd(player));
+  const withPrimary =
+    cardsMode === "mission" || cardsMode === "command" || (cardsMode === "end-turn" && primaryScoresAtTurnEnd(player));
   const primary = withPrimary && primaryCards[player] ? [primaryCardEl(player, 0, dealIds.includes(primaryCardId(player)), true)] : [];
   const cards = [
     ...primary,
@@ -2442,7 +2465,12 @@ function secondaryCardEl(player: Player, id: string, index: number, deal: boolea
 }
 
 /** The card leaves with an animation, then the cards are redrawn (`dealIds` flying in) */
-function playCardExit(cardEl: HTMLElement, exit: "is-scored" | "is-discarded", burst?: string, dealIds: string[] = []): void {
+function playCardExit(
+  cardEl: HTMLElement,
+  exit: "is-scored" | "is-discarded" | "is-returned",
+  burst?: string,
+  dealIds: string[] = [],
+): void {
   if (burst) {
     const label = document.createElement("span");
     label.className = "sec-card__burst";
@@ -2546,15 +2574,15 @@ function swapSecondary(player: Player, id: string, cardEl: HTMLElement): void {
 }
 
 /** Free redraw allowed by the card when drawn: it leaves, a new card is dealt in its place */
-function redrawSecondary(player: Player, id: string): void {
+function redrawSecondary(player: Player, id: string, cardEl: HTMLElement): void {
   const data = SECONDARY_BY_ID.get(id);
   if (!data?.redraw) return;
   const [replacement] = drawSecondaries(player, 1);
   if (!replacement) return;
   moveSecondary(player, id, data.redraw.to);
   drawnIds = drawnIds.map((cardId) => (cardId === id ? replacement : cardId));
-  renderCards([replacement]);
-  renderHandButtons();
+  // Back to the deck it goes the way it came, to the discard it falls
+  playCardExit(cardEl, data.redraw.to === "deck" ? "is-returned" : "is-discarded", undefined, [replacement]);
 }
 
 /* ---------- Force dispositions and primary missions ---------- */
@@ -2678,7 +2706,7 @@ function primaryCardEl(player: Player, index: number, deal: boolean, scorable: b
   const sections = data.sections.map((section, s) => {
     const turnKey = sectionTurnKey(player, section);
     // At a turn end, only what scores at that moment: a Command phase line waits for the next turn
-    const scoresNow = sectionOpen(player, section) && (cardsMode !== "end-turn" || scoresAtTurnEnd(player, section.when));
+    const scoresNow = sectionOpen(player, section) && scoresInView(player, section.when);
     const open = scorable && scoresNow;
     const pickedInSection = section.items.some((_, i) => scored.has(`${turnKey}|${s}|${i}`));
     const block = document.createElement("section");
@@ -2968,7 +2996,7 @@ cardsRow.addEventListener("click", (e) => {
   }
   const button = target.closest<HTMLButtonElement>("button[data-action]");
   const cardEl = button?.closest<HTMLElement>(".sec-card");
-  if (button && cardEl?.dataset.primaryPlayer && (cardsMode === "mission" || cardsMode === "end-turn")) {
+  if (button && cardEl?.dataset.primaryPlayer && ["mission", "command", "end-turn"].includes(cardsMode)) {
     const owner = Number(cardEl.dataset.primaryPlayer) as Player;
     const card = primaryCards[owner];
     const s = Number(button.dataset.section ?? button.closest<HTMLElement>(".sec-option--repeat")?.dataset.section);
@@ -3022,7 +3050,7 @@ cardsRow.addEventListener("click", (e) => {
       if (cardsMode === "draw") swapSecondary(player, id, cardEl);
       break;
     case "redraw":
-      redrawSecondary(player, id);
+      redrawSecondary(player, id, cardEl);
       break;
   }
 });
