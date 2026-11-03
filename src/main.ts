@@ -15,6 +15,9 @@ const DEFAULT_TIME_SEC = 7200;
 
 type ScoreKind = "primary" | "secondary";
 
+/** Mission rule: at most 15 primary and 15 secondary points per player turn */
+const MAX_POINTS_PER_TURN = 15;
+
 const SCORE_KINDS: { kind: ScoreKind; label: string }[] = [
   { kind: "primary", label: "Primary" },
   { kind: "secondary", label: "Secondary" },
@@ -72,7 +75,14 @@ function scoreCounterHtml(player: Player, corner: "tl" | "bl"): string {
         <div class="score-box__head">
           <span class="mini-counter__label">Score</span>
           <span class="score-box__total" id="p${player}-score-total">0</span>
-        </div>${rows}
+        </div>
+        <span class="score-box__turn" id="p${player}-score-turn">Turn 1</span>${rows}
+        <div class="score-box__row score-box__row--bonus" id="p${player}-bonus-row" hidden title="End-of-game mission bonus: primary points outside the ${MAX_POINTS_PER_TURN} per turn">
+          <span class="score-box__kind">End bonus</span>
+          <button type="button" class="mini-counter__btn" id="p${player}-bonus-minus" aria-label="Player ${player} end-game bonus minus one">−</button>
+          <span class="mini-counter__val" id="p${player}-bonus-val">0</span>
+          <button type="button" class="mini-counter__btn" id="p${player}-bonus-plus" aria-label="Player ${player} end-game bonus plus one">+</button>
+        </div>
       </div>`;
 }
 
@@ -293,6 +303,8 @@ let turnPlayer: Player = 1;
 let running = false;
 /** True after Pause mid-match; Space resumes without resetting times from inputs */
 let paused = false;
+/** The match ended (scores compared or a clock ran out); only Reset starts a new one */
+let gameOver = false;
 /** Wall-clock ms (`Date.now()`): advances across sleep/lock unlike `performance.now()` in some browsers */
 let lastTickWallMs = 0;
 let raf = 0;
@@ -333,9 +345,15 @@ function sum(values: number[]): number {
   return values.reduce((total, n) => total + n, 0);
 }
 
+/** End-of-game mission bonus: primary points that don't count toward the per-turn cap */
+let endBonus: Record<Player, number> = { 1: 0, 2: 0 };
+
 function scoreOf(player: Player, kind?: ScoreKind): number {
   const turns = scoreByTurn[player];
-  return kind ? sum(turns[kind]) : sum(turns.primary) + sum(turns.secondary);
+  const primary = sum(turns.primary) + endBonus[player];
+  if (kind === "primary") return primary;
+  if (kind === "secondary") return sum(turns.secondary);
+  return primary + sum(turns.secondary);
 }
 
 /**
@@ -354,7 +372,6 @@ let cpHistoryRemoved1 = Array<number>(MAX_PLAYER_TURNS).fill(0);
 let cpHistoryAdded2 = Array<number>(MAX_PLAYER_TURNS).fill(0);
 let cpHistoryRemoved2 = Array<number>(MAX_PLAYER_TURNS).fill(0);
 
-const MAX_PANEL_SCORE = 999;
 const MAX_PANEL_CP = 30;
 
 let abilities: Record<Player, Ability[]> = { 1: [], 2: [] };
@@ -424,7 +441,11 @@ function renderResultTable(): void {
         <th scope="col" class="is-group">Pri</th><th scope="col">Sec</th>
       </tr>
     </thead>
-    <tbody>${roundRows}</tbody>
+    <tbody>${roundRows}${
+      endBonus[1] || endBonus[2]
+        ? `<tr class="result-table__bonus"><th scope="row">End bonus</th><td class="is-group">${endBonus[1]}</td><td>–</td><td class="is-group">${endBonus[2]}</td><td>–</td></tr>`
+        : ""
+    }</tbody>
     <tfoot>
       <tr class="result-table__subtotal"><th scope="row">Subtotal</th>${cells(scoreOf(1, "primary"), scoreOf(1, "secondary"))}${cells(scoreOf(2, "primary"), scoreOf(2, "secondary"))}</tr>
       <tr class="result-table__total"><th scope="row">Total</th><td colspan="2" class="is-group">${scoreOf(1)}</td><td colspan="2" class="is-group">${scoreOf(2)}</td></tr>
@@ -445,6 +466,7 @@ function showResultOverlay(heading: string, message: string, winner: Player | nu
 function finishGameByScore(): void {
   running = false;
   paused = true;
+  gameOver = true;
   lastSpaceTime = 0;
   stopLoop();
   syncInputsFromState();
@@ -610,8 +632,8 @@ function setActivePanels(): void {
     panel1.classList.remove("is-active", "is-idle");
     panel2.classList.remove("is-active", "is-idle");
     // Keep showing whose player turn it is while the clocks are paused
-    panel1.classList.toggle("is-turn", paused && turnPlayer === 1);
-    panel2.classList.toggle("is-turn", paused && turnPlayer === 2);
+    panel1.classList.toggle("is-turn", paused && !gameOver && turnPlayer === 1);
+    panel2.classList.toggle("is-turn", paused && !gameOver && turnPlayer === 2);
     return;
   }
   const activePanel = active === 1 ? panel1 : panel2;
@@ -635,6 +657,8 @@ function renderKeyHint(): void {
   if (running) {
     keyHint.innerHTML =
       "<kbd>Enter</kbd> end turn <span class=\"key-hint__sep\"></span> <kbd>Space</kbd> switch clock <span class=\"key-hint__sep\"></span> <kbd>Space</kbd><kbd>Space</kbd> pause";
+  } else if (gameOver) {
+    keyHint.innerHTML = "<span class=\"key-hint__status\">Game over</span> Reset to play again";
   } else if (paused) {
     keyHint.innerHTML = "<span class=\"key-hint__status\">Paused</span> <kbd>Space</kbd> resume";
   } else {
@@ -645,7 +669,8 @@ function renderKeyHint(): void {
 function updateButtons(): void {
   /* Start / pause are keyboard-driven only (Enter / Space / double-space). */
   app.classList.toggle("match-started", running || paused);
-  app.classList.toggle("is-paused", paused && !running);
+  app.classList.toggle("is-paused", paused && !running && !gameOver);
+  app.classList.toggle("is-game-over", gameOver);
   renderKeyHint();
 }
 
@@ -748,6 +773,7 @@ function switchTurn(): void {
 function endGame(winner: Player): void {
   running = false;
   paused = true;
+  gameOver = true;
   lastSpaceTime = 0;
   void releaseWakeLock();
   stopLoop();
@@ -768,6 +794,7 @@ function start(): void {
   hideTurnConfirmModal();
   hideResultOverlay();
   paused = false;
+  gameOver = false;
   const { a, b } = readMinutes();
   seconds1 = a * 60;
   seconds2 = b * 60;
@@ -807,6 +834,7 @@ function pause(): void {
 function reset(): void {
   running = false;
   paused = false;
+  gameOver = false;
   lastSpaceTime = 0;
   void releaseWakeLock();
   stopLoop();
@@ -828,6 +856,7 @@ function reset(): void {
   renderTurnDots();
   endPhotoBreak();
   scoreByTurn = { 1: emptyTurnScores(), 2: emptyTurnScores() };
+  endBonus = { 1: 0, 2: 0 };
   cp1 = 1;
   cp2 = 1;
   cpHistoryAdded1 = Array<number>(MAX_PLAYER_TURNS).fill(0);
@@ -848,10 +877,20 @@ function reset(): void {
 
 function renderMiniCounters(): void {
   for (const player of [1, 2] as const) {
+    // The total covers the whole game; primary and secondary show the player's current turn only
+    const turnIdx = scoringTurnIdx(player);
     scoreTotalEl[player].textContent = String(scoreOf(player));
+    app.querySelector<HTMLElement>(`#p${player}-score-turn`)!.textContent = `Turn ${turnIdx + 1}`;
     for (const { kind } of SCORE_KINDS) {
-      app.querySelector<HTMLElement>(`#p${player}-${kind}-val`)!.textContent = String(scoreOf(player, kind));
+      const points = scoreByTurn[player][kind][turnIdx];
+      app.querySelector<HTMLElement>(`#p${player}-${kind}-val`)!.textContent = String(points);
+      const plus = app.querySelector<HTMLButtonElement>(`#p${player}-${kind}-plus`)!;
+      plus.disabled = points >= MAX_POINTS_PER_TURN;
+      plus.title = plus.disabled ? `${MAX_POINTS_PER_TURN} points max per turn` : "";
     }
+    app.querySelector<HTMLElement>(`#p${player}-bonus-row`)!.hidden =
+      !(running || paused) || turnIdx !== MAX_GAME_TURN - 1;
+    app.querySelector<HTMLElement>(`#p${player}-bonus-val`)!.textContent = String(endBonus[player]);
   }
   p1CpVal.textContent = String(cp1);
   p2CpVal.textContent = String(cp2);
@@ -928,6 +967,17 @@ function renderScoreTooltipContent(player: Player): void {
       marker.setAttribute("aria-hidden", "true");
       row.appendChild(marker);
     }
+    scoreTooltipEl.appendChild(row);
+  }
+  if (endBonus[player] > 0) {
+    const row = document.createElement("div");
+    row.className = "score-tooltip__row";
+    const label = document.createElement("span");
+    label.textContent = "End bonus";
+    const value = document.createElement("span");
+    value.className = "score-tooltip__value";
+    value.textContent = `+${endBonus[player]} pri`;
+    row.append(label, value);
     scoreTooltipEl.appendChild(row);
   }
 }
@@ -1254,14 +1304,12 @@ function adjustScore(player: Player, kind: ScoreKind, delta: 1 | -1): void {
   const turns = scoreByTurn[player][kind];
   const turnIdx = scoringTurnIdx(player);
   if (delta > 0) {
-    if (sum(turns) >= MAX_PANEL_SCORE) return;
+    if (turns[turnIdx] >= MAX_POINTS_PER_TURN) return;
     turns[turnIdx] += 1;
   } else {
-    // A minus corrects the latest points scored: this turn first, then the turns before it
-    let idx = turnIdx;
-    while (idx >= 0 && turns[idx] === 0) idx--;
-    if (idx < 0) return;
-    turns[idx] -= 1;
+    // The counter shows this turn only, so a minus can only take back this turn's points
+    if (turns[turnIdx] === 0) return;
+    turns[turnIdx] -= 1;
   }
   renderMiniCounters();
 }
@@ -1315,12 +1363,19 @@ function gainCpBothPlayers(): void {
   renderMiniCounters();
 }
 
-const scoreActions = ([1, 2] as const).flatMap((player) =>
-  SCORE_KINDS.flatMap(({ kind }): [string, () => void][] => [
+function adjustEndBonus(player: Player, delta: 1 | -1): void {
+  endBonus[player] = Math.max(0, endBonus[player] + delta);
+  renderMiniCounters();
+}
+
+const scoreActions = ([1, 2] as const).flatMap((player): [string, () => void][] => [
+  ...SCORE_KINDS.flatMap(({ kind }): [string, () => void][] => [
     [`p${player}-${kind}-minus`, () => { adjustScore(player, kind, -1); }],
     [`p${player}-${kind}-plus`, () => { adjustScore(player, kind, 1); }],
   ]),
-);
+  [`p${player}-bonus-minus`, () => { adjustEndBonus(player, -1); }],
+  [`p${player}-bonus-plus`, () => { adjustEndBonus(player, 1); }],
+]);
 
 const miniCounterActions: [string, () => void][] = [
   ...scoreActions,
@@ -1450,6 +1505,7 @@ function isButtonTarget(el: EventTarget | null): boolean {
 /** Space bar and taps on the timer area (same behavior) */
 function handleSpaceLikeInput(): void {
   if (!running) {
+    if (gameOver) return;
     if (paused) resume();
     else return;
     return;
@@ -1524,6 +1580,7 @@ window.addEventListener("keydown", (e) => {
     if (shouldIgnoreSpaceLike(e.target)) return;
     if (!running) {
       e.preventDefault();
+      if (gameOver) return;
       if (paused) handleSpaceLikeInput();
       else openTurnConfirmModal("start-game");
       return;

@@ -599,7 +599,8 @@ kbd {
 }
 
 #app.is-paused .time,
-#app.is-photo-break .time {
+#app.is-photo-break .time,
+#app.is-game-over .time {
   opacity: 0.55;
 }
 
@@ -776,11 +777,34 @@ kbd {
   color: var(--text);
 }
 
+.score-box__turn {
+  font-size: 0.56rem;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.16em;
+  color: var(--muted);
+}
+
 .score-box__row {
   display: grid;
   grid-template-columns: 1fr auto auto auto;
   align-items: center;
   gap: 0.3rem;
+}
+
+.score-box__row[hidden] {
+  display: none;
+}
+
+/* Last turn only: mission bonus, set apart from the capped per-turn points */
+.score-box__row--bonus {
+  margin-top: 0.15rem;
+  padding-top: 0.35rem;
+  border-top: 1px dashed var(--line-strong);
+}
+
+.score-box__row--bonus .score-box__kind {
+  color: var(--pc);
 }
 
 .score-box__kind {
