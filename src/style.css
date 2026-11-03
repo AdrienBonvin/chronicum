@@ -2475,16 +2475,6 @@ kbd {
     background-color 0.3s ease;
 }
 
-/* Only the cards catch the mouse: score and CP counters stay usable around them,
-   e.g. to score primary at the start of the turn while the draw is on screen */
-.overlay.overlay--cards.is-visible {
-  pointer-events: none;
-}
-
-.overlay--cards.is-visible .cards-stage {
-  pointer-events: auto;
-}
-
 .cards-stage {
   zoom: var(--ui-scale);
   display: flex;
@@ -3307,6 +3297,8 @@ button.sec-option:hover:not(:disabled) {
   background-color: transparent;
 }
 
+/* While they are put away, clicks already reach the board */
+.overlay.overlay--cards.is-closing,
 .overlay--cards.is-closing .cards-stage {
   pointer-events: none;
 }

@@ -2935,6 +2935,11 @@ function continueCards(): void {
 }
 
 btnCardsClose.addEventListener("click", continueCards);
+// The board behind is out of reach; a click beside the cards goes back to it, as Escape does
+cardsOverlay.addEventListener("click", (e) => {
+  if (cardsPlayer === null || (e.target as HTMLElement).closest(".sec-card, button, a")) return;
+  closeCards();
+});
 dispoOverlay.addEventListener("click", (e) => {
   const option = (e.target as HTMLElement).closest<HTMLButtonElement>(".dispo-option");
   if (!option) return;
