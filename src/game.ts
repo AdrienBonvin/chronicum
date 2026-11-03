@@ -1,0 +1,200 @@
+/*
+ * The state of a game, in one plain object: everything both players must agree on, and nothing
+ * about the screen. It survives JSON as is, so it can be saved or sent to another device.
+ * The clocks are kept as a time left and the moment the running one started: any device works
+ * out the same time left from them, without a tick to share.
+ */
+import { SECONDARY_CARDS } from "./secondaries";
+import type { Disposition } from "./primaries";
+
+export type Player = 1 | 2;
+
+export const MAX_GAME_TURN = 5;
+/** 5 battle rounds × 2 players */
+export const MAX_PLAYER_TURNS = MAX_GAME_TURN * 2;
+/** Mission rule: at most 15 primary and 15 secondary points per player turn */
+export const MAX_POINTS_PER_TURN = 15;
+export const MAX_PANEL_CP = 30;
+export const DEFAULT_TIME_SEC = 7200;
+
+export type ScoreKind = "primary" | "secondary";
+
+/** CP effects given by a unit or a character */
+export type AbilityKind = "discount" | "round-cp" | "turn-cp";
+
+export type Ability = {
+  id: number;
+  kind: AbilityKind;
+  /** Its character is gone; a reset brings it back for the next game */
+  lost: boolean;
+  /** Discount only: already used this battle round */
+  spent: boolean;
+};
+
+/** A scored card keeps what it gave and when, so a misclick can be undone */
+export type ScoredSecondary = { id: string; vp: number; turn: number };
+export type SecondaryPile = { deck: string[]; hand: string[]; discard: string[]; scored: ScoredSecondary[] };
+
+/**
+ * setup: the clocks are being set. running: a clock runs. paused: stopped mid-game.
+ * over: the result is known; the board stays until a reset
+ */
+export type Phase = "setup" | "running" | "paused" | "over";
+
+export type Clock = {
+  /** Seconds left; for the running clock, as of `since` */
+  left: Record<Player, number>;
+  /** The clock that runs, or runs again once resumed */
+  active: Player;
+  /** Wall-clock ms when the active clock started running; null while the clocks are stopped */
+  since: number | null;
+};
+
+export type GameState = {
+  phase: Phase;
+  clock: Clock;
+  /** Whose player turn it is. Only the end of a turn changes it; switching the clock doesn't */
+  turnPlayer: Player;
+  /** Current battle round (1–5): Player 1's turn, then Player 2's */
+  round: number;
+  /** Clocks frozen while players photograph the table between two player turns */
+  photoBreak: boolean;
+  /** Chosen before the game, fixed during it */
+  options: { photoBreaks: boolean; cards: boolean };
+  cp: Record<Player, number>;
+  /** CP added and removed by hand, per player-turn slot. Not the automatic +1 per turn */
+  cpHistory: Record<Player, { added: number[]; removed: number[] }>;
+  /** Points per own player turn; totals are always derived from these */
+  scoreByTurn: Record<Player, Record<ScoreKind, number[]>>;
+  /** End-of-game mission bonus: primary points that don't count toward the per-turn cap */
+  endBonus: Record<Player, number>;
+  abilities: Record<Player, Ability[]>;
+  nextAbilityId: number;
+  /** On top of the Command phase CP, a player gains at most 1 CP per battle round (11th edition) */
+  bonusCpGained: Record<Player, boolean>;
+  secondaries: Record<Player, SecondaryPile>;
+  /** Swapping a card for a new one (−1 CP) is allowed once per battle */
+  newCardUsed: Record<Player, boolean>;
+  dispositions: Record<Player, Disposition | null>;
+  /** Each player's primary card (its id), once both dispositions are revealed */
+  primaries: Record<Player, string | null>;
+  /** Points scored by each primary line and turn ("turn|section|item"): a second click undoes it */
+  primaryScored: Record<Player, Record<string, number>>;
+};
+
+export const other = (player: Player): Player => (player === 1 ? 2 : 1);
+
+export function emptyTurnScores(): Record<ScoreKind, number[]> {
+  return {
+    primary: Array<number>(MAX_GAME_TURN).fill(0),
+    secondary: Array<number>(MAX_GAME_TURN).fill(0),
+  };
+}
+
+export function emptyCpHistory(): { added: number[]; removed: number[] } {
+  return { added: Array<number>(MAX_PLAYER_TURNS).fill(0), removed: Array<number>(MAX_PLAYER_TURNS).fill(0) };
+}
+
+function shuffled<T>(items: T[]): T[] {
+  const result = [...items];
+  for (let i = result.length - 1; i > 0; i--) {
+    const j = Math.floor(Math.random() * (i + 1));
+    [result[i], result[j]] = [result[j], result[i]];
+  }
+  return result;
+}
+
+export function newSecondaryPile(): SecondaryPile {
+  return { deck: shuffled(SECONDARY_CARDS.map(({ id }) => id)), hand: [], discard: [], scored: [] };
+}
+
+export function newGame(seconds: number = DEFAULT_TIME_SEC): GameState {
+  return {
+    phase: "setup",
+    clock: { left: { 1: seconds, 2: seconds }, active: 1, since: null },
+    turnPlayer: 1,
+    round: 1,
+    photoBreak: false,
+    options: { photoBreaks: false, cards: true },
+    cp: { 1: 1, 2: 1 },
+    cpHistory: { 1: emptyCpHistory(), 2: emptyCpHistory() },
+    scoreByTurn: { 1: emptyTurnScores(), 2: emptyTurnScores() },
+    endBonus: { 1: 0, 2: 0 },
+    abilities: { 1: [], 2: [] },
+    nextAbilityId: 1,
+    bonusCpGained: { 1: false, 2: false },
+    secondaries: { 1: newSecondaryPile(), 2: newSecondaryPile() },
+    newCardUsed: { 1: false, 2: false },
+    dispositions: { 1: null, 2: null },
+    primaries: { 1: null, 2: null },
+    primaryScored: { 1: {}, 2: {} },
+  };
+}
+
+/* ---------- Phase ---------- */
+
+/** Started and not reset: running, paused or over */
+export const inGame = (game: GameState): boolean => game.phase !== "setup";
+/** Stopped mid-game, or over */
+export const isStopped = (game: GameState): boolean => game.phase === "paused" || game.phase === "over";
+
+/* ---------- Clocks ---------- */
+
+/** Seconds left on a player's clock at `now` */
+export function secondsLeft(clock: Clock, player: Player, now = Date.now()): number {
+  if (player !== clock.active || clock.since === null) return clock.left[player];
+  // A clock set back on the device never gives time back
+  return clock.left[player] - Math.max(0, now - clock.since) / 1000;
+}
+
+/** Banks the running clock's time, so the next change starts from now */
+export function settleClock(clock: Clock, now = Date.now()): void {
+  if (clock.since === null) return;
+  clock.left[clock.active] = secondsLeft(clock, clock.active, now);
+  clock.since = now;
+}
+
+export function stopClock(clock: Clock, now = Date.now()): void {
+  settleClock(clock, now);
+  clock.since = null;
+}
+
+export function runClock(clock: Clock, now = Date.now()): void {
+  if (clock.since === null) clock.since = now;
+}
+
+/** The other clock runs from now on (or will, once resumed) */
+export function setActiveClock(clock: Clock, player: Player, now = Date.now()): void {
+  settleClock(clock, now);
+  clock.active = player;
+}
+
+/* ---------- Scores ---------- */
+
+const sum = (values: number[]): number => values.reduce((total, n) => total + n, 0);
+
+export function scoreOf(game: GameState, player: Player, kind?: ScoreKind): number {
+  const turns = game.scoreByTurn[player];
+  const primary = sum(turns.primary) + game.endBonus[player];
+  if (kind === "primary") return primary;
+  if (kind === "secondary") return sum(turns.secondary);
+  return primary + sum(turns.secondary);
+}
+
+/**
+ * Points count for the scorer's latest own turn: an action started in Player 2's turn 2
+ * that completes during Player 1's turn 3 still scores for Player 2's turn 2.
+ */
+export function scoringTurnIdx(game: GameState, player: Player): number {
+  const ownTurn = player === 1 || game.turnPlayer === 2 ? game.round : game.round - 1;
+  return Math.max(0, Math.min(MAX_GAME_TURN - 1, ownTurn - 1));
+}
+
+/** Player-turn slot of the CP history: round 1 P1, round 1 P2, round 2 P1… */
+export function playerTurnSlot(round: number, player: Player): number {
+  return (round - 1) * 2 + (player - 1);
+}
+
+export function clampCp(n: number): number {
+  return Math.max(0, Math.min(MAX_PANEL_CP, n));
+}

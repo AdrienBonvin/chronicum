@@ -428,3 +428,5 @@ export const PRIMARY_CARDS: PrimaryCard[] = [
 export function primaryFor(mine: Disposition, theirs: Disposition): PrimaryCard {
   return PRIMARY_CARDS.find((primary) => primary.deck === mine && primary.vs === theirs)!;
 }
+
+export const PRIMARY_BY_ID = new Map(PRIMARY_CARDS.map((primary) => [primary.id, primary]));
