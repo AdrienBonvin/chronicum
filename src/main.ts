@@ -2,6 +2,7 @@ import "./style.css";
 import { getLang, setLang, t, type Lang, type StringKey } from "./i18n";
 import { SECONDARY_BY_ID, SECONDARY_CARDS, type SecondaryCard, type Text } from "./secondaries";
 import { FACTION_BY_ID, FACTIONS, SPACE_MARINES, SPACE_MARINES_NAME, type FactionGroup } from "./factions";
+import { applyUpdateIfIdle, setupPwa } from "./pwa";
 import {
   isMuted,
   playSound,
@@ -1582,6 +1583,8 @@ function reset(): void {
     }
     renderAbilities(player);
   }
+  // A new version of the app, downloaded during the game, comes in with the empty board
+  applyUpdateIfIdle();
 }
 
 function renderMiniCounters(): void {
@@ -3612,3 +3615,6 @@ document.addEventListener("visibilitychange", () => {
 window.addEventListener("pageshow", (e) => {
   if (e.persisted) applyWallClockCatchUp();
 });
+
+// Paused or over still counts as a game: its board stays until a reset
+setupPwa(() => running || paused);
