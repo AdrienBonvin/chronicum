@@ -4,6 +4,7 @@
   box-sizing: border-box;
 }
 
+/* Theme tokens. A theme (data-theme on <html>) only changes these values */
 :root {
   --bg: #07090d;
   --surface: #0d1118;
@@ -13,18 +14,41 @@
   --muted: #7f8a99;
   --faint: #3d4552;
   --danger: #ff5f5f;
+  /* Current round, chosen option, primary button */
+  --accent: var(--text);
+  --on-accent: var(--bg);
   /* Player colors: the only two accents of the board */
   --p1: #4a9bff;
-  --p1-soft: rgba(74, 155, 255, 0.08);
-  --p1-line: rgba(74, 155, 255, 0.5);
   --p1-time: #d4e6ff;
   --p2: #ff5d77;
-  --p2-soft: rgba(255, 93, 119, 0.08);
-  --p2-line: rgba(255, 93, 119, 0.5);
   --p2-time: #ffdbe1;
+  --p1-soft: color-mix(in srgb, var(--p1) 8%, transparent);
+  --p1-line: color-mix(in srgb, var(--p1) 50%, transparent);
+  --p1-glow: color-mix(in srgb, var(--p1) 35%, transparent);
+  --p2-soft: color-mix(in srgb, var(--p2) 8%, transparent);
+  --p2-line: color-mix(in srgb, var(--p2) 50%, transparent);
+  --p2-glow: color-mix(in srgb, var(--p2) 30%, transparent);
   --font-ui: "Chakra Petch", system-ui, sans-serif;
   --font-num: "JetBrains Mono", ui-monospace, monospace;
   font-family: var(--font-ui);
+}
+
+/* War zone: dark warm greys, orange, and hazard tape on the no man's land between the players */
+:root[data-theme="warzone"] {
+  --bg: #0b0b0a;
+  --surface: #151513;
+  --line: rgba(255, 240, 220, 0.08);
+  --line-strong: rgba(255, 240, 220, 0.17);
+  --text: #ece7df;
+  --muted: #8d877d;
+  --faint: #47433d;
+  --accent: #ff7a1a;
+  --on-accent: #0b0b0a;
+  --p1: #ff7a1a;
+  --p1-time: #ffe2cc;
+  --p2: #8fb3cc;
+  --p2-time: #e1ebf2;
+  --hazard: repeating-linear-gradient(-45deg, #f2b705 0 8px, #0b0b0a 8px 16px);
 }
 
 html,
@@ -98,9 +122,10 @@ body {
   }
 }
 
-/* Labels around the clocks follow the interface size too */
-.toolbar,
+/* Labels around the clocks follow the interface size too. The setup bar does not: its menu
+   holds that very setting, so it must stay put and on screen whatever size is picked */
 .panel-head,
+.turn-tracker__controls,
 .turn-tracker__round,
 .key-hint {
   zoom: var(--ui-scale);
@@ -158,42 +183,128 @@ body {
   }
 }
 
-/* ---------- Toolbar ---------- */
+/* ---------- Setup bar (hidden once the match starts) ---------- */
 
 .toolbar {
   flex: 0 0 auto;
   display: flex;
   flex-wrap: wrap;
   align-items: center;
-  justify-content: center;
-  gap: 0.75rem 1.25rem;
-  padding: 0.55rem 1rem;
+  justify-content: space-between;
+  gap: 0.75rem 1.5rem;
+  padding: 0.65rem 1rem;
   background: var(--bg);
   border-bottom: 1px solid var(--line);
   position: relative;
   z-index: 4;
-  transition: opacity 0.25s ease;
 }
 
-/* During a match the settings step back; they come back on hover or keyboard focus */
 #app.match-started .toolbar {
-  opacity: 0.35;
+  display: none;
 }
 
-#app.match-started .toolbar:hover,
-#app.match-started .toolbar:focus-within {
-  opacity: 1;
+/* Readable on big monitors without depending on the interface size */
+@media (min-width: 2200px) {
+  .toolbar {
+    zoom: 1.3;
+  }
 }
 
-.toolbar label {
+@media (min-width: 3000px) {
+  .toolbar {
+    zoom: 1.6;
+  }
+}
+
+.toolbar__group {
   display: flex;
+  flex-wrap: wrap;
   align-items: center;
+  gap: 0.75rem 1.25rem;
+}
+
+.toolbar__group--end {
   gap: 0.5rem;
+}
+
+.icon {
+  width: 1.1rem;
+  height: 1.1rem;
+  flex: 0 0 auto;
+}
+
+.setting {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 0.6rem;
+}
+
+.setting__label {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.4rem;
   font-size: 0.68rem;
   font-weight: 600;
   text-transform: uppercase;
   letter-spacing: 0.16em;
   color: var(--muted);
+}
+
+/* One choice among a few, all visible: the chosen one is filled, like the current round */
+.segmented {
+  display: inline-flex;
+  padding: 2px;
+  gap: 2px;
+  border: 1px solid var(--line-strong);
+  border-radius: 5px;
+  background: var(--surface);
+}
+
+.segmented__option {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.45rem;
+  padding: 0.3rem 0.65rem;
+  border: none;
+  border-radius: 3px;
+  background: transparent;
+  color: var(--muted);
+  font-family: var(--font-num);
+  font-size: 0.8rem;
+  font-weight: 600;
+  letter-spacing: 0;
+}
+
+.segmented__option:hover:not(:disabled):not([aria-pressed="true"]) {
+  color: var(--text);
+  background: rgba(255, 255, 255, 0.05);
+}
+
+.segmented__option[aria-pressed="true"] {
+  background: var(--accent);
+  color: var(--on-accent);
+}
+
+.segmented--wrap {
+  flex-wrap: wrap;
+}
+
+.segmented--tiles {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+}
+
+.segmented--tiles .segmented__option {
+  flex-direction: column;
+  padding: 0.6rem 0.5rem 0.5rem;
+  font-family: var(--font-ui);
+  font-size: 0.72rem;
+}
+
+.segmented--tiles .icon {
+  width: 2.2rem;
+  height: 1.6rem;
 }
 
 .toolbar input[type="number"] {
@@ -214,119 +325,289 @@ body {
   margin: 0;
 }
 
-.toolbar input[type="number"]:disabled {
-  opacity: 0.45;
-}
-
 .toolbar input[type="number"]:focus-visible {
   outline: 2px solid var(--text);
   outline-offset: 1px;
-}
-
-.toolbar-presets select,
-.toolbar select {
-  min-width: 5.25rem;
-  max-width: 8rem;
-  width: auto;
-  padding: 0.38rem 1.6rem 0.38rem 0.6rem;
-  border-radius: 4px;
-  border: 1px solid var(--line-strong);
-  background: var(--surface)
-    url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='12' height='12' viewBox='0 0 12 12'%3E%3Cpath fill='%237f8a99' d='M3 4.5 6 8l3-3.5'/%3E%3C/svg%3E")
-    no-repeat right 0.45rem center / 12px 12px;
-  color: var(--text);
-  font-family: inherit;
-  font-size: 0.85rem;
-  font-weight: 600;
-  letter-spacing: 0.02em;
-  text-transform: none;
-  cursor: pointer;
-  appearance: none;
-  -webkit-appearance: none;
-}
-
-.toolbar-presets select:hover:not(:disabled),
-.toolbar select:hover:not(:disabled) {
-  border-color: rgba(255, 255, 255, 0.28);
-}
-
-.toolbar-presets select:focus-visible,
-.toolbar select:focus-visible {
-  outline: 2px solid var(--text);
-  outline-offset: 1px;
-}
-
-.toolbar-presets select:disabled,
-.toolbar select:disabled {
-  opacity: 0.45;
-  cursor: not-allowed;
-}
-
-.toolbar .actions {
-  display: flex;
-  align-items: center;
-  gap: 0.5rem;
-}
-
-.toolbar .toolbar-toggle {
-  cursor: pointer;
-}
-
-.toolbar-toggle input {
-  appearance: none;
-  -webkit-appearance: none;
-  display: inline-grid;
-  place-content: center;
-  width: 1.05rem;
-  height: 1.05rem;
-  margin: 0;
-  border-radius: 3px;
-  border: 1px solid var(--line-strong);
-  background: var(--surface);
-  cursor: pointer;
-}
-
-.toolbar-toggle input::after {
-  content: "";
-  width: 0.5rem;
-  height: 0.5rem;
-  background: var(--bg);
-  clip-path: polygon(14% 44%, 0 65%, 50% 100%, 100% 16%, 80% 0%, 43% 62%);
-  opacity: 0;
-}
-
-.toolbar-toggle input:checked {
-  background: var(--text);
-  border-color: var(--text);
-}
-
-.toolbar-toggle input:checked::after {
-  opacity: 1;
-}
-
-.toolbar-toggle:has(input:checked) {
-  color: var(--text);
-}
-
-.toolbar-toggle input:focus-visible {
-  outline: 2px solid var(--text);
-  outline-offset: 2px;
-}
-
-.toolbar-toggle:has(input:disabled) {
-  opacity: 0.45;
-  cursor: not-allowed;
 }
 
 .toolbar-manual {
   display: flex;
   flex-wrap: wrap;
   align-items: center;
-  gap: 0.75rem 1rem;
+  gap: 0.5rem 0.9rem;
 }
 
 .toolbar-manual[hidden] {
   display: none;
+}
+
+.toolbar-manual label {
+  display: flex;
+  align-items: center;
+  gap: 0.4rem;
+  font-size: 0.72rem;
+  color: var(--muted);
+}
+
+/* Photo breaks: a switch, lit when on */
+.toggle-chip {
+  position: relative;
+  display: inline-flex;
+  align-items: center;
+  gap: 0.5rem;
+  padding: 0.35rem 0.5rem 0.35rem 0.65rem;
+  border: 1px solid var(--line-strong);
+  border-radius: 5px;
+  background: var(--surface);
+  color: var(--muted);
+  font-size: 0.75rem;
+  font-weight: 600;
+  letter-spacing: 0.04em;
+  cursor: pointer;
+  transition:
+    color 0.15s ease,
+    border-color 0.15s ease;
+}
+
+.toggle-chip input {
+  position: absolute;
+  opacity: 0;
+  pointer-events: none;
+}
+
+.toggle-chip:hover {
+  color: var(--text);
+}
+
+.toggle-chip__switch {
+  position: relative;
+  width: 1.9rem;
+  height: 1.05rem;
+  border-radius: 1rem;
+  border: 1px solid var(--line-strong);
+  background: var(--bg);
+  transition: background 0.15s ease;
+}
+
+.toggle-chip__switch::after {
+  content: "";
+  position: absolute;
+  top: 2px;
+  left: 2px;
+  width: calc(1.05rem - 6px);
+  height: calc(1.05rem - 6px);
+  border-radius: 50%;
+  background: var(--muted);
+  transition:
+    transform 0.15s ease,
+    background 0.15s ease;
+}
+
+.toggle-chip:has(input:checked) {
+  color: var(--text);
+  border-color: rgba(255, 255, 255, 0.35);
+}
+
+.toggle-chip:has(input:checked) .toggle-chip__switch {
+  background: var(--accent);
+}
+
+.toggle-chip:has(input:checked) .toggle-chip__switch::after {
+  background: var(--on-accent);
+  transform: translateX(0.85rem);
+}
+
+.toggle-chip:has(input:focus-visible) {
+  outline: 2px solid var(--text);
+  outline-offset: 2px;
+}
+
+.toolbar__start {
+  margin-left: 0.5rem;
+  padding: 0.5rem 1.1rem;
+  font-size: 0.85rem;
+  text-transform: uppercase;
+  letter-spacing: 0.12em;
+}
+
+/* Display settings: rarely changed, kept behind one button */
+.popover-anchor {
+  position: relative;
+}
+
+#btn-settings[aria-expanded="true"] {
+  color: var(--text);
+  border-color: rgba(255, 255, 255, 0.35);
+}
+
+/* Menus of the setup bar: anchored under their button */
+.popover {
+  position: absolute;
+  top: calc(100% + 0.5rem);
+  left: 0;
+  z-index: 20;
+  display: flex;
+  flex-direction: column;
+  gap: 1rem;
+  max-width: calc(100vw - 2rem);
+  max-height: calc(100vh - 5rem);
+  overflow-y: auto;
+  padding: 1rem;
+  border: 1px solid var(--line-strong);
+  border-radius: 6px;
+  background: var(--surface);
+  box-shadow: 0 18px 48px rgba(0, 0, 0, 0.55);
+}
+
+.popover--end {
+  left: auto;
+  right: 0;
+}
+
+.popover[hidden] {
+  display: none;
+}
+
+.settings__panel {
+  width: 28rem;
+}
+
+/* Theme preview: background, player 1, player 2 (and the tape for war zone) */
+.swatch {
+  width: 2.6rem;
+  height: 1.6rem;
+  border-radius: 3px;
+  border: 1px solid var(--line-strong);
+}
+
+.swatch--clean {
+  background: linear-gradient(90deg, #07090d 0 40%, #4a9bff 40% 70%, #ff5d77 70%);
+}
+
+.swatch--warzone {
+  background:
+    repeating-linear-gradient(-45deg, #f2b705 0 4px, #0b0b0a 4px 8px) bottom / 100% 5px no-repeat,
+    linear-gradient(90deg, #0b0b0a 0 40%, #ff7a1a 40% 70%, #8fb3cc 70%);
+}
+
+/* Game length: the value at a glance, the choices as tiles */
+.picker {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.6rem;
+  padding: 0.4rem 0.55rem 0.4rem 0.8rem;
+  border: 1px solid var(--line-strong);
+  border-radius: 5px;
+  background: var(--surface);
+  color: var(--text);
+  font-family: var(--font-num);
+  font-size: 0.95rem;
+  font-weight: 700;
+  letter-spacing: 0;
+}
+
+.picker:hover:not(:disabled) {
+  border-color: rgba(255, 255, 255, 0.35);
+}
+
+.picker .icon {
+  width: 0.95rem;
+  height: 0.95rem;
+  color: var(--muted);
+}
+
+/* The choices unfold in a line right over the button and the bar */
+.time-picker {
+  position: relative;
+}
+
+.time-panel {
+  position: absolute;
+  top: -4px;
+  left: -4px;
+  z-index: 20;
+  display: flex;
+  flex-direction: column;
+  gap: 0.5rem;
+  padding: 3px;
+  border: 1px solid var(--line-strong);
+  border-radius: 7px;
+  background: var(--surface);
+  box-shadow: 0 14px 40px rgba(0, 0, 0, 0.55);
+  opacity: 0;
+  visibility: hidden;
+  transform: translateX(-6px);
+  transition:
+    opacity 0.15s ease,
+    transform 0.15s ease,
+    visibility 0s linear 0.15s;
+}
+
+.time-picker:not(.is-folded):hover .time-panel,
+.time-picker:not(.is-folded):focus-within .time-panel {
+  opacity: 1;
+  visibility: visible;
+  transform: none;
+  transition-delay: 0s;
+}
+
+.time-panel .segmented {
+  padding: 0;
+  border: none;
+  background: transparent;
+}
+
+.time-panel .segmented__option {
+  padding: 0.42rem 0.75rem;
+  font-size: 0.9rem;
+  white-space: nowrap;
+}
+
+.time-panel .segmented__option[data-value="custom"] {
+  font-family: var(--font-ui);
+  font-size: 0.78rem;
+}
+
+.time-panel .toolbar-manual {
+  flex-direction: column;
+  align-items: stretch;
+  gap: 0.5rem;
+  padding: 0.6rem 0.6rem 0.5rem;
+  border-top: 1px solid var(--line);
+}
+
+.time-panel .toolbar-manual[hidden] {
+  display: none;
+}
+
+.time-panel .toolbar-manual label {
+  justify-content: space-between;
+}
+
+.settings__section {
+  display: flex;
+  flex-direction: column;
+  gap: 0.45rem;
+}
+
+.popover__label,
+.settings__label {
+  font-size: 0.62rem;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.16em;
+  color: var(--muted);
+}
+
+.settings__panel .segmented {
+  align-self: stretch;
+}
+
+.settings__panel .segmented:not(.segmented--tiles) .segmented__option {
+  flex: 1 1 auto;
+  justify-content: center;
+  font-family: var(--font-ui);
+  font-size: 0.75rem;
 }
 
 /* ---------- Buttons ---------- */
@@ -382,12 +663,12 @@ kbd {
 }
 
 .btn-primary {
-  background: var(--text);
-  color: var(--bg);
+  background: var(--accent);
+  color: var(--on-accent);
 }
 
 .btn-primary:hover:not(:disabled) {
-  background: #fff;
+  background: color-mix(in srgb, var(--accent) 80%, white);
 }
 
 .btn-secondary {
@@ -586,11 +867,11 @@ kbd {
 }
 
 .panel.is-active.panel--a .time {
-  text-shadow: 0 0 40px rgba(74, 155, 255, 0.35);
+  text-shadow: 0 0 40px var(--p1-glow);
 }
 
 .panel.is-active.panel--b .time {
-  text-shadow: 0 0 40px rgba(255, 93, 119, 0.3);
+  text-shadow: 0 0 40px var(--p2-glow);
 }
 
 .panel.is-idle .time,
@@ -729,7 +1010,7 @@ kbd {
 }
 
 /* Hide score / CP +/- controls until the match has started. */
-#app:not(.match-started) .mini-counter__btn {
+#app:not(.match-started) .board .mini-counter__btn {
   opacity: 0;
   visibility: hidden;
   pointer-events: none;
@@ -903,7 +1184,7 @@ kbd {
 }
 
 .ability-chip {
-  padding: 0.2rem 0.5rem;
+  padding: 0.3rem 0.55rem;
   border: 1px solid var(--line);
   border-left: 2px solid var(--pc-line);
   border-radius: 3px;
@@ -913,6 +1194,229 @@ kbd {
   letter-spacing: 0.06em;
   color: var(--muted);
   white-space: nowrap;
+}
+
+/* A CP unit: hover previews the strike-through, a click toggles it (unit dead / back) */
+.unit-toggle {
+  display: inline-flex;
+  align-items: center;
+  gap: 0;
+  cursor: pointer;
+  transition:
+    border-color 0.2s ease,
+    opacity 0.2s ease;
+}
+
+.unit-toggle__text {
+  position: relative;
+}
+
+.unit-toggle__text::after {
+  content: "";
+  position: absolute;
+  top: 50%;
+  left: -2px;
+  right: -2px;
+  height: 1.5px;
+  background: var(--danger);
+  transform: scaleX(0);
+  transform-origin: left;
+  transition: transform 0.25s ease;
+}
+
+.unit-toggle__ask {
+  max-width: 0;
+  overflow: hidden;
+  opacity: 0;
+  white-space: nowrap;
+  color: var(--danger);
+  transition:
+    max-width 0.25s ease,
+    margin 0.25s ease,
+    opacity 0.2s ease;
+}
+
+.unit-toggle:not(.is-settling):hover .unit-toggle__text::after,
+.unit-toggle:focus-visible .unit-toggle__text::after {
+  transform: scaleX(1);
+}
+
+.unit-toggle:not(.is-settling):hover .unit-toggle__ask,
+.unit-toggle:focus-visible .unit-toggle__ask {
+  max-width: 7rem;
+  margin-left: 0.45rem;
+  opacity: 1;
+}
+
+.unit-toggle:not(.is-settling):hover {
+  border-color: rgba(255, 95, 95, 0.45);
+}
+
+/* Lost: struck through and dimmed; hover previews the way back */
+.unit-toggle.is-lost {
+  opacity: 0.45;
+}
+
+.unit-toggle.is-lost .unit-toggle__text::after {
+  background: var(--muted);
+  transform: scaleX(1);
+  transform-origin: right;
+}
+
+.unit-toggle.is-lost:not(.is-settling):hover {
+  opacity: 1;
+  border-color: var(--line-strong);
+}
+
+.unit-toggle.is-lost:not(.is-settling):hover .unit-toggle__text::after,
+.unit-toggle.is-lost:focus-visible .unit-toggle__text::after {
+  transform: scaleX(0);
+}
+
+.unit-toggle.is-lost .unit-toggle__ask {
+  color: var(--text);
+}
+
+/* Just struck or restored: the change plays out instead of jumping */
+.unit-toggle.is-just-toggled.is-lost {
+  animation: unitDim 0.4s ease both;
+}
+
+.unit-toggle.is-just-toggled:not(.is-lost) {
+  animation: unitLight 0.4s ease both;
+}
+
+.unit-toggle.is-just-toggled.is-lost .unit-toggle__text::after {
+  transform-origin: left;
+  animation: strikeIn 0.4s ease both;
+}
+
+.unit-toggle.is-just-toggled:not(.is-lost) .unit-toggle__text::after {
+  transform-origin: right;
+  animation: strikeOut 0.4s ease both;
+}
+
+.cp-coin-wrap.is-just-toggled.is-lost .cp-coin {
+  animation: coinDim 0.4s ease both;
+}
+
+.cp-coin-wrap.is-just-toggled:not(.is-lost) .cp-coin {
+  animation: coinLight 0.4s ease both;
+}
+
+@keyframes unitDim {
+  0% {
+    opacity: 1;
+    transform: scale(1.05);
+  }
+  100% {
+    opacity: 0.45;
+    transform: scale(1);
+  }
+}
+
+@keyframes unitLight {
+  0% {
+    opacity: 0.45;
+  }
+  50% {
+    transform: scale(1.05);
+  }
+  100% {
+    opacity: 1;
+    transform: scale(1);
+  }
+}
+
+/* The strike draws in red, then settles to the grey of a lost unit */
+@keyframes strikeIn {
+  0% {
+    transform: scaleX(0);
+    background: var(--danger);
+  }
+  60% {
+    transform: scaleX(1);
+    background: var(--danger);
+  }
+  100% {
+    transform: scaleX(1);
+  }
+}
+
+@keyframes strikeOut {
+  0% {
+    transform: scaleX(1);
+  }
+  100% {
+    transform: scaleX(0);
+  }
+}
+
+@keyframes coinDim {
+  0% {
+    opacity: 1;
+  }
+  100% {
+    opacity: 0.35;
+  }
+}
+
+@keyframes coinLight {
+  0% {
+    opacity: 0.35;
+    transform: scale(0.92);
+  }
+  100% {
+    opacity: 1;
+    transform: scale(1);
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .is-just-toggled,
+  .is-just-toggled .cp-coin,
+  .is-just-toggled .unit-toggle__text::after {
+    animation: none !important;
+  }
+}
+
+.cp-coin-wrap {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 0.3rem;
+}
+
+/* Under a coin the unit is its caption */
+.cp-coin-wrap .unit-toggle {
+  flex-direction: column;
+  max-width: 7rem;
+  padding: 0.15rem 0.35rem;
+  border: 1px solid transparent;
+  border-radius: 3px;
+  background: transparent;
+  font-size: 0.56rem;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.12em;
+  color: var(--muted);
+}
+
+.cp-coin-wrap .unit-toggle:not(.is-settling):hover .unit-toggle__ask {
+  margin-left: 0;
+  margin-top: 0.2rem;
+}
+
+.cp-coin-wrap .unit-toggle__text {
+  max-width: 6rem;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.cp-coin-wrap.is-lost .cp-coin {
+  opacity: 0.35;
+  cursor: default;
 }
 
 .abilities-btn {
@@ -1010,18 +1514,6 @@ kbd {
   color: var(--pc);
 }
 
-.cp-coin__caption {
-  max-width: 5rem;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-  font-size: 0.56rem;
-  font-weight: 600;
-  text-transform: uppercase;
-  letter-spacing: 0.12em;
-  color: var(--muted);
-}
-
 @media (hover: hover) {
   #app.match-started .cp-coin:not(.is-spent):hover .cp-coin__face {
     filter: drop-shadow(0 0 10px var(--pc-line));
@@ -1076,7 +1568,7 @@ kbd {
 }
 
 .overlay--abilities .overlay-inner {
-  width: 32rem;
+  width: 26rem;
 }
 
 .overlay-inner h2.is-p1 {
@@ -1091,123 +1583,118 @@ kbd {
   margin: 1.1rem 0 0;
   padding: 0;
   list-style: none;
-  border-top: 1px solid var(--line);
 }
 
-.ability-row {
+.ability-list li + li {
+  margin-top: 0.5rem;
+}
+
+/* A tile per kind: lit with the accent and checked when the player has it */
+.ability-toggle {
   display: grid;
-  grid-template-columns: 8.5rem 1fr auto auto;
+  grid-template-columns: 4rem 1fr auto;
   align-items: center;
-  gap: 0.6rem;
-  padding: 0.45rem 0;
-  border-bottom: 1px solid var(--line);
-}
-
-.ability-row__kind {
-  font-family: var(--font-num);
-  font-size: 0.78rem;
-  font-weight: 600;
-}
-
-.ability-row__name {
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-  color: var(--muted);
-  font-size: 0.85rem;
-}
-
-.ability-row.is-lost .ability-row__kind,
-.ability-row.is-lost .ability-row__name {
-  color: var(--faint);
-  text-decoration: line-through;
-}
-
-.ability-list__empty {
-  padding: 0.6rem 0;
-  border-bottom: 1px solid var(--line);
-  color: var(--faint);
-  font-size: 0.85rem;
-}
-
-.btn-sm {
-  padding: 0.25rem 0.6rem;
-  font-size: 0.72rem;
-}
-
-.btn-icon.btn-sm {
-  width: 1.8rem;
-  height: 1.8rem;
-}
-
-.ability-add {
-  display: flex;
-  flex-direction: column;
-  gap: 0.5rem;
-  margin-top: 1.25rem;
-}
-
-.ability-add__label {
-  font-size: 0.62rem;
-  font-weight: 600;
-  text-transform: uppercase;
-  letter-spacing: 0.16em;
-  color: var(--muted);
-}
-
-.ability-add input {
-  padding: 0.5rem 0.65rem;
-  border-radius: 4px;
+  gap: 0.75rem;
+  width: 100%;
+  padding: 0.75rem 0.85rem;
   border: 1px solid var(--line-strong);
-  background: var(--bg);
-  color: var(--text);
-  font-family: inherit;
-  font-size: 0.9rem;
-}
-
-.ability-add input::placeholder {
-  color: var(--faint);
-}
-
-.ability-add input:focus-visible {
-  outline: 2px solid var(--text);
-  outline-offset: 1px;
-}
-
-.ability-add__kinds {
-  display: grid;
-  grid-template-columns: repeat(3, 1fr);
-  gap: 0.5rem;
-}
-
-.ability-kind {
-  display: flex;
-  flex-direction: column;
-  align-items: flex-start;
-  gap: 0.2rem;
-  padding: 0.55rem 0.65rem;
-  border: 1px solid var(--line-strong);
+  border-radius: 5px;
   background: transparent;
   color: var(--text);
   text-align: left;
+  transition:
+    background 0.18s ease,
+    border-color 0.18s ease,
+    color 0.18s ease;
 }
 
-.ability-kind:hover {
-  border-color: rgba(255, 255, 255, 0.4);
+.ability-toggle:hover:not([aria-pressed="true"]) {
+  border-color: rgba(255, 255, 255, 0.35);
   background: rgba(255, 255, 255, 0.03);
 }
 
-.ability-kind__title {
+.ability-toggle__title {
   font-family: var(--font-num);
-  font-size: 0.85rem;
+  font-size: 1rem;
   font-weight: 700;
 }
 
-.ability-kind__hint {
-  font-size: 0.68rem;
+.ability-toggle__hint {
+  color: var(--muted);
+  font-size: 0.85rem;
   font-weight: 500;
   letter-spacing: 0.02em;
-  color: var(--muted);
+}
+
+.ability-toggle__check {
+  display: grid;
+  place-content: center;
+  width: 1.4rem;
+  height: 1.4rem;
+  border: 1.5px solid var(--line-strong);
+  border-radius: 50%;
+}
+
+.ability-toggle__check .icon {
+  width: 0.9rem;
+  height: 0.9rem;
+  stroke-width: 2.4;
+  opacity: 0;
+  transform: scale(0.6);
+  transition:
+    opacity 0.18s ease,
+    transform 0.18s ease;
+}
+
+.ability-toggle[aria-pressed="true"] {
+  border-color: var(--accent);
+  background: var(--accent);
+  color: var(--on-accent);
+}
+
+.ability-toggle[aria-pressed="true"] .ability-toggle__hint {
+  color: color-mix(in srgb, var(--on-accent) 70%, transparent);
+}
+
+.ability-toggle[aria-pressed="true"] .ability-toggle__check {
+  border-color: var(--on-accent);
+  background: var(--on-accent);
+  color: var(--accent);
+}
+
+.ability-toggle[aria-pressed="true"] .ability-toggle__check .icon {
+  opacity: 1;
+  transform: scale(1);
+}
+
+/* When the +1 CP comes: under its tile, once it is on */
+.ability-timing {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  margin-top: 0.4rem;
+}
+
+.ability-timing .segmented__option {
+  justify-content: center;
+  padding: 0.5rem 0.4rem;
+  font-family: var(--font-ui);
+  font-size: 0.78rem;
+  text-align: center;
+}
+
+.ability-timing.is-revealed {
+  animation: timingIn 0.2s ease both;
+}
+
+@keyframes timingIn {
+  from {
+    opacity: 0;
+    transform: translateY(-4px);
+  }
+  to {
+    opacity: 1;
+    transform: none;
+  }
 }
 
 /* ---------- Hover history (score per round, CP per turn) ---------- */
@@ -1299,6 +1786,54 @@ kbd {
   z-index: 2;
 }
 
+:root[data-theme="warzone"] .turn-tracker {
+  position: relative;
+  border-color: transparent;
+}
+
+:root[data-theme="warzone"] .turn-tracker::before,
+:root[data-theme="warzone"] .turn-tracker::after {
+  content: "";
+  position: absolute;
+  left: 0;
+  right: 0;
+  height: 4px;
+  background: var(--hazard);
+  opacity: 0.85;
+  pointer-events: none;
+}
+
+:root[data-theme="warzone"] .turn-tracker::before {
+  top: 0;
+}
+
+:root[data-theme="warzone"] .turn-tracker::after {
+  bottom: 0;
+}
+
+/* Reset sits in the round strip during a match, the setup bar being hidden */
+.turn-tracker__controls {
+  grid-column: 1;
+  justify-self: start;
+}
+
+#app:not(.match-started) .turn-tracker__controls {
+  visibility: hidden;
+}
+
+.strip-reset {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.45rem;
+  padding: 0.3rem 0.7rem;
+  font-size: 0.72rem;
+}
+
+.strip-reset .icon {
+  width: 0.95rem;
+  height: 0.95rem;
+}
+
 .turn-tracker__round {
   grid-column: 2;
   display: flex;
@@ -1353,9 +1888,9 @@ kbd {
 }
 
 .turn-dot--current {
-  background: var(--text);
-  border-color: var(--text);
-  color: var(--bg);
+  background: var(--accent);
+  border-color: var(--accent);
+  color: var(--on-accent);
 }
 
 .key-hint {
@@ -1636,6 +2171,45 @@ kbd {
 :root[data-layout="columns"] .turn-tracker__round,
 :root[data-layout="columns"] .turn-tracker__dots {
   flex-direction: column;
+}
+
+:root[data-layout="columns"] .turn-tracker {
+  position: relative;
+}
+
+/* Left / right: the hazard tape runs down both sides of the strip */
+:root[data-theme="warzone"][data-layout="columns"] .turn-tracker::before,
+:root[data-theme="warzone"][data-layout="columns"] .turn-tracker::after {
+  top: 0;
+  bottom: 0;
+  left: auto;
+  right: auto;
+  width: 4px;
+  height: auto;
+}
+
+:root[data-theme="warzone"][data-layout="columns"] .turn-tracker::before {
+  left: 0;
+}
+
+:root[data-theme="warzone"][data-layout="columns"] .turn-tracker::after {
+  right: 0;
+}
+
+/* The vertical strip is narrow: Reset keeps only its icon, at the top */
+:root[data-layout="columns"] .turn-tracker__controls {
+  position: absolute;
+  top: 0.75rem;
+  left: 50%;
+  transform: translateX(-50%);
+}
+
+:root[data-layout="columns"] .strip-reset {
+  padding: 0.4rem;
+}
+
+:root[data-layout="columns"] .strip-reset span {
+  display: none;
 }
 
 /* The narrow strip has no room for the shortcuts: they sit at the bottom of the board */

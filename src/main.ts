@@ -1,4 +1,5 @@
 import "./style.css";
+import { getLang, setLang, t, type Lang, type StringKey } from "./i18n";
 
 type Player = 1 | 2;
 
@@ -18,24 +19,23 @@ type ScoreKind = "primary" | "secondary";
 /** Mission rule: at most 15 primary and 15 secondary points per player turn */
 const MAX_POINTS_PER_TURN = 15;
 
-const SCORE_KINDS: { kind: ScoreKind; label: string }[] = [
-  { kind: "primary", label: "Primary" },
-  { kind: "secondary", label: "Secondary" },
+const SCORE_KINDS: { kind: ScoreKind; label: StringKey; ariaMinus: StringKey; ariaPlus: StringKey }[] = [
+  { kind: "primary", label: "primary", ariaMinus: "ariaPrimaryMinus", ariaPlus: "ariaPrimaryPlus" },
+  { kind: "secondary", label: "secondary", ariaMinus: "ariaSecondaryMinus", ariaPlus: "ariaSecondaryPlus" },
 ];
 
 /** CP effects given by a unit or a character */
 type AbilityKind = "discount" | "round-cp" | "turn-cp";
 
-const ABILITY_KINDS: Record<AbilityKind, { title: string; hint: string; short: string }> = {
-  discount: { title: "−1 CP", hint: "Stratagem, once per round", short: "−1 CP stratagem" },
-  "round-cp": { title: "+1 CP", hint: "Start of each battle round", short: "+1 CP / round" },
-  "turn-cp": { title: "+1 CP", hint: "Start of my turn", short: "+1 CP / my turn" },
+const ABILITY_KINDS: Record<AbilityKind, { title: StringKey; hint: StringKey; short: StringKey }> = {
+  discount: { title: "discountTitle", hint: "discountHint", short: "discountShort" },
+  "round-cp": { title: "roundCpTitle", hint: "roundCpHint", short: "roundCpShort" },
+  "turn-cp": { title: "turnCpTitle", hint: "turnCpHint", short: "turnCpShort" },
 };
 
 type Ability = {
   id: number;
   kind: AbilityKind;
-  name: string;
   /** Its character is gone; a reset brings it back for the next game */
   lost: boolean;
   /** Discount only: already used this battle round */
@@ -49,6 +49,11 @@ const UI_SIZE_DEFAULT = "m";
 const LAYOUT_STORAGE_KEY = "warhammerClock.layout";
 const LAYOUT_DEFAULT = "rows";
 
+const LANG_STORAGE_KEY = "warhammerClock.lang";
+
+const THEME_STORAGE_KEY = "warhammerClock.theme";
+const THEME_DEFAULT = "clean";
+
 const app = document.querySelector<HTMLDivElement>("#app")!;
 
 /** Always H:MM:SS so the clock keeps the same width when it drops under an hour. */
@@ -60,28 +65,46 @@ function formatTime(totalSeconds: number): string {
   return `${h}:${String(m).padStart(2, "0")}:${String(sec).padStart(2, "0")}`;
 }
 
+const svgIcon = (body: string, viewBox = "0 0 24 24"): string =>
+  `<svg class="icon" viewBox="${viewBox}" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">${body}</svg>`;
+
+const ICON_CLOCK = svgIcon('<circle cx="12" cy="13" r="8" /><path d="M12 9v4l2.5 2.5M10 2h4" />');
+const ICON_CAMERA = svgIcon('<path d="M4 8h3l2-3h6l2 3h3v11H4z" /><circle cx="12" cy="13" r="3.5" />');
+const ICON_SLIDERS = svgIcon(
+  '<path d="M4 7h9M17 7h3M4 17h3M11 17h9" /><circle cx="15" cy="7" r="2" /><circle cx="9" cy="17" r="2" />',
+);
+const ICON_CHECK = svgIcon('<path d="M5 12.5l4.5 4.5L19 7.5" />');
+const ICON_CHEVRON = svgIcon('<path d="M7 10l5 5 5-5" />');
+const ICON_RESET = svgIcon('<path d="M4 12a8 8 0 1 0 2.4-5.7M4 4v4h4" />');
+const ICON_ROWS = svgIcon('<rect x="2" y="2" width="24" height="7" rx="1" /><rect x="2" y="11" width="24" height="7" rx="1" />', "0 0 28 20");
+const ICON_COLUMNS = svgIcon('<rect x="2" y="2" width="11" height="16" rx="1" /><rect x="15" y="2" width="11" height="16" rx="1" />', "0 0 28 20");
+
+/*
+ * Texts live in i18n.ts. Elements carry their key (data-i18n, data-i18n-aria, data-i18n-title,
+ * data-i18n-placeholder) and their placeholders (data-v-*): applyTranslations() fills them.
+ */
 function scoreCounterHtml(player: Player, corner: "tl" | "bl"): string {
   const rows = SCORE_KINDS.map(
-    ({ kind, label }) => `
+    ({ kind, label, ariaMinus, ariaPlus }) => `
         <div class="score-box__row">
-          <span class="score-box__kind">${label}</span>
-          <button type="button" class="mini-counter__btn" id="p${player}-${kind}-minus" aria-label="Player ${player} ${kind} minus one">−</button>
+          <span class="score-box__kind" data-i18n="${label}"></span>
+          <button type="button" class="mini-counter__btn" id="p${player}-${kind}-minus" data-i18n-aria="${ariaMinus}" data-v-n="${player}">−</button>
           <span class="mini-counter__val" id="p${player}-${kind}-val">0</span>
-          <button type="button" class="mini-counter__btn" id="p${player}-${kind}-plus" aria-label="Player ${player} ${kind} plus one">+</button>
+          <button type="button" class="mini-counter__btn" id="p${player}-${kind}-plus" data-i18n-aria="${ariaPlus}" data-v-n="${player}">+</button>
         </div>`,
   ).join("");
   return `
       <div class="mini-counter mini-counter--${corner} score-box">
         <div class="score-box__head">
-          <span class="mini-counter__label">Score</span>
+          <span class="mini-counter__label" data-i18n="score"></span>
           <span class="score-box__total" id="p${player}-score-total">0</span>
         </div>
-        <span class="score-box__turn" id="p${player}-score-turn">Turn 1</span>${rows}
-        <div class="score-box__row score-box__row--bonus" id="p${player}-bonus-row" hidden title="End-of-game mission bonus: primary points outside the ${MAX_POINTS_PER_TURN} per turn">
-          <span class="score-box__kind">End bonus</span>
-          <button type="button" class="mini-counter__btn" id="p${player}-bonus-minus" aria-label="Player ${player} end-game bonus minus one">−</button>
+        <span class="score-box__turn" id="p${player}-score-turn"></span>${rows}
+        <div class="score-box__row score-box__row--bonus" id="p${player}-bonus-row" hidden data-i18n-title="endBonusTitle" data-v-max="${MAX_POINTS_PER_TURN}">
+          <span class="score-box__kind" data-i18n="endBonus"></span>
+          <button type="button" class="mini-counter__btn" id="p${player}-bonus-minus" data-i18n-aria="ariaBonusMinus" data-v-n="${player}">−</button>
           <span class="mini-counter__val" id="p${player}-bonus-val">0</span>
-          <button type="button" class="mini-counter__btn" id="p${player}-bonus-plus" aria-label="Player ${player} end-game bonus plus one">+</button>
+          <button type="button" class="mini-counter__btn" id="p${player}-bonus-plus" data-i18n-aria="ariaBonusPlus" data-v-n="${player}">+</button>
         </div>
       </div>`;
 }
@@ -90,62 +113,105 @@ function cpCornerHtml(player: Player, corner: "tr" | "br"): string {
   return `
       <div class="panel-corner panel-corner--${corner}">
         <div class="mini-counter cp-box">
-          <span class="mini-counter__label">Command points</span>
+          <span class="mini-counter__label" data-i18n="commandPoints"></span>
           <div class="mini-counter__row">
-            <button type="button" class="mini-counter__btn" id="p${player}-cp-minus" aria-label="Player ${player} command points minus one">−</button>
+            <button type="button" class="mini-counter__btn" id="p${player}-cp-minus" data-i18n-aria="ariaCpMinus" data-v-n="${player}">−</button>
             <span class="mini-counter__val" id="p${player}-cp-val">1</span>
-            <button type="button" class="mini-counter__btn" id="p${player}-cp-plus" aria-label="Player ${player} command points plus one">+</button>
+            <button type="button" class="mini-counter__btn" id="p${player}-cp-plus" data-i18n-aria="ariaCpPlus" data-v-n="${player}">+</button>
           </div>
           <span class="cp-toast" id="p${player}-cp-toast" role="status"></span>
         </div>
         <div class="abilities" id="p${player}-abilities"></div>
-        <button type="button" class="abilities-btn" id="p${player}-abilities-btn">Abilities</button>
+        <button type="button" class="abilities-btn" id="p${player}-abilities-btn" data-i18n="abilities"></button>
       </div>`;
+}
+
+function panelHtml(player: Player): string {
+  return `
+    <section class="panel panel--${player === 1 ? "a" : "b"}" id="panel-${player}" data-player="${player}" tabindex="0" data-i18n-aria="playerTimerAria" data-v-n="${player}">
+      ${scoreCounterHtml(player, player === 1 ? "tl" : "bl")}
+      ${cpCornerHtml(player, player === 1 ? "tr" : "br")}
+      <div class="panel-head">
+        <span class="panel-label" data-i18n="player" data-v-n="${player}"></span>
+        <span class="panel-turn" data-i18n="playerTurn"></span>
+      </div>
+      <span class="time" id="t${player}">1:00:00</span>
+    </section>`;
 }
 
 app.innerHTML = `
   <header class="toolbar">
-    <label class="toolbar-presets">
-      Layout
-      <select id="layout" aria-label="Screen split between the two players">
-        <option value="rows" selected>Top / bottom</option>
-        <option value="columns">Left / right</option>
-      </select>
-    </label>
-    <label class="toolbar-presets">
-      Interface size
-      <select id="ui-size" aria-label="Size of the counters, dialogs and tooltips">
-        <option value="s">Compact</option>
-        <option value="m" selected>Standard</option>
-        <option value="l">Large</option>
-        <option value="xl">Extra large</option>
-        <option value="uw">Ultra wide</option>
-      </select>
-    </label>
-    <label class="toolbar-presets">
-      Time
-      <select id="preset-time" aria-label="Preset time control">
-        ${PRESETS.map((p) => `<option value="${p.sec}">${p.label}</option>`).join("")}
-        <option value="${CUSTOM_PRESET_VALUE}">Custom</option>
-      </select>
-    </label>
-    <div id="manual-time-wrap" class="toolbar-manual" hidden>
-      <label>
-        Player 1 (min)
-        <input id="m1" type="number" min="0" max="999" step="1" value="${DEFAULT_TIME_SEC / 60}" />
-      </label>
-      <label>
-        Player 2 (min)
-        <input id="m2" type="number" min="0" max="999" step="1" value="${DEFAULT_TIME_SEC / 60}" />
+    <div class="toolbar__group">
+      <div class="setting">
+        <span class="setting__label">${ICON_CLOCK}<span data-i18n="time"></span></span>
+        <div class="time-picker" id="time-picker">
+          <button type="button" class="picker" id="btn-time" aria-haspopup="true" data-i18n-aria="timeAria">
+            <span class="picker__value" id="time-value"></span>
+            ${ICON_CHEVRON}
+          </button>
+          <div class="time-panel">
+            <div class="segmented" id="time-presets" role="group" data-i18n-aria="timeAria">
+              ${PRESETS.map((p) => `<button type="button" class="segmented__option" data-value="${p.sec}">${p.label}</button>`).join("")}
+              <button type="button" class="segmented__option" data-value="${CUSTOM_PRESET_VALUE}" data-i18n="custom"></button>
+            </div>
+            <div id="manual-time-wrap" class="toolbar-manual" hidden>
+              <label>
+                <span data-i18n="playerMinutes" data-v-n="1"></span>
+                <input id="m1" type="number" min="0" max="999" step="1" value="${DEFAULT_TIME_SEC / 60}" />
+              </label>
+              <label>
+                <span data-i18n="playerMinutes" data-v-n="2"></span>
+                <input id="m2" type="number" min="0" max="999" step="1" value="${DEFAULT_TIME_SEC / 60}" />
+              </label>
+            </div>
+          </div>
+        </div>
+      </div>
+      <label class="toggle-chip">
+        <input type="checkbox" id="photo-breaks" />
+        ${ICON_CAMERA}
+        <span data-i18n="photoBreaks"></span>
+        <span class="toggle-chip__switch" aria-hidden="true"></span>
       </label>
     </div>
-    <label class="toolbar-toggle">
-      <input type="checkbox" id="photo-breaks" />
-      Photo breaks
-    </label>
-    <div class="actions">
-      <button type="button" class="btn-ghost" id="btn-reset">Reset</button>
-      <button type="button" class="btn-icon" id="btn-fullscreen" title="Enter fullscreen" aria-label="Enter fullscreen">
+    <div class="toolbar__group toolbar__group--end">
+      <div class="popover-anchor">
+        <button type="button" class="btn-icon" id="btn-settings" aria-expanded="false" aria-controls="settings-panel" data-i18n-aria="display" data-i18n-title="display">${ICON_SLIDERS}</button>
+        <div class="popover popover--end settings__panel" id="settings-panel" hidden>
+          <div class="settings__section">
+            <span class="settings__label" data-i18n="theme"></span>
+            <div class="segmented segmented--tiles" id="theme-options" role="group" data-i18n-aria="theme">
+              <button type="button" class="segmented__option" data-value="clean"><span class="swatch swatch--clean"></span><span data-i18n="themeClean"></span></button>
+              <button type="button" class="segmented__option" data-value="warzone"><span class="swatch swatch--warzone"></span><span data-i18n="themeWarzone"></span></button>
+            </div>
+          </div>
+          <div class="settings__section">
+            <span class="settings__label" data-i18n="layout"></span>
+            <div class="segmented segmented--tiles" id="layout-options" role="group" data-i18n-aria="layoutAria">
+              <button type="button" class="segmented__option" data-value="rows">${ICON_ROWS}<span data-i18n="layoutRows"></span></button>
+              <button type="button" class="segmented__option" data-value="columns">${ICON_COLUMNS}<span data-i18n="layoutColumns"></span></button>
+            </div>
+          </div>
+          <div class="settings__section">
+            <span class="settings__label" data-i18n="uiSize"></span>
+            <div class="segmented segmented--wrap" id="ui-size-options" role="group" data-i18n-aria="uiSizeAria">
+              <button type="button" class="segmented__option" data-value="s" data-i18n="sizeS"></button>
+              <button type="button" class="segmented__option" data-value="m" data-i18n="sizeM"></button>
+              <button type="button" class="segmented__option" data-value="l" data-i18n="sizeL"></button>
+              <button type="button" class="segmented__option" data-value="xl" data-i18n="sizeXl"></button>
+              <button type="button" class="segmented__option" data-value="uw" data-i18n="sizeUw"></button>
+            </div>
+          </div>
+          <div class="settings__section">
+            <span class="settings__label" data-i18n="language"></span>
+            <div class="segmented" id="lang-options" role="group" data-i18n-aria="language">
+              <button type="button" class="segmented__option" data-value="en">English</button>
+              <button type="button" class="segmented__option" data-value="fr">Français</button>
+            </div>
+          </div>
+        </div>
+      </div>
+      <button type="button" class="btn-icon" id="btn-fullscreen">
         <span class="fullscreen-icon fullscreen-icon--enter">
           <svg width="20" height="20" viewBox="0 0 24 24" fill="currentColor" aria-hidden="true">
             <path d="M7 14H5v5h5v-2H7v-3zm-2-4h2V7h3V5H5v5zm12 7h-3v2h5v-5h-2v3zM14 5v2h3v3h2V5h-5z" />
@@ -157,42 +223,30 @@ app.innerHTML = `
           </svg>
         </span>
       </button>
+      <button type="button" class="btn-primary toolbar__start" id="btn-start"><span data-i18n="start"></span> <kbd data-i18n="keyEnter"></kbd></button>
     </div>
   </header>
   <div class="board">
-    <section class="panel panel--a" id="panel-1" data-player="1" tabindex="0" aria-label="Player 1 timer">
-      ${scoreCounterHtml(1, "tl")}
-      ${cpCornerHtml(1, "tr")}
-      <div class="panel-head">
-        <span class="panel-label">Player 1</span>
-        <span class="panel-turn">Player turn</span>
-      </div>
-      <span class="time" id="t1">1:00:00</span>
-    </section>
+    ${panelHtml(1)}
     <div class="turn-tracker">
-      <div class="turn-tracker__round" aria-label="Battle round" role="group">
-        <span class="turn-tracker__label" aria-hidden="true">Round</span>
+      <div class="turn-tracker__controls">
+        <button type="button" class="btn-ghost strip-reset" id="btn-reset" data-i18n-title="reset">${ICON_RESET}<span data-i18n="reset"></span></button>
+      </div>
+      <div class="turn-tracker__round" role="group" data-i18n-aria="battleRoundAria">
+        <span class="turn-tracker__label" aria-hidden="true" data-i18n="round"></span>
         <div class="turn-tracker__dots" id="turn-dots"></div>
       </div>
       <p class="key-hint" id="key-hint" aria-live="polite"></p>
     </div>
-    <section class="panel panel--b" id="panel-2" data-player="2" tabindex="0" aria-label="Player 2 timer">
-      ${scoreCounterHtml(2, "bl")}
-      ${cpCornerHtml(2, "br")}
-      <div class="panel-head">
-        <span class="panel-label">Player 2</span>
-        <span class="panel-turn">Player turn</span>
-      </div>
-      <span class="time" id="t2">1:00:00</span>
-    </section>
+    ${panelHtml(2)}
   </div>
   <div class="overlay overlay--turn-confirm" id="turn-confirm-overlay" role="dialog" aria-modal="true" aria-labelledby="turn-confirm-title" aria-hidden="true">
     <div class="overlay-inner">
       <h2 id="turn-confirm-title"></h2>
       <p class="overlay-msg" id="turn-confirm-msg"></p>
       <div class="overlay-actions">
-        <button type="button" class="btn-secondary" id="btn-turn-confirm-cancel">Cancel <kbd>Esc</kbd></button>
-        <button type="button" class="btn-primary" id="btn-turn-confirm-ok">Confirm <kbd>Enter</kbd></button>
+        <button type="button" class="btn-secondary" id="btn-turn-confirm-cancel"><span data-i18n="cancel"></span> <kbd data-i18n="keyEsc"></kbd></button>
+        <button type="button" class="btn-primary" id="btn-turn-confirm-ok"><span data-i18n="confirm"></span> <kbd data-i18n="keyEnter"></kbd></button>
       </div>
     </div>
   </div>
@@ -202,7 +256,7 @@ app.innerHTML = `
       <p class="overlay-msg" id="result-msg"></p>
       <table class="result-table" id="result-table"></table>
       <div class="overlay-actions">
-        <button type="button" class="btn-primary" id="btn-result-dismiss">OK <kbd>Enter</kbd></button>
+        <button type="button" class="btn-primary" id="btn-result-dismiss"><span data-i18n="ok"></span> <kbd data-i18n="keyEnter"></kbd></button>
       </div>
     </div>
   </div>
@@ -214,41 +268,36 @@ app.innerHTML = `
         <path d="M24 38h10l4-6h20l4 6h10v30H24z" />
         <circle cx="48" cy="52" r="9" />
       </svg>
-      <span class="pause-badge">Clocks paused</span>
-      <h2 id="photo-title">Photo time</h2>
+      <span class="pause-badge" data-i18n="clocksPaused"></span>
+      <h2 id="photo-title" data-i18n="photoTitle"></h2>
       <p class="overlay-msg" id="photo-msg"></p>
       <div class="overlay-actions">
-        <button type="button" class="btn-primary" id="btn-photo-resume">Resume clocks <kbd>Enter</kbd></button>
+        <button type="button" class="btn-primary" id="btn-photo-resume"><span data-i18n="resumeClocks"></span> <kbd data-i18n="keyEnter"></kbd></button>
       </div>
     </div>
   </div>
   <div class="overlay overlay--abilities" id="abilities-overlay" role="dialog" aria-modal="true" aria-labelledby="abilities-title" aria-hidden="true">
     <div class="overlay-inner">
       <h2 id="abilities-title"></h2>
-      <p class="overlay-msg">CP effects of your units. Mark one as lost when its character dies. Abilities give at most 1 CP per battle round.</p>
       <ul class="ability-list" id="ability-list"></ul>
-      <div class="ability-add">
-        <span class="ability-add__label">Add an ability</span>
-        <input type="text" id="ability-name" maxlength="24" placeholder="Unit or character (optional)" autocomplete="off" />
-        <div class="ability-add__kinds">
-          ${(Object.keys(ABILITY_KINDS) as AbilityKind[])
-            .map(
-              (kind) =>
-                `<button type="button" class="ability-kind" data-kind="${kind}"><span class="ability-kind__title">${ABILITY_KINDS[kind].title}</span><span class="ability-kind__hint">${ABILITY_KINDS[kind].hint}</span></button>`,
-            )
-            .join("")}
-        </div>
-      </div>
       <div class="overlay-actions">
-        <button type="button" class="btn-primary" id="btn-abilities-close">Done <kbd>Esc</kbd></button>
+        <button type="button" class="btn-primary" id="btn-abilities-close"><span data-i18n="done"></span> <kbd data-i18n="keyEsc"></kbd></button>
       </div>
     </div>
   </div>
 `;
 
-const layoutSelect = app.querySelector<HTMLSelectElement>("#layout")!;
-const uiSizeSelect = app.querySelector<HTMLSelectElement>("#ui-size")!;
-const presetTime = app.querySelector<HTMLSelectElement>("#preset-time")!;
+const themeOptions = app.querySelector<HTMLElement>("#theme-options")!;
+const layoutOptions = app.querySelector<HTMLElement>("#layout-options")!;
+const uiSizeOptions = app.querySelector<HTMLElement>("#ui-size-options")!;
+const langOptions = app.querySelector<HTMLElement>("#lang-options")!;
+const timePresets = app.querySelector<HTMLElement>("#time-presets")!;
+const btnTime = app.querySelector<HTMLButtonElement>("#btn-time")!;
+const timePicker = app.querySelector<HTMLElement>("#time-picker")!;
+const timeValue = app.querySelector<HTMLElement>("#time-value")!;
+const btnSettings = app.querySelector<HTMLButtonElement>("#btn-settings")!;
+const settingsPanel = app.querySelector<HTMLElement>("#settings-panel")!;
+const btnStart = app.querySelector<HTMLButtonElement>("#btn-start")!;
 const manualTimeWrap = app.querySelector<HTMLDivElement>("#manual-time-wrap")!;
 const m1 = app.querySelector<HTMLInputElement>("#m1")!;
 const m2 = app.querySelector<HTMLInputElement>("#m2")!;
@@ -272,7 +321,6 @@ const cpToastEl: Record<Player, HTMLElement> = {
 const abilitiesOverlay = app.querySelector<HTMLElement>("#abilities-overlay")!;
 const abilitiesTitle = app.querySelector<HTMLElement>("#abilities-title")!;
 const abilityList = app.querySelector<HTMLUListElement>("#ability-list")!;
-const abilityNameInput = app.querySelector<HTMLInputElement>("#ability-name")!;
 const btnAbilitiesClose = app.querySelector<HTMLButtonElement>("#btn-abilities-close")!;
 const scoreTotalEl: Record<Player, HTMLElement> = {
   1: app.querySelector<HTMLElement>("#p1-score-total")!,
@@ -380,6 +428,10 @@ let nextAbilityId = 1;
 let bonusCpGained: Record<Player, boolean> = { 1: false, 2: false };
 /** Whose abilities panel is open */
 let abilitiesPlayer: Player | null = null;
+/** Unit just struck or restored on the board, until the mouse leaves it */
+let settlingAbilityId: number | null = null;
+/** Unit whose strike / restore animation plays on the next render only */
+let justToggledId: number | null = null;
 
 type TurnConfirmKind = "start-game" | "p1-to-p2" | "next-round" | "finish-game" | "reset";
 
@@ -401,20 +453,20 @@ function hideResultOverlay(): void {
 function openTurnConfirmModal(kind: TurnConfirmKind): void {
   turnConfirmKind = kind;
   if (kind === "start-game") {
-    turnConfirmTitle.textContent = "Start the game?";
-    turnConfirmMsg.textContent = `Player 1's clock starts.${photoBreaksToggle.checked ? " Photo breaks are on." : ""}`;
+    turnConfirmTitle.textContent = t("startTitle");
+    turnConfirmMsg.textContent = photoBreaksToggle.checked ? `${t("startMsg")} ${t("photoBreaksOn")}` : t("startMsg");
   } else if (kind === "p1-to-p2") {
-    turnConfirmTitle.textContent = "End Player 1's turn?";
-    turnConfirmMsg.textContent = "Player 2 takes the player turn. Both players gain 1 CP.";
+    turnConfirmTitle.textContent = t("endTurnTitle");
+    turnConfirmMsg.textContent = t("endTurnMsg");
   } else if (kind === "finish-game") {
-    turnConfirmTitle.textContent = "End the game?";
-    turnConfirmMsg.textContent = `Battle round ${MAX_GAME_TURN} is over. Scores are compared.`;
+    turnConfirmTitle.textContent = t("finishTitle");
+    turnConfirmMsg.textContent = t("finishMsg", { n: MAX_GAME_TURN });
   } else if (kind === "reset") {
-    turnConfirmTitle.textContent = "Reset the match?";
-    turnConfirmMsg.textContent = "Clocks, scores and CP go back to the start.";
+    turnConfirmTitle.textContent = t("resetTitle");
+    turnConfirmMsg.textContent = t("resetMsg");
   } else {
-    turnConfirmTitle.textContent = `Start battle round ${currentGameTurn + 1}?`;
-    turnConfirmMsg.textContent = "Player 1 takes the player turn. Both players gain 1 CP.";
+    turnConfirmTitle.textContent = t("nextRoundTitle", { n: currentGameTurn + 1 });
+    turnConfirmMsg.textContent = t("nextRoundMsg");
   }
   turnConfirmOverlay.classList.add("is-visible");
   turnConfirmOverlay.setAttribute("aria-hidden", "false");
@@ -427,28 +479,28 @@ function renderResultTable(): void {
   const roundRows = Array.from(
     { length: MAX_GAME_TURN },
     (_, i) =>
-      `<tr><th scope="row">Turn ${i + 1}</th>${cells(scoreByTurn[1].primary[i], scoreByTurn[1].secondary[i])}${cells(scoreByTurn[2].primary[i], scoreByTurn[2].secondary[i])}</tr>`,
+      `<tr><th scope="row">${t("turnN", { n: i + 1 })}</th>${cells(scoreByTurn[1].primary[i], scoreByTurn[1].secondary[i])}${cells(scoreByTurn[2].primary[i], scoreByTurn[2].secondary[i])}</tr>`,
   ).join("");
   resultTable.innerHTML = `
     <thead>
       <tr>
         <th rowspan="2"></th>
-        <th scope="colgroup" colspan="2" class="is-group is-p1">Player 1</th>
-        <th scope="colgroup" colspan="2" class="is-group is-p2">Player 2</th>
+        <th scope="colgroup" colspan="2" class="is-group is-p1">${t("player", { n: 1 })}</th>
+        <th scope="colgroup" colspan="2" class="is-group is-p2">${t("player", { n: 2 })}</th>
       </tr>
       <tr class="result-table__kinds">
-        <th scope="col" class="is-group">Pri</th><th scope="col">Sec</th>
-        <th scope="col" class="is-group">Pri</th><th scope="col">Sec</th>
+        <th scope="col" class="is-group">${t("pri")}</th><th scope="col">${t("sec")}</th>
+        <th scope="col" class="is-group">${t("pri")}</th><th scope="col">${t("sec")}</th>
       </tr>
     </thead>
     <tbody>${roundRows}${
       endBonus[1] || endBonus[2]
-        ? `<tr class="result-table__bonus"><th scope="row">End bonus</th><td class="is-group">${endBonus[1]}</td><td>–</td><td class="is-group">${endBonus[2]}</td><td>–</td></tr>`
+        ? `<tr class="result-table__bonus"><th scope="row">${t("endBonus")}</th><td class="is-group">${endBonus[1]}</td><td>–</td><td class="is-group">${endBonus[2]}</td><td>–</td></tr>`
         : ""
     }</tbody>
     <tfoot>
-      <tr class="result-table__subtotal"><th scope="row">Subtotal</th>${cells(scoreOf(1, "primary"), scoreOf(1, "secondary"))}${cells(scoreOf(2, "primary"), scoreOf(2, "secondary"))}</tr>
-      <tr class="result-table__total"><th scope="row">Total</th><td colspan="2" class="is-group">${scoreOf(1)}</td><td colspan="2" class="is-group">${scoreOf(2)}</td></tr>
+      <tr class="result-table__subtotal"><th scope="row">${t("subtotal")}</th>${cells(scoreOf(1, "primary"), scoreOf(1, "secondary"))}${cells(scoreOf(2, "primary"), scoreOf(2, "secondary"))}</tr>
+      <tr class="result-table__total"><th scope="row">${t("total")}</th><td colspan="2" class="is-group">${scoreOf(1)}</td><td colspan="2" class="is-group">${scoreOf(2)}</td></tr>
     </tfoot>
   `;
 }
@@ -475,9 +527,9 @@ function finishGameByScore(): void {
   updateButtons();
   const total1 = scoreOf(1);
   const total2 = scoreOf(2);
-  if (total1 > total2) showResultOverlay("Player 1 wins", "Won on points.", 1);
-  else if (total2 > total1) showResultOverlay("Player 2 wins", "Won on points.", 2);
-  else showResultOverlay("Draw", "Tied on points.", null);
+  if (total1 > total2) showResultOverlay(t("wins", { n: 1 }), t("wonOnPoints"), 1);
+  else if (total2 > total1) showResultOverlay(t("wins", { n: 2 }), t("wonOnPoints"), 2);
+  else showResultOverlay(t("draw"), t("tiedOnPoints"), null);
 }
 
 function applyTurnConfirm(): void {
@@ -516,7 +568,7 @@ function startPhotoBreak(): void {
   photoBreak = true;
   stopLoop();
   app.classList.add("is-photo-break");
-  photoMsg.textContent = `Photograph the table. Player ${turnPlayer}'s clock starts when you resume.`;
+  photoMsg.textContent = t("photoMsg", { n: turnPlayer });
   photoOverlay.classList.add("is-visible");
   photoOverlay.setAttribute("aria-hidden", "false");
   btnPhotoResume.focus();
@@ -538,13 +590,99 @@ function readMinutes(): { a: number; b: number } {
   };
 }
 
+/** A row of buttons acting as one choice: the chosen one is aria-pressed */
+function setSegmentedValue(group: HTMLElement, value: string): void {
+  group.querySelectorAll<HTMLButtonElement>(".segmented__option").forEach((option) => {
+    option.setAttribute("aria-pressed", String(option.dataset.value === value));
+  });
+}
+
+function onSegmentedPick(group: HTMLElement, pick: (value: string) => void): void {
+  group.addEventListener("click", (e) => {
+    const option = (e.target as HTMLElement).closest<HTMLButtonElement>(".segmented__option");
+    if (option?.dataset.value && !option.disabled) pick(option.dataset.value);
+  });
+}
+
+let timePreset = String(DEFAULT_TIME_SEC);
+
+function setTimePreset(value: string): void {
+  timePreset = value;
+  setSegmentedValue(timePresets, value);
+  updateManualInputsVisibility();
+  renderTimeValue();
+}
+
+/** "2h", "1h45", "50min" */
+function formatDuration(totalSeconds: number): string {
+  const total = Math.round(totalSeconds / 60);
+  const h = Math.floor(total / 60);
+  const m = total % 60;
+  if (h === 0) return `${m}min`;
+  return m === 0 ? `${h}h` : `${h}h${String(m).padStart(2, "0")}`;
+}
+
+function renderTimeValue(): void {
+  timeValue.textContent =
+    seconds1 === seconds2 ? formatDuration(seconds1) : `${formatDuration(seconds1)} · ${formatDuration(seconds2)}`;
+}
+
+/** Setup bar menus: closed by a click outside or Escape */
+const POPOVERS: [HTMLButtonElement, HTMLElement][] = [[btnSettings, settingsPanel]];
+
+/**
+ * The time choices unfold over the bar on hover (or keyboard focus). Once a time is
+ * picked they fold back, until the mouse leaves and comes back.
+ */
+function foldTimePicker(): void {
+  timePicker.classList.add("is-folded");
+  if (timePicker.contains(document.activeElement)) (document.activeElement as HTMLElement).blur();
+}
+
+function closePopovers(): void {
+  for (const [button, panel] of POPOVERS) {
+    panel.hidden = true;
+    button.setAttribute("aria-expanded", "false");
+  }
+}
+
+function togglePopover(button: HTMLButtonElement, panel: HTMLElement): void {
+  const open = panel.hidden;
+  closePopovers();
+  panel.hidden = !open;
+  button.setAttribute("aria-expanded", String(open));
+}
+
 const UI_SIZES = new Set(["s", "m", "l", "xl", "uw"]);
 const LAYOUTS = new Set(["rows", "columns"]);
+const THEMES = new Set(["clean", "warzone"]);
+
+function applyTheme(theme: string): void {
+  const v = THEMES.has(theme) ? theme : THEME_DEFAULT;
+  document.documentElement.dataset.theme = v;
+  setSegmentedValue(themeOptions, v);
+  try {
+    localStorage.setItem(THEME_STORAGE_KEY, v);
+  } catch {
+    /* quota / private mode */
+  }
+}
+
+function loadTheme(): void {
+  let stored = THEME_DEFAULT;
+  try {
+    stored = localStorage.getItem(THEME_STORAGE_KEY) ?? THEME_DEFAULT;
+  } catch {
+    /* ignore */
+  }
+  applyTheme(stored);
+}
 
 /** Set on <html> so the tooltips, appended to <body>, scale too */
 function applyUiSize(size: string): void {
   const v = UI_SIZES.has(size) ? size : UI_SIZE_DEFAULT;
   document.documentElement.dataset.uiSize = v;
+  setSegmentedValue(uiSizeOptions, v);
   try {
     localStorage.setItem(UI_SIZE_STORAGE_KEY, v);
   } catch {
@@ -559,14 +697,65 @@ function loadUiSize(): void {
   } catch {
     /* ignore */
   }
-  if (!UI_SIZES.has(stored)) stored = UI_SIZE_DEFAULT;
-  uiSizeSelect.value = stored;
   applyUiSize(stored);
+}
+
+function isLang(value: string): value is Lang {
+  return value === "en" || value === "fr";
+}
+
+/** Fills every element that carries a translation key, with its data-v-* placeholders */
+function applyTranslations(): void {
+  document.documentElement.lang = getLang();
+  app
+    .querySelectorAll<HTMLElement>("[data-i18n], [data-i18n-aria], [data-i18n-title], [data-i18n-placeholder]")
+    .forEach((el) => {
+      const { i18n, i18nAria, i18nTitle, i18nPlaceholder, ...rest } = el.dataset;
+      const vars = Object.fromEntries(
+        Object.entries(rest)
+          .filter(([name]) => /^v[A-Z]/.test(name))
+          .map(([name, value]) => [name.charAt(1).toLowerCase() + name.slice(2), value ?? ""]),
+      );
+      if (i18n) el.textContent = t(i18n as StringKey, vars);
+      if (i18nAria) el.setAttribute("aria-label", t(i18nAria as StringKey, vars));
+      if (i18nTitle) el.title = t(i18nTitle as StringKey, vars);
+      if (i18nPlaceholder) el.setAttribute("placeholder", t(i18nPlaceholder as StringKey, vars));
+    });
+}
+
+function applyLang(value: string): void {
+  setLang(isLang(value) ? value : "en");
+  setSegmentedValue(langOptions, getLang());
+  try {
+    localStorage.setItem(LANG_STORAGE_KEY, getLang());
+  } catch {
+    /* quota / private mode */
+  }
+  applyTranslations();
+  renderKeyHint();
+  renderTurnDots();
+  renderMiniCounters();
+  renderAbilities(1);
+  renderAbilities(2);
+  syncFullscreenLabel();
+}
+
+function loadLang(): void {
+  let stored: string | null = null;
+  try {
+    stored = localStorage.getItem(LANG_STORAGE_KEY);
+  } catch {
+    /* ignore */
+  }
+  // First visit: follow the browser language
+  const initial = stored ?? (navigator.language.toLowerCase().startsWith("fr") ? "fr" : "en");
+  applyLang(initial);
 }
 
 function applyLayout(layout: string): void {
   const v = LAYOUTS.has(layout) ? layout : LAYOUT_DEFAULT;
   document.documentElement.dataset.layout = v;
+  setSegmentedValue(layoutOptions, v);
   try {
     localStorage.setItem(LAYOUT_STORAGE_KEY, v);
   } catch {
@@ -581,24 +770,20 @@ function loadLayout(): void {
   } catch {
     /* ignore */
   }
-  if (!LAYOUTS.has(stored)) stored = LAYOUT_DEFAULT;
-  layoutSelect.value = stored;
   applyLayout(stored);
 }
 
 function updateManualInputsVisibility(): void {
-  manualTimeWrap.hidden = presetTime.value !== CUSTOM_PRESET_VALUE;
+  manualTimeWrap.hidden = timePreset !== CUSTOM_PRESET_VALUE;
 }
 
 function syncPresetSelectFromState(): void {
   if (seconds1 !== seconds2) {
-    presetTime.value = CUSTOM_PRESET_VALUE;
-    updateManualInputsVisibility();
+    setTimePreset(CUSTOM_PRESET_VALUE);
     return;
   }
   const match = PRESETS.find((p) => p.sec === seconds1);
-  presetTime.value = match ? String(match.sec) : CUSTOM_PRESET_VALUE;
-  updateManualInputsVisibility();
+  setTimePreset(match ? String(match.sec) : CUSTOM_PRESET_VALUE);
 }
 
 function applyPresetSeconds(totalSeconds: number): void {
@@ -647,22 +832,24 @@ function setActivePanels(): void {
 }
 
 function setInputsEnabled(on: boolean): void {
-  presetTime.disabled = !on;
+  btnTime.disabled = !on;
   m1.disabled = !on;
   m2.disabled = !on;
   photoBreaksToggle.disabled = !on;
 }
 
 function renderKeyHint(): void {
+  const enter = `<kbd>${t("keyEnter")}</kbd>`;
+  const space = `<kbd>${t("keySpace")}</kbd>`;
+  const sep = '<span class="key-hint__sep"></span>';
   if (running) {
-    keyHint.innerHTML =
-      "<kbd>Enter</kbd> end turn <span class=\"key-hint__sep\"></span> <kbd>Space</kbd> switch clock <span class=\"key-hint__sep\"></span> <kbd>Space</kbd><kbd>Space</kbd> pause";
+    keyHint.innerHTML = `${enter} ${t("hintEndTurn")} ${sep} ${space} ${t("hintSwitch")} ${sep} ${space}${space} ${t("hintPause")}`;
   } else if (gameOver) {
-    keyHint.innerHTML = "<span class=\"key-hint__status\">Game over</span> Reset to play again";
+    keyHint.innerHTML = `<span class="key-hint__status">${t("gameOver")}</span> ${t("hintPlayAgain")}`;
   } else if (paused) {
-    keyHint.innerHTML = "<span class=\"key-hint__status\">Paused</span> <kbd>Space</kbd> resume";
+    keyHint.innerHTML = `<span class="key-hint__status">${t("paused")}</span> ${space} ${t("hintResume")}`;
   } else {
-    keyHint.innerHTML = "<kbd>Enter</kbd> start the game";
+    keyHint.innerHTML = `${enter} ${t("hintStart")}`;
   }
 }
 
@@ -785,12 +972,13 @@ function endGame(winner: Player): void {
   applyTimesToDisplay();
   syncPresetSelectFromState();
   const loser: Player = winner === 1 ? 2 : 1;
-  showResultOverlay(`Player ${winner} wins`, `Player ${loser} ran out of time.`, winner);
+  showResultOverlay(t("wins", { n: winner }), t("ranOutOfTime", { n: loser }), winner);
   panel1.classList.toggle("is-flag", seconds1 <= 0);
   panel2.classList.toggle("is-flag", seconds2 <= 0);
 }
 
 function start(): void {
+  closePopovers();
   hideTurnConfirmModal();
   hideResultOverlay();
   paused = false;
@@ -880,13 +1068,13 @@ function renderMiniCounters(): void {
     // The total covers the whole game; primary and secondary show the player's current turn only
     const turnIdx = scoringTurnIdx(player);
     scoreTotalEl[player].textContent = String(scoreOf(player));
-    app.querySelector<HTMLElement>(`#p${player}-score-turn`)!.textContent = `Turn ${turnIdx + 1}`;
+    app.querySelector<HTMLElement>(`#p${player}-score-turn`)!.textContent = t("turnN", { n: turnIdx + 1 });
     for (const { kind } of SCORE_KINDS) {
       const points = scoreByTurn[player][kind][turnIdx];
       app.querySelector<HTMLElement>(`#p${player}-${kind}-val`)!.textContent = String(points);
       const plus = app.querySelector<HTMLButtonElement>(`#p${player}-${kind}-plus`)!;
       plus.disabled = points >= MAX_POINTS_PER_TURN;
-      plus.title = plus.disabled ? `${MAX_POINTS_PER_TURN} points max per turn` : "";
+      plus.title = plus.disabled ? t("maxPerTurn", { max: MAX_POINTS_PER_TURN }) : "";
     }
     app.querySelector<HTMLElement>(`#p${player}-bonus-row`)!.hidden =
       !(running || paused) || turnIdx !== MAX_GAME_TURN - 1;
@@ -943,7 +1131,7 @@ function renderScoreTooltipContent(player: Player): void {
   scoreTooltipEl.innerHTML = "";
   const legend = document.createElement("div");
   legend.className = "score-tooltip__legend";
-  legend.textContent = "Primary / secondary";
+  legend.textContent = t("priSecLegend");
   scoreTooltipEl.appendChild(legend);
   for (let i = 0; i < MAX_GAME_TURN; i++) {
     const row = document.createElement("div");
@@ -953,7 +1141,7 @@ function renderScoreTooltipContent(player: Player): void {
 
     if (primary[i] === 0 && secondary[i] === 0) row.classList.add("is-empty");
     const label = document.createElement("span");
-    label.textContent = `Turn ${i + 1}`;
+    label.textContent = t("turnN", { n: i + 1 });
     row.appendChild(label);
     const value = document.createElement("span");
     value.className = "score-tooltip__value";
@@ -973,10 +1161,10 @@ function renderScoreTooltipContent(player: Player): void {
     const row = document.createElement("div");
     row.className = "score-tooltip__row";
     const label = document.createElement("span");
-    label.textContent = "End bonus";
+    label.textContent = t("endBonus");
     const value = document.createElement("span");
     value.className = "score-tooltip__value";
-    value.textContent = `+${endBonus[player]} pri`;
+    value.textContent = t("bonusPri", { n: endBonus[player] });
     row.append(label, value);
     scoreTooltipEl.appendChild(row);
   }
@@ -1039,7 +1227,7 @@ function renderCpTooltipContent(player: Player): void {
   cpTooltipEl.innerHTML = "";
   const legend = document.createElement("div");
   legend.className = "score-tooltip__legend";
-  legend.textContent = "CP gained / spent by hand";
+  legend.textContent = t("cpLegend");
   cpTooltipEl.appendChild(legend);
   const matchActive = running || paused;
   const curSlot = matchActive ? currentPlayerTurnSlot() : -1;
@@ -1053,7 +1241,7 @@ function renderCpTooltipContent(player: Player): void {
     const turnOwner: Player = i % 2 === 0 ? 1 : 2;
     if (addedHist[i] === 0 && removedHist[i] === 0) row.classList.add("is-empty");
     const label = document.createElement("span");
-    label.textContent = `Round ${round} · P${turnOwner}`;
+    label.textContent = t("cpTurnRow", { round, p: turnOwner });
     row.appendChild(label);
     const value = document.createElement("span");
     value.className = "score-tooltip__value";
@@ -1093,12 +1281,12 @@ function applyAbilityCp(player: Player, kinds: ("round-cp" | "turn-cp")[]): void
   const [source] = kinds.flatMap((kind) => activeAbilities(player, kind));
   if (!source) return;
   if (bonusCpGained[player]) {
-    showCpToast(player, "CP cap reached", false);
+    showCpToast(player, t("cpCapReached"), false);
     return;
   }
   bonusCpGained[player] = true;
   gainCp(player);
-  showCpToast(player, source.name ? `+1 CP · ${source.name}` : "+1 CP", true);
+  showCpToast(player, t("cpGained"), true);
   renderAbilities(player);
 }
 
@@ -1134,25 +1322,63 @@ const CP_COIN_SVG = `
     <path class="cp-coin__ticks" d="M32 2v5M32 57v5M6 17l4.3 2.5M58 17l-4.3 2.5M6 47l4.3-2.5M58 47l-4.3-2.5" />
   </svg>`;
 
-function cpCoinEl(ability: Ability): HTMLButtonElement {
+/**
+ * The unit giving an ability, as one big target: a click strikes it through when it dies
+ * (no more CP from it), a second click brings it back.
+ */
+function unitToggleEl(ability: Ability, text: string): HTMLButtonElement {
+  const toggle = document.createElement("button");
+  toggle.type = "button";
+  toggle.className = "unit-toggle";
+  toggle.classList.toggle("is-lost", ability.lost);
+  toggle.classList.toggle("is-just-toggled", ability.id === justToggledId);
+  // Just clicked: the cursor is still on it, so hold the opposite preview until it leaves
+  if (ability.id === settlingAbilityId) {
+    toggle.classList.add("is-settling");
+    toggle.addEventListener(
+      "mouseleave",
+      () => {
+        toggle.classList.remove("is-settling");
+        if (settlingAbilityId === ability.id) settlingAbilityId = null;
+      },
+      { once: true },
+    );
+  }
+  toggle.dataset.abilityId = String(ability.id);
+  toggle.setAttribute("aria-pressed", String(ability.lost));
+  toggle.setAttribute("aria-label", t(ability.lost ? "unitRestoreAria" : "unitLostAria", { unit: text }));
+  const label = document.createElement("span");
+  label.className = "unit-toggle__text";
+  label.textContent = text;
+  const ask = document.createElement("span");
+  ask.className = "unit-toggle__ask";
+  ask.setAttribute("aria-hidden", "true");
+  ask.textContent = t(ability.lost ? "askRestore" : "askRemove");
+  toggle.append(label, ask);
+  return toggle;
+}
+
+function cpCoinEl(ability: Ability): HTMLElement {
   const coin = document.createElement("button");
   coin.type = "button";
   coin.className = "cp-coin";
   coin.classList.toggle("is-spent", ability.spent);
+  coin.disabled = ability.lost;
   coin.dataset.abilityId = String(ability.id);
-  const owner = ability.name || "Stratagem";
-  coin.setAttribute(
-    "aria-label",
-    ability.spent ? `${owner}: −1 CP already used this battle round` : `${owner}: use −1 CP on a stratagem`,
-  );
+  const owner = t("stratagem");
+  coin.setAttribute("aria-label", ability.spent ? t("coinSpentAria", { owner }) : t("coinAria", { owner }));
+  // A spent coin shows ↻: it comes back next battle round
   coin.innerHTML = `
     <span class="cp-coin__face" aria-hidden="true">${CP_COIN_SVG}
-      <span class="cp-coin__value">−1</span>
-      <span class="cp-coin__unit">CP</span>
-    </span>
-    <span class="cp-coin__caption" aria-hidden="true"></span>`;
-  coin.querySelector(".cp-coin__caption")!.textContent = ability.spent ? "Next round" : owner;
-  return coin;
+      <span class="cp-coin__value">${ability.spent ? "↻" : "−1"}</span>
+      <span class="cp-coin__unit">${t("cpUnit")}</span>
+    </span>`;
+  const wrap = document.createElement("div");
+  wrap.className = "cp-coin-wrap";
+  wrap.classList.toggle("is-lost", ability.lost);
+  wrap.classList.toggle("is-just-toggled", ability.id === justToggledId);
+  wrap.append(coin, unitToggleEl(ability, owner));
+  return wrap;
 }
 
 function renderAbilities(player: Player): void {
@@ -1160,15 +1386,14 @@ function renderAbilities(player: Player): void {
   coins.className = "abilities__coins";
   const chips = document.createElement("div");
   chips.className = "abilities__chips";
+  // Lost units stay on the board, struck through, so a misclick is one click away from undo
   for (const ability of abilities[player]) {
-    if (ability.lost) continue;
     if (ability.kind === "discount") {
       coins.appendChild(cpCoinEl(ability));
     } else {
-      const chip = document.createElement("span");
-      chip.className = "ability-chip";
-      const short = ABILITY_KINDS[ability.kind].short;
-      chip.textContent = ability.name ? `${short} · ${ability.name}` : short;
+      const short = t(ABILITY_KINDS[ability.kind].short);
+      const chip = unitToggleEl(ability, short);
+      chip.classList.add("ability-chip");
       chips.appendChild(chip);
     }
   }
@@ -1184,7 +1409,7 @@ const CP_COIN_ANIM_MS = 900;
 function spendCpCoin(player: Player, coin: HTMLButtonElement): void {
   if (!running && !paused) return;
   const ability = abilities[player].find(({ id }) => String(id) === coin.dataset.abilityId);
-  if (!ability || ability.spent || coin.classList.contains("is-animating")) return;
+  if (!ability || ability.lost || ability.spent || coin.classList.contains("is-animating")) return;
 
   const face = coin.querySelector<HTMLElement>(".cp-coin__face")!;
   let completed = false;
@@ -1218,13 +1443,12 @@ function spendCpCoin(player: Player, coin: HTMLButtonElement): void {
 
 function openAbilities(player: Player): void {
   abilitiesPlayer = player;
-  abilitiesTitle.textContent = `Player ${player} abilities`;
+  abilitiesTitle.textContent = t("abilitiesTitle", { n: player });
   abilitiesTitle.className = `is-p${player}`;
-  abilityNameInput.value = "";
   renderAbilityList();
   abilitiesOverlay.classList.add("is-visible");
   abilitiesOverlay.setAttribute("aria-hidden", "false");
-  abilityNameInput.focus();
+  btnAbilitiesClose.focus();
 }
 
 function closeAbilities(): void {
@@ -1235,69 +1459,96 @@ function closeAbilities(): void {
   (document.activeElement as HTMLElement | null)?.blur();
 }
 
+type AbilitySlot = "discount" | "cp";
+
+const isCpKind = (kind: AbilityKind): boolean => kind !== "discount";
+
+function abilityInSlot(player: Player, slot: AbilitySlot): Ability | undefined {
+  return abilities[player].find((ability) => (slot === "discount" ? !isCpKind(ability.kind) : isCpKind(ability.kind)));
+}
+
+/** The timing choice slides in only when +1 CP was just turned on, not on every redraw */
+let revealCpTiming = false;
+
+function abilityToggleHtml(slot: AbilitySlot, on: boolean): string {
+  return `
+    <button type="button" class="ability-toggle" data-slot="${slot}" aria-pressed="${on}">
+      <span class="ability-toggle__title"></span>
+      <span class="ability-toggle__hint"></span>
+      <span class="ability-toggle__check" aria-hidden="true">${ICON_CHECK}</span>
+    </button>`;
+}
+
+/**
+ * A player has at most one unit discounting a stratagem and one unit giving +1 CP.
+ * The +1 CP tile, once on, asks when the CP comes.
+ */
 function renderAbilityList(): void {
   if (abilitiesPlayer === null) return;
-  const rows = abilities[abilitiesPlayer].map((ability) => {
-    const row = document.createElement("li");
-    row.className = "ability-row";
-    row.classList.toggle("is-lost", ability.lost);
-    row.dataset.abilityId = String(ability.id);
-    const kind = document.createElement("span");
-    kind.className = "ability-row__kind";
-    kind.textContent = ABILITY_KINDS[ability.kind].short;
-    const name = document.createElement("span");
-    name.className = "ability-row__name";
-    name.textContent = ability.name || "—";
-    const toggle = document.createElement("button");
-    toggle.type = "button";
-    toggle.className = "btn-secondary btn-sm";
-    toggle.dataset.action = "toggle";
-    toggle.textContent = ability.lost ? "Restore" : "Lost";
-    toggle.title = ability.lost ? "Its character is back" : "Its character is gone";
-    const remove = document.createElement("button");
-    remove.type = "button";
-    remove.className = "btn-icon btn-sm";
-    remove.dataset.action = "delete";
-    remove.setAttribute("aria-label", "Delete ability");
-    remove.textContent = "✕";
-    row.append(kind, name, toggle, remove);
-    return row;
-  });
-  if (rows.length === 0) {
-    const empty = document.createElement("li");
-    empty.className = "ability-list__empty";
-    empty.textContent = "No ability yet.";
-    rows.push(empty);
-  }
-  abilityList.replaceChildren(...rows);
-}
-
-function addAbility(kind: AbilityKind): void {
-  if (abilitiesPlayer === null) return;
-  abilities[abilitiesPlayer].push({
-    id: nextAbilityId++,
-    kind,
-    name: abilityNameInput.value.trim(),
-    lost: false,
-    spent: false,
-  });
-  abilityNameInput.value = "";
-  abilityNameInput.focus();
-  renderAbilityList();
-  renderAbilities(abilitiesPlayer);
-}
-
-function handleAbilityRowAction(action: string, id: number): void {
-  if (abilitiesPlayer === null) return;
   const player = abilitiesPlayer;
-  if (action === "delete") {
-    abilities[player] = abilities[player].filter((ability) => ability.id !== id);
+  const discount = abilityInSlot(player, "discount");
+  const cp = abilityInSlot(player, "cp");
+
+  const discountRow = document.createElement("li");
+  discountRow.innerHTML = abilityToggleHtml("discount", !!discount);
+  discountRow.querySelector(".ability-toggle__title")!.textContent = t(ABILITY_KINDS.discount.title);
+  discountRow.querySelector(".ability-toggle__hint")!.textContent = t(ABILITY_KINDS.discount.hint);
+
+  const cpRow = document.createElement("li");
+  cpRow.innerHTML = abilityToggleHtml("cp", !!cp);
+  cpRow.querySelector(".ability-toggle__title")!.textContent = t("cpTitle");
+  cpRow.querySelector(".ability-toggle__hint")!.textContent = t("cpTimingHint");
+  if (cp) {
+    const timing = document.createElement("div");
+    timing.className = "segmented ability-timing";
+    timing.classList.toggle("is-revealed", revealCpTiming);
+    timing.setAttribute("role", "group");
+    timing.setAttribute("aria-label", t("cpTimingHint"));
+    for (const kind of ["turn-cp", "round-cp"] as const) {
+      const option = document.createElement("button");
+      option.type = "button";
+      option.className = "segmented__option";
+      option.dataset.value = kind;
+      option.setAttribute("aria-pressed", String(cp.kind === kind));
+      option.textContent = t(ABILITY_KINDS[kind].hint);
+      timing.appendChild(option);
+    }
+    cpRow.appendChild(timing);
+  }
+  revealCpTiming = false;
+  abilityList.replaceChildren(discountRow, cpRow);
+}
+
+function toggleAbilitySlot(player: Player, slot: AbilitySlot): void {
+  const existing = abilityInSlot(player, slot);
+  if (existing) {
+    abilities[player] = abilities[player].filter((ability) => ability !== existing);
   } else {
-    const ability = abilities[player].find((candidate) => candidate.id === id);
-    if (ability) ability.lost = !ability.lost;
+    abilities[player].push({ id: nextAbilityId++, kind: slot === "discount" ? "discount" : "turn-cp", lost: false, spent: false });
+    revealCpTiming = slot === "cp";
   }
   renderAbilityList();
   renderAbilities(player);
+}
+
+/** Switching the timing keeps the same unit, struck or not */
+function setCpTiming(player: Player, kind: AbilityKind): void {
+  const cp = abilityInSlot(player, "cp");
+  if (!cp || cp.kind === kind) return;
+  cp.kind = kind;
+  renderAbilityList();
+  renderAbilities(player);
+}
+
+function toggleAbilityLost(player: Player, id: number): void {
+  const ability = abilities[player].find((candidate) => candidate.id === id);
+  if (!ability) return;
+  ability.lost = !ability.lost;
+  settlingAbilityId = id;
+  justToggledId = id;
+  renderAbilities(player);
+  justToggledId = null;
+  if (abilitiesPlayer === player) renderAbilityList();
 }
 
 function adjustScore(player: Player, kind: ScoreKind, delta: 1 | -1): void {
@@ -1391,17 +1642,26 @@ for (const [id, handler] of miniCounterActions) {
 for (const player of [1, 2] as const) {
   app.querySelector<HTMLButtonElement>(`#p${player}-abilities-btn`)!.addEventListener("click", () => openAbilities(player));
   abilitiesEl[player].addEventListener("click", (e) => {
-    const coin = (e.target as HTMLElement).closest<HTMLButtonElement>(".cp-coin");
+    const target = e.target as HTMLElement;
+    const unit = target.closest<HTMLButtonElement>(".unit-toggle");
+    if (unit) {
+      toggleAbilityLost(player, Number(unit.dataset.abilityId));
+      return;
+    }
+    const coin = target.closest<HTMLButtonElement>(".cp-coin");
     if (coin) spendCpCoin(player, coin);
   });
 }
-app.querySelectorAll<HTMLButtonElement>(".ability-kind").forEach((btn) => {
-  btn.addEventListener("click", () => addAbility(btn.dataset.kind as AbilityKind));
-});
 abilityList.addEventListener("click", (e) => {
-  const btn = (e.target as HTMLElement).closest<HTMLButtonElement>("button[data-action]");
-  const row = btn?.closest<HTMLElement>(".ability-row");
-  if (btn && row) handleAbilityRowAction(btn.dataset.action!, Number(row.dataset.abilityId));
+  if (abilitiesPlayer === null) return;
+  const target = e.target as HTMLElement;
+  const timing = target.closest<HTMLButtonElement>(".ability-timing .segmented__option");
+  if (timing) {
+    setCpTiming(abilitiesPlayer, timing.dataset.value as AbilityKind);
+    return;
+  }
+  const toggle = target.closest<HTMLButtonElement>(".ability-toggle");
+  if (toggle) toggleAbilitySlot(abilitiesPlayer, toggle.dataset.slot as AbilitySlot);
 });
 btnAbilitiesClose.addEventListener("click", closeAbilities);
 
@@ -1418,7 +1678,7 @@ function renderTurnDots(): void {
     dot.setAttribute("role", "img");
     dot.setAttribute(
       "aria-label",
-      `Battle round ${i}${i === currentGameTurn ? ", current" : i < currentGameTurn ? ", completed" : ", not started"}`,
+      t(i === currentGameTurn ? "dotCurrent" : i < currentGameTurn ? "dotDone" : "dotNext", { n: i }),
     );
     if (i < currentGameTurn) dot.classList.add("turn-dot--past");
     else if (i === currentGameTurn) dot.classList.add("turn-dot--current");
@@ -1531,6 +1791,16 @@ window.addEventListener("keydown", (e) => {
     }
     return;
   }
+  if (e.key === "Escape" && POPOVERS.some(([, panel]) => !panel.hidden)) {
+    e.preventDefault();
+    closePopovers();
+    return;
+  }
+  if (e.key === "Escape" && timePicker.matches(":focus-within")) {
+    e.preventDefault();
+    foldTimePicker();
+    return;
+  }
   if ((e.code === "Enter" || e.code === "Space") && isButtonTarget(e.target)) {
     /* Keep Enter/Space bound to global turn/timer shortcuts, not focused button activation. */
     e.preventDefault();
@@ -1629,14 +1899,23 @@ board.addEventListener("pointerdown", (e) => {
   handleSpaceLikeInput();
 });
 
-presetTime.addEventListener("change", () => {
+onSegmentedPick(timePresets, (value) => {
   if (running) return;
-  const v = presetTime.value;
-  if (v === CUSTOM_PRESET_VALUE) {
-    updateManualInputsVisibility();
+  if (value === CUSTOM_PRESET_VALUE) {
+    setTimePreset(value);
+    m1.focus();
+    m1.select();
     return;
   }
-  applyPresetSeconds(Number(v));
+  applyPresetSeconds(Number(value));
+  foldTimePicker();
+});
+
+timePicker.addEventListener("mouseleave", () => {
+  if (!timePicker.contains(document.activeElement)) timePicker.classList.remove("is-folded");
+});
+timePicker.addEventListener("mouseenter", () => {
+  if (!timePicker.matches(":focus-within")) timePicker.classList.remove("is-folded");
 });
 
 [m1, m2].forEach((input) => {
@@ -1646,24 +1925,33 @@ presetTime.addEventListener("change", () => {
     seconds1 = a * 60;
     seconds2 = b * 60;
     applyTimesToDisplay();
-    syncPresetSelectFromState();
+    renderTimeValue();
+  });
+  // Enter validates the custom time and gives the keyboard back to the game
+  input.addEventListener("keydown", (e) => {
+    if (e.key !== "Enter") return;
+    e.preventDefault();
+    foldTimePicker();
   });
 });
 
-uiSizeSelect.addEventListener("change", () => {
-  applyUiSize(uiSizeSelect.value);
+onSegmentedPick(themeOptions, applyTheme);
+onSegmentedPick(uiSizeOptions, applyUiSize);
+onSegmentedPick(layoutOptions, applyLayout);
+onSegmentedPick(langOptions, applyLang);
+
+btnSettings.addEventListener("click", () => togglePopover(btnSettings, settingsPanel));
+document.addEventListener("pointerdown", (e) => {
+  if (!(e.target as HTMLElement).closest(".popover-anchor")) closePopovers();
 });
 
-layoutSelect.addEventListener("change", () => {
-  applyLayout(layoutSelect.value);
+btnStart.addEventListener("click", () => {
+  if (!running && !paused) start();
 });
 
-// A focused select would swallow Enter / Space, the game shortcuts
-[layoutSelect, uiSizeSelect, presetTime].forEach((select) => {
-  select.addEventListener("change", () => select.blur());
-});
-
-presetTime.value = String(DEFAULT_TIME_SEC);
+setTimePreset(String(DEFAULT_TIME_SEC));
+loadLang();
+loadTheme();
 loadLayout();
 loadUiSize();
 updateManualInputsVisibility();
@@ -1681,7 +1969,7 @@ function syncFullscreenLabel(): void {
   const exit = btnFullscreen.querySelector<HTMLElement>(".fullscreen-icon--exit");
   if (enter) enter.hidden = inFs;
   if (exit) exit.hidden = !inFs;
-  const label = inFs ? "Exit fullscreen" : "Enter fullscreen";
+  const label = inFs ? t("exitFullscreen") : t("enterFullscreen");
   btnFullscreen.title = label;
   btnFullscreen.setAttribute("aria-label", label);
 }
