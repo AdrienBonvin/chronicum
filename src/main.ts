@@ -1997,6 +1997,8 @@ let drawnIds: string[] = [];
 let pendingDraw: { player: Player; drawn: string[] } | null = null;
 
 const CARD_EXIT_MS = 450;
+/** The cards left in the row glide to their new place */
+const CARD_SLIDE_MS = 380;
 
 /** Closing puts the cards away, as in the CSS: the deal played backwards, the last card first */
 const PUT_AWAY_MS = 350;
@@ -2082,6 +2084,7 @@ function openCards(player: Player, mode: typeof cardsMode, drawn: string[] = [])
     afterPutAway ??= () => openCards(player, mode, drawn);
     return;
   }
+  cardsOverlay.classList.remove("is-closing");
   cardsPlayer = player;
   cardsMode = mode;
   drawnIds = drawn;
@@ -2119,7 +2122,8 @@ function closeCards(putAway = true): void {
 function hideCards(): void {
   if (putAwayTimer !== null) window.clearTimeout(putAwayTimer);
   putAwayTimer = null;
-  cardsOverlay.classList.remove("is-visible", "is-closing");
+  // The cards stay put away while the overlay fades out: the next opening resets them
+  cardsOverlay.classList.remove("is-visible");
   const next = afterPutAway;
   afterPutAway = null;
   next?.();
@@ -2238,7 +2242,7 @@ function renderCards(dealIds: string[] = []): void {
   renderCardsSwitch();
   if (cardsMode === "primary") {
     cardsTitle.textContent = t("primaryTitle");
-    cardsSub.textContent = t("primarySub");
+    cardsSub.textContent = "";
     // The two missions face off: they rush in from each side and clash on a "VS"
     const versus = document.createElement("div");
     versus.className = "versus";
@@ -2267,7 +2271,7 @@ function renderCards(dealIds: string[] = []): void {
     cardsSub.textContent = player === turnPlayer ? t("endTurnScoringSub") : t("endTurnOpponentSub", { n: player });
   } else if (cardsMode === "mission") {
     cardsTitle.textContent = t("missionTitle", { n: player });
-    cardsSub.textContent = t("primarySub");
+    cardsSub.textContent = "";
   } else if (cardsMode === "scored") {
     cardsTitle.textContent = t("scoredTitle", { n: player });
     cardsSub.textContent = t("scoredSub");
@@ -2294,8 +2298,9 @@ function renderCards(dealIds: string[] = []): void {
   layoutCardsRow();
 }
 
-/** Card width and gap in rem, as in the CSS */
+/** Card widths and gap in rem, as in the CSS: the primary, kept all game, is the wider card */
 const CARD_REM = 16;
+const PRIMARY_CARD_REM = 20;
 const CARD_GAP_REM = 1.5;
 
 /**
@@ -2308,16 +2313,18 @@ function layoutCardsRow(): void {
     return;
   }
   cardsRow.classList.remove("is-clashing");
-  const count = cardsRow.querySelectorAll(".sec-card").length;
+  const cards = [...cardsRow.querySelectorAll(".sec-card")];
+  const count = cards.length;
+  const width = cards.reduce((sum, card) => sum + (card.classList.contains("sec-card--primary") ? PRIMARY_CARD_REM : CARD_REM), 0);
   const rootPx = parseFloat(getComputedStyle(document.documentElement).fontSize) || 16;
   const scale = parseFloat(getComputedStyle(document.documentElement).getPropertyValue("--ui-scale")) || 1;
   // Room for the row, in rem of the zoomed stage (its padding taken out)
   const available = ((cardsOverlay.clientWidth - 2 * rootPx) / scale - 2 * rootPx) / rootPx;
-  const natural = count * CARD_REM + (count - 1) * CARD_GAP_REM;
+  const natural = width + (count - 1) * CARD_GAP_REM;
   const fanned = count > 1 && natural > available;
   cardsRow.classList.toggle("is-fanned", fanned);
   // At least 3rem of each card stays visible, enough to read its name
-  const overlap = fanned ? Math.min((count * CARD_REM - available) / (count - 1), CARD_REM - 3) : 0;
+  const overlap = fanned ? Math.min((width - available) / (count - 1), CARD_REM - 3) : 0;
   cardsRow.style.setProperty("--overlap", `${overlap}rem`);
 }
 
@@ -2444,11 +2451,43 @@ function playCardExit(cardEl: HTMLElement, exit: "is-scored" | "is-discarded", b
   }
   cardEl.classList.add(exit);
   const done = () => {
+    const before = cardPositions();
     renderCards(dealIds);
+    slideCardsFrom(before);
     renderHandButtons();
   };
   if (prefersReducedMotion()) done();
   else window.setTimeout(done, CARD_EXIT_MS);
+}
+
+const cardKey = (card: HTMLElement): string => card.dataset.cardId ?? `primary-${card.dataset.primaryPlayer}`;
+
+function cardPositions(): Map<string, DOMRect> {
+  return new Map(
+    [...cardsRow.querySelectorAll<HTMLElement>(".sec-card")].map((card) => [cardKey(card), card.getBoundingClientRect()]),
+  );
+}
+
+/**
+ * When a card leaves, the others close the gap: each one starts where it was and glides to its
+ * new place, instead of jumping there (FLIP)
+ */
+function slideCardsFrom(before: Map<string, DOMRect>): void {
+  if (prefersReducedMotion()) return;
+  // Positions are read zoomed, the transform applies inside the zoomed stage
+  const scale = parseFloat(getComputedStyle(document.documentElement).getPropertyValue("--ui-scale")) || 1;
+  cardsRow.querySelectorAll<HTMLElement>(".sec-card").forEach((card) => {
+    const from = before.get(cardKey(card));
+    if (!from) return;
+    const to = card.getBoundingClientRect();
+    const dx = (from.left - to.left) / scale;
+    const dy = (from.top - to.top) / scale;
+    if (Math.abs(dx) < 1 && Math.abs(dy) < 1) return;
+    card.animate([{ transform: `translate(${dx}px, ${dy}px)` }, { transform: "none" }], {
+      duration: CARD_SLIDE_MS,
+      easing: "cubic-bezier(0.2, 0.8, 0.2, 1)",
+    });
+  });
 }
 
 function scoreSecondary(player: Player, id: string, vp: number, cardEl: HTMLElement): void {
@@ -2658,7 +2697,7 @@ function primaryCardEl(player: Player, index: number, deal: boolean, scorable: b
       const pick = document.createElement("span");
       pick.className = "pri-section__pick";
       pick.textContent = t("pickOneOf");
-      block.appendChild(pick);
+      block.querySelector(".pri-section__rounds")!.after(pick);
     }
     section.items.forEach((item, i) => {
       const key = `${turnKey}|${s}|${i}`;

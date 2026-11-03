@@ -46,15 +46,15 @@ export type PrimaryCard = {
 const ALL: [number, number] = [1, 5];
 const FROM_2: [number, number] = [2, 5];
 
-const CONTROL_ONE: Text = { en: "You control 1+ objectives (not home)", fr: "Vous contrôlez 1+ objectif (hors base)" };
+const CONTROL_ONE: Text = { en: "You control 1+ objectives (not home)", fr: "Vous contrôlez 1+ objectif (hors objectif maison)" };
 const MORE_OBJECTIVES: Text = { en: "More objectives than the enemy", fr: "Plus d'objectifs que l'adversaire" };
 const PER_OBJECTIVE: Text = { en: "Per objective you control", fr: "Par objectif contrôlé" };
-const PER_OBJECTIVE_NOT_HOME: Text = { en: "Per objective you control (not home)", fr: "Par objectif contrôlé (hors base)" };
+const PER_OBJECTIVE_NOT_HOME: Text = { en: "Per objective you control (not home)", fr: "Par objectif contrôlé (hors objectif maison)" };
 const ENEMY_DESTROYED: Text = { en: "Enemy unit destroyed this turn", fr: "Unité ennemie détruite ce tour" };
 const PER_ENEMY_DESTROYED: Text = { en: "Per enemy unit destroyed this turn", fr: "Par unité ennemie détruite ce tour" };
-const ENEMY_HOME: Text = { en: "You control the enemy home objective", fr: "Vous contrôlez l'objectif de base adverse" };
+const ENEMY_HOME: Text = { en: "You control the enemy home objective", fr: "Vous contrôlez l'objectif maison adverse" };
 const CENTRAL: Text = { en: "You control a central objective", fr: "Vous contrôlez un objectif central" };
-const TOOK_OBJECTIVE: Text = { en: "You took an objective this turn (not home)", fr: "Objectif pris ce tour (hors base)" };
+const TOOK_OBJECTIVE: Text = { en: "You took an objective this turn (not home)", fr: "Objectif pris ce tour (hors objectif maison)" };
 const KILLED_ON_OBJECTIVE: Text = {
   en: "Enemy unit destroyed that started on an objective",
   fr: "Unité ennemie détruite partie d'un objectif",
@@ -85,7 +85,7 @@ export const PRIMARY_CARDS: PrimaryCard[] = [
           {
             per: 3,
             label: PER_OBJECTIVE,
-            bonus: { per: 2, label: { en: "Bonus per one (not home) if you hold your home", fr: "Bonus par objectif (hors base) si vous tenez votre base" } },
+            bonus: { per: 2, label: { en: "Bonus per one (not home) if you hold your home", fr: "Bonus par objectif (hors maison) si vous tenez votre objectif maison" } },
           },
         ],
       },
@@ -96,7 +96,7 @@ export const PRIMARY_CARDS: PrimaryCard[] = [
       {
         rounds: ALL,
         when: "yours",
-        items: [{ per: 2, label: { en: "Per objective taken this turn (not home)", fr: "Par objectif pris ce tour (hors base)" } }],
+        items: [{ per: 2, label: { en: "Per objective taken this turn (not home)", fr: "Par objectif pris ce tour (hors objectif maison)" } }],
       },
       {
         rounds: FROM_2,
@@ -153,7 +153,7 @@ export const PRIMARY_CARDS: PrimaryCard[] = [
         ],
       },
       { rounds: FROM_2, when: "command", items: [{ vp: 4, label: CONTROL_ONE }, { vp: 4, label: MORE_OBJECTIVES }] },
-      { rounds: "end", when: "end", items: [{ vp: 5, label: { en: "Enemy home objective consecrated", fr: "Objectif de base adverse consacré" } }] },
+      { rounds: "end", when: "end", items: [{ vp: 5, label: { en: "Enemy home objective consecrated", fr: "Objectif maison adverse consacré" } }] },
     ],
   }),
   card("purge-the-foe", "destroyers-wrath", "Destroyer's Wrath", "priority-assets", {
@@ -202,7 +202,7 @@ export const PRIMARY_CARDS: PrimaryCard[] = [
         when: "end",
         items: [
           { vp: 5, label: { en: "3+ of your markers on the battlefield", fr: "3+ de vos marqueurs sur la table" } },
-          { vp: 5, label: { en: "A marker on the enemy home objective", fr: "Un marqueur sur l'objectif de base adverse" } },
+          { vp: 5, label: { en: "A marker on the enemy home objective", fr: "Un marqueur sur l'objectif maison adverse" } },
         ],
       },
     ],

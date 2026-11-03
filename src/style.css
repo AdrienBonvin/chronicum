@@ -2494,7 +2494,7 @@ kbd {
   max-width: calc((100vw - 2rem) / var(--ui-scale));
   /* Centred when it fits, scrollable from the top when it does not */
   margin: auto;
-  padding: 1rem;
+  padding: 0.6rem 1rem 0;
 }
 
 .cards-title {
@@ -2505,9 +2505,15 @@ kbd {
 }
 
 .cards-sub {
-  margin: 0 0 1rem;
+  margin: 0 0 0.9rem;
   color: var(--muted);
   font-size: 0.85rem;
+}
+
+/* No subtitle: the cards come right under the title */
+.cards-sub:empty {
+  height: 0;
+  margin-bottom: 0.5rem;
 }
 
 /* Tabs in the bottom bar, beside the button: no room taken above the cards */
@@ -2655,6 +2661,11 @@ kbd {
   position: relative;
   width: 16rem;
   transition: transform 0.2s ease;
+}
+
+/* The primary, kept all game, is the wider card: its lines run longer, so it stays shorter */
+.sec-card--primary {
+  width: 20rem;
 }
 
 .sec-card:hover {
@@ -3305,45 +3316,99 @@ button.sec-option:hover:not(:disabled) {
   transition: opacity 0.2s ease;
 }
 
+/* Animations of their own: reusing the deal's would only update it, already finished, not replay it */
 .overlay--cards.is-closing .cards-row > .sec-card {
-  animation: cardDeal 0.35s cubic-bezier(0.2, 0.9, 0.25, 1) reverse forwards;
+  animation: cardPutAway 0.35s cubic-bezier(0.75, 0, 0.8, 0.1) forwards;
   animation-delay: calc((var(--n, 1) - 1 - var(--i, 0)) * 50ms);
 }
 
 /* The two primaries go back to their side */
 .overlay--cards.is-closing[data-mode="primary"] .cards-row > .sec-card--primary.is-p1 {
-  animation-name: clashFromLeft;
+  animation-name: clashToLeft;
 }
 
 .overlay--cards.is-closing[data-mode="primary"] .cards-row > .sec-card--primary.is-p2 {
-  animation-name: clashFromRight;
+  animation-name: clashToRight;
+}
+
+@keyframes cardPutAway {
+  40% {
+    opacity: 1;
+    filter: blur(0);
+  }
+  100% {
+    opacity: 0;
+    transform: translate(-10vw, 28vh) rotate(-14deg) scale(0.75);
+    filter: blur(8px);
+  }
+}
+
+@keyframes clashToLeft {
+  30% {
+    opacity: 1;
+    transform: translateX(14px) rotate(1deg);
+  }
+  100% {
+    opacity: 0;
+    transform: translateX(-45vw) rotate(-10deg) scale(0.85);
+  }
+}
+
+@keyframes clashToRight {
+  30% {
+    opacity: 1;
+    transform: translateX(-14px) rotate(-1deg);
+  }
+  100% {
+    opacity: 0;
+    transform: translateX(45vw) rotate(10deg) scale(0.85);
+  }
 }
 
 /* Primary card: kept all game, set apart by a double frame */
+/* Tighter than the secondaries: a primary holds many more lines, the text keeps its size */
 .sec-card--primary .sec-card__inner {
+  gap: 0.5rem;
+  padding: 0.9rem 0.9rem 0.6rem;
   border-width: 2px;
   outline: 1px solid var(--pc-line);
   outline-offset: 3px;
 }
 
+.sec-card--primary .sec-card__note {
+  padding: 0.3rem 0.5rem;
+}
+
+.sec-card--primary .sec-option {
+  padding: 0.35rem 0.55rem;
+}
+
+.sec-card--primary .sec-option__vp {
+  font-size: 1.2rem;
+}
+
+.sec-card--primary .sec-card__actions {
+  padding-top: 0.4rem;
+}
+
 .pri-sections {
   display: flex;
   flex-direction: column;
-  gap: 0.6rem;
+  gap: 0.45rem;
   flex: 1;
 }
 
 .pri-section {
   display: flex;
   flex-direction: column;
-  gap: 0.35rem;
+  gap: 0.25rem;
 }
 
 .pri-section__head {
   display: flex;
-  justify-content: space-between;
-  gap: 0.5rem;
-  padding-bottom: 0.2rem;
+  align-items: baseline;
+  gap: 0.4rem;
+  padding-bottom: 0.15rem;
   border-bottom: 1px solid var(--line);
 }
 
@@ -3356,16 +3421,22 @@ button.sec-option:hover:not(:disabled) {
 }
 
 .pri-section__when {
+  margin-left: auto;
   font-size: 0.6rem;
   color: var(--muted);
   text-align: right;
 }
 
+/* "One of" rides on the section header, a tag beside the rounds */
 .pri-section__pick {
-  font-size: 0.6rem;
+  flex: none;
+  padding: 0.05rem 0.3rem;
+  border: 1px solid var(--line-strong);
+  border-radius: 3px;
+  font-size: 0.55rem;
   font-weight: 600;
   text-transform: uppercase;
-  letter-spacing: 0.12em;
+  letter-spacing: 0.1em;
   color: var(--muted);
 }
 

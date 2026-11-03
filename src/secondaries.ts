@@ -91,7 +91,7 @@ export const SECONDARY_CARDS: SecondaryCard[] = [
     when: "opponent",
     redraw: { condition: { en: "First battle round (required)", fr: "Premier round (obligatoire)" }, to: "deck" },
     options: [
-      { vp: 3, label: { en: "You control your home objective", fr: "Vous contrôlez votre objectif de base" } },
+      { vp: 3, label: { en: "You control your home objective", fr: "Vous contrôlez votre objectif maison" } },
       { vp: 5, label: { en: "…and no enemy in your deployment zone", fr: "…et aucun ennemi dans votre zone" } },
     ],
   }),
@@ -112,7 +112,7 @@ export const SECONDARY_CARDS: SecondaryCard[] = [
     when: "yours",
     redraw: { condition: FIRST_ROUND, to: "deck" },
     options: [
-      { vp: 5, label: { en: "You control the enemy home objective and/or each expansion objective", fr: "Vous contrôlez l'objectif de base adverse et/ou chaque objectif d'expansion" } },
+      { vp: 5, label: { en: "You control the enemy home objective and/or each expansion objective", fr: "Vous contrôlez l'objectif maison adverse et/ou chaque objectif d'expansion" } },
     ],
   }),
   card("no-prisoners", "No Prisoners", {
