@@ -576,6 +576,94 @@ body {
   grid-template-columns: repeat(3, 1fr);
 }
 
+/* Sound: effects, music and one volume for both */
+.sound-row {
+  display: grid;
+  grid-template-columns: 4.5rem 1fr;
+  align-items: center;
+  gap: 0.6rem;
+}
+
+.sound-row__label {
+  font-size: 0.68rem;
+  font-weight: 600;
+  color: var(--muted);
+}
+
+.settings__label kbd {
+  margin-left: 0.3rem;
+  color: var(--text);
+  border-color: var(--line-strong);
+  letter-spacing: 0;
+}
+
+.settings__hint {
+  text-transform: none;
+  letter-spacing: 0.02em;
+  font-weight: 500;
+  color: var(--faint);
+}
+
+.volume {
+  --fill: 80%;
+  appearance: none;
+  height: 4px;
+  margin: 0.6rem 0;
+  border-radius: 2px;
+  background: linear-gradient(90deg, var(--accent) 0 var(--fill), var(--line-strong) var(--fill));
+  cursor: pointer;
+}
+
+.volume::-webkit-slider-thumb {
+  appearance: none;
+  width: 14px;
+  height: 14px;
+  border: 2px solid var(--surface);
+  border-radius: 50%;
+  background: var(--text);
+  box-shadow: 0 0 0 1px var(--line-strong);
+}
+
+.volume::-moz-range-thumb {
+  width: 14px;
+  height: 14px;
+  border: 2px solid var(--surface);
+  border-radius: 50%;
+  background: var(--text);
+}
+
+.volume:focus-visible {
+  outline: 2px solid var(--text);
+  outline-offset: 4px;
+}
+
+/* M: a word at the top of the screen says whether the sound is on */
+.sound-toast {
+  position: fixed;
+  top: 1rem;
+  left: 50%;
+  z-index: 20;
+  padding: 0.45rem 0.9rem;
+  border: 1px solid var(--line-strong);
+  border-radius: 999px;
+  background: var(--surface);
+  color: var(--text);
+  font-size: 0.75rem;
+  font-weight: 600;
+  letter-spacing: 0.06em;
+  opacity: 0;
+  transform: translate(-50%, -0.5rem);
+  transition:
+    opacity 0.2s ease,
+    transform 0.2s ease;
+  pointer-events: none;
+}
+
+.sound-toast.is-visible {
+  opacity: 1;
+  transform: translate(-50%, 0);
+}
+
 /* Theme: at the foot of the menu, smaller and quieter than the settings above */
 .settings__section--theme {
   padding-top: 0.9rem;
@@ -1657,7 +1745,8 @@ kbd {
   gap: 0.3rem;
 }
 
-#app.uses-secondary-cards .score-box__row[data-kind="secondary"] .mini-counter__btn {
+/* With the cards, points come from scoring them: the primary and secondary −/+ go, and the end bonus ones too */
+#app.uses-secondary-cards .score-box__row .mini-counter__btn {
   visibility: hidden;
   pointer-events: none;
 }
@@ -2461,13 +2550,13 @@ kbd {
   --pc-line: var(--p2-line);
 }
 
-/* Light backdrop: the clocks and the score boxes stay readable behind the cards */
+/* Dark backdrop: the board behind is out of reach anyway, the titles and cards must read clearly */
 .overlay.overlay--cards {
   z-index: 12;
   align-items: flex-start;
   justify-content: flex-start;
   overflow-y: auto;
-  background: rgba(4, 6, 9, 0.5);
+  background: rgba(4, 6, 9, 0.86);
   backdrop-filter: none;
   -webkit-backdrop-filter: none;
   transition: opacity 0.2s ease;
@@ -2490,12 +2579,14 @@ kbd {
   font-size: 1.5rem;
   font-weight: 600;
   color: var(--pc);
+  text-shadow: 0 2px 12px rgba(0, 0, 0, 0.8);
 }
 
 .cards-sub {
   margin: 0 0 0.9rem;
   color: var(--muted);
   font-size: 0.85rem;
+  text-shadow: 0 1px 8px rgba(0, 0, 0, 0.8);
 }
 
 /* No subtitle: the cards come right under the title */

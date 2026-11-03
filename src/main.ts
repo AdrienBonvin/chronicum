@@ -3,6 +3,17 @@ import { getLang, setLang, t, type Lang, type StringKey } from "./i18n";
 import { SECONDARY_BY_ID, SECONDARY_CARDS, type SecondaryCard, type Text } from "./secondaries";
 import { FACTION_BY_ID, FACTIONS, SPACE_MARINES, SPACE_MARINES_NAME, type FactionGroup } from "./factions";
 import {
+  isMuted,
+  playSound,
+  setBattleMusic,
+  setMusic,
+  setMuted,
+  setSoundsOn,
+  setVolume,
+  unlockAudio,
+  type MusicTrack,
+} from "./audio";
+import {
   DISPOSITIONS,
   primaryFor,
   type Disposition,
@@ -70,6 +81,17 @@ const LAYOUT_DEFAULT = "rows";
 const LANG_STORAGE_KEY = "warhammerClock.lang";
 
 const THEME_STORAGE_KEY = "warhammerClock.theme";
+
+const SOUNDS_STORAGE_KEY = "warhammerClock.sounds";
+const MUSIC_STORAGE_KEY = "warhammerClock.music";
+const VOLUME_STORAGE_KEY = "warhammerClock.volume";
+const MUSIC_TRACKS: MusicTrack[] = ["off", "calm", "tense", "epic"];
+const VOLUME_DEFAULT = 80;
+/** Mutes every sound and the music at once, during the game too */
+const MUTE_KEY = "M";
+const MUTE_KEY_CODE = "KeyM";
+/** Time left that rings a warning when a clock goes under it */
+const TIME_WARNINGS_SEC = [600, 300, 60];
 
 const FACTION_DEFAULTS: Record<Player, string> = { 1: "imperial-fists", 2: "tyranids" };
 /** Picking Space Marines starts on this chapter */
@@ -264,6 +286,29 @@ app.innerHTML = `
               <button type="button" class="segmented__option" data-value="fr">Français</button>
             </div>
           </div>
+          <div class="settings__section">
+            <span class="settings__label"><span data-i18n="sound"></span> <kbd>${MUTE_KEY}</kbd> <span class="settings__hint" data-i18n="muteHint"></span></span>
+            <div class="sound-row">
+              <span class="sound-row__label" data-i18n="soundEffects"></span>
+              <div class="segmented" id="sfx-options" role="group" data-i18n-aria="soundEffects">
+                <button type="button" class="segmented__option" data-value="off" data-i18n="off"></button>
+                <button type="button" class="segmented__option" data-value="on" data-i18n="on"></button>
+              </div>
+            </div>
+            <div class="sound-row">
+              <span class="sound-row__label" data-i18n="music"></span>
+              <div class="segmented" id="music-options" role="group" data-i18n-aria="music">
+                <button type="button" class="segmented__option" data-value="off" data-i18n="musicOff"></button>
+                <button type="button" class="segmented__option" data-value="calm" data-i18n="musicCalm"></button>
+                <button type="button" class="segmented__option" data-value="tense" data-i18n="musicTense"></button>
+                <button type="button" class="segmented__option" data-value="epic" data-i18n="musicEpic"></button>
+              </div>
+            </div>
+            <div class="sound-row">
+              <span class="sound-row__label" data-i18n="volume"></span>
+              <input type="range" class="volume" id="volume" min="0" max="100" step="5" data-i18n-aria="volume" />
+            </div>
+          </div>
           <div class="settings__section settings__section--theme">
             <span class="settings__label" data-i18n="theme"></span>
             <div class="segmented segmented--tiles" id="theme-options" role="group" data-i18n-aria="theme">
@@ -351,6 +396,7 @@ app.innerHTML = `
       </div>
     </div>
   </div>
+  <div class="sound-toast" id="sound-toast" role="status"></div>
   <div class="overlay overlay--cards" id="cards-overlay" role="dialog" aria-modal="true" aria-labelledby="cards-title" aria-hidden="true">
     <div class="cards-stage">
       <h2 class="cards-title" id="cards-title"></h2>
@@ -416,6 +462,10 @@ const chapterWrap: Record<Player, HTMLElement> = {
 const layoutOptions = app.querySelector<HTMLElement>("#layout-options")!;
 const uiSizeOptions = app.querySelector<HTMLElement>("#ui-size-options")!;
 const langOptions = app.querySelector<HTMLElement>("#lang-options")!;
+const sfxOptions = app.querySelector<HTMLElement>("#sfx-options")!;
+const musicOptions = app.querySelector<HTMLElement>("#music-options")!;
+const volumeInput = app.querySelector<HTMLInputElement>("#volume")!;
+const soundToast = app.querySelector<HTMLElement>("#sound-toast")!;
 const timePresets = app.querySelector<HTMLElement>("#time-presets")!;
 const btnTime = app.querySelector<HTMLButtonElement>("#btn-time")!;
 const timePicker = app.querySelector<HTMLElement>("#time-picker")!;
@@ -678,6 +728,8 @@ function finishGameByScore(): void {
   updateButtons();
   const total1 = scoreOf(1);
   const total2 = scoreOf(2);
+  setBattleMusic(false);
+  playSound("victory");
   if (total1 > total2) showResultOverlay(t("wins", { n: 1 }), t("wonOnPoints"), 1);
   else if (total2 > total1) showResultOverlay(t("wins", { n: 2 }), t("wonOnPoints"), 2);
   else showResultOverlay(t("draw"), t("tiedOnPoints"), null);
@@ -701,6 +753,7 @@ function applyConfirmed(kind: TurnConfirmKind): void {
     return;
   }
   if (kind === "p1-to-p2") {
+    turnSound("turn");
     turnPlayer = 2;
     gainCpBothPlayers();
     applyAbilityCp(2, ["turn-cp"]);
@@ -722,11 +775,22 @@ function applyConfirmed(kind: TurnConfirmKind): void {
     return;
   }
   advanceGameTurn();
+  turnSound("round");
   if (photoBreaksToggle.checked) startPhotoBreak();
   startTurnSecondaries(1);
 }
 
+/**
+ * The blow that opens the game, a turn or a round. With the cards, the game opens on the VS
+ * and its own hit, and each turn on a draw: the cards swish in, no blow over a screen that
+ * shows none
+ */
+function turnSound(name: "start" | "turn" | "round"): void {
+  if (!secondaryCardsOn()) playSound(name);
+}
+
 function startPhotoBreak(): void {
+  playSound("photo");
   photoBreak = true;
   stopLoop();
   app.classList.add("is-photo-break");
@@ -1064,6 +1128,60 @@ function applyUiSize(size: string): void {
   }
 }
 
+function store(key: string, value: string): void {
+  try {
+    localStorage.setItem(key, value);
+  } catch {
+    /* quota / private mode */
+  }
+}
+
+function stored(key: string): string | null {
+  try {
+    return localStorage.getItem(key);
+  } catch {
+    return null;
+  }
+}
+
+function applySounds(value: string): void {
+  const on = value === "on";
+  setSoundsOn(on);
+  setSegmentedValue(sfxOptions, on ? "on" : "off");
+  store(SOUNDS_STORAGE_KEY, on ? "on" : "off");
+}
+
+function applyMusic(value: string): void {
+  const track = MUSIC_TRACKS.find((name) => name === value) ?? "off";
+  setMusic(track);
+  setSegmentedValue(musicOptions, track);
+  store(MUSIC_STORAGE_KEY, track);
+}
+
+function applyVolume(value: number): void {
+  const v = Number.isFinite(value) ? Math.max(0, Math.min(100, value)) : VOLUME_DEFAULT;
+  setVolume(v / 100);
+  volumeInput.value = String(v);
+  volumeInput.style.setProperty("--fill", `${v}%`);
+  store(VOLUME_STORAGE_KEY, String(v));
+}
+
+function loadSound(): void {
+  applySounds(stored(SOUNDS_STORAGE_KEY) ?? "off");
+  applyVolume(Number(stored(VOLUME_STORAGE_KEY) ?? VOLUME_DEFAULT));
+  applyMusic(stored(MUSIC_STORAGE_KEY) ?? "off");
+}
+
+let soundToastTimer = 0;
+
+function toggleMute(): void {
+  setMuted(!isMuted());
+  soundToast.textContent = t(isMuted() ? "soundMuted" : "soundOn");
+  soundToast.classList.add("is-visible");
+  window.clearTimeout(soundToastTimer);
+  soundToastTimer = window.setTimeout(() => soundToast.classList.remove("is-visible"), 1400);
+}
+
 function loadUiSize(): void {
   let stored = UI_SIZE_DEFAULT;
   try {
@@ -1264,9 +1382,14 @@ async function releaseWakeLock(): Promise<void> {
 }
 
 /** Returns true if the match ended (time ran out). */
+function warnIfLow(before: number, after: number): void {
+  if (TIME_WARNINGS_SEC.some((limit) => before > limit && after <= limit)) playSound("warning");
+}
+
 function subtractActivePlayerTime(elapsedSec: number): boolean {
   if (elapsedSec <= 0) return false;
   if (active === 1) {
+    warnIfLow(seconds1, seconds1 - elapsedSec);
     seconds1 -= elapsedSec;
     if (seconds1 <= 0) {
       seconds1 = 0;
@@ -1274,6 +1397,7 @@ function subtractActivePlayerTime(elapsedSec: number): boolean {
       return true;
     }
   } else {
+    warnIfLow(seconds2, seconds2 - elapsedSec);
     seconds2 -= elapsedSec;
     if (seconds2 <= 0) {
       seconds2 = 0;
@@ -1333,6 +1457,7 @@ function stopLoop(): void {
 
 function switchTurn(): void {
   if (!running) return;
+  playSound("switch");
   active = active === 1 ? 2 : 1;
   setActivePanels();
   lastTickWallMs = Date.now();
@@ -1353,6 +1478,8 @@ function endGame(winner: Player): void {
   applyTimesToDisplay();
   syncPresetSelectFromState();
   const loser: Player = winner === 1 ? 2 : 1;
+  setBattleMusic(false);
+  playSound("victory");
   showResultOverlay(t("wins", { n: winner }), t("ranOutOfTime", { n: loser }), winner);
   panel1.classList.toggle("is-flag", seconds1 <= 0);
   panel2.classList.toggle("is-flag", seconds2 <= 0);
@@ -1386,6 +1513,8 @@ function start(): void {
   updateButtons();
   void tryAcquireWakeLock();
   startLoop();
+  turnSound("start");
+  setBattleMusic(true);
   secondaries = { 1: newSecondaryPile(), 2: newSecondaryPile() };
   newCardUsed = { 1: false, 2: false };
   startTurnSecondaries(1);
@@ -1404,6 +1533,7 @@ function pause(): void {
 }
 
 function reset(): void {
+  setBattleMusic(false);
   running = false;
   paused = false;
   gameOver = false;
@@ -1678,6 +1808,7 @@ function applyAbilityCp(player: Player, kinds: ("round-cp" | "turn-cp")[]): void
   }
   bonusCpGained[player] = true;
   gainCp(player);
+  playSound("cp");
   showCpToast(player, t("cpGained"), true);
   renderAbilities(player);
 }
@@ -1809,6 +1940,7 @@ function spendCpCoin(player: Player, coin: HTMLButtonElement): void {
   const ability = abilities[player].find(({ id }) => String(id) === coin.dataset.abilityId);
   if (!ability || ability.lost || coin.classList.contains("is-animating")) return;
   if (ability.spent) {
+    playSound("coinRestore");
     ability.spent = false;
     restoredCoinId = ability.id;
     renderAbilities(player);
@@ -1816,6 +1948,7 @@ function spendCpCoin(player: Player, coin: HTMLButtonElement): void {
     return;
   }
 
+  playSound("coinSpend");
   const face = coin.querySelector<HTMLElement>(".cp-coin__face")!;
   let completed = false;
   let fallbackTimer = 0;
@@ -2051,7 +2184,7 @@ function addSecondaryPoints(player: Player, vp: number): number {
 }
 
 function renderHandButtons(): void {
-  // With the cards, secondary points come from scoring them: no −/+ on that row
+  // With the cards, points come from scoring them: no −/+ on the score rows
   app.classList.toggle("uses-secondary-cards", secondaryCardsOn());
   for (const player of [1, 2] as const) {
     const button = handButtonEl[player];
@@ -2101,6 +2234,10 @@ function openCards(player: Player, mode: typeof cardsMode, drawn: string[] = [])
     const pile = secondaries[player];
     renderCards([primaryCardId(player), ...pile.hand, ...pile.scored.map(({ id }) => id)]);
   }
+  // Every card that comes on screen is heard: the primaries clash, the others swish in
+  const dealt = cardsRow.querySelectorAll(".sec-card.is-dealt").length;
+  if (mode === "primary") playSound("clash");
+  else if (dealt > 0) playSound("draw", dealt);
   cardsOverlay.classList.add("is-visible");
   cardsOverlay.setAttribute("aria-hidden", "false");
   btnCardsClose.focus();
@@ -2121,6 +2258,7 @@ function closeCards(putAway = true): void {
   } else {
     cardsRow.style.setProperty("--n", String(count));
     cardsOverlay.classList.add("is-closing");
+    playSound("putAway", count);
     putAwayTimer = window.setTimeout(hideCards, PUT_AWAY_MS + (count - 1) * PUT_AWAY_STAGGER_MS);
   }
   if (commandNext !== null) openCards(commandNext, "command");
@@ -2478,8 +2616,11 @@ function playCardExit(
     cardEl.appendChild(label);
   }
   cardEl.classList.add(exit);
+  // A scored card has its own sound; a discarded or returned one swishes away
+  if (exit !== "is-scored") playSound("putAway", 1);
   const done = () => {
     const before = cardPositions();
+    if (dealIds.length > 0) playSound("draw", dealIds.length);
     renderCards(dealIds);
     slideCardsFrom(before);
     renderHandButtons();
@@ -2523,6 +2664,7 @@ function scoreSecondary(player: Player, id: string, vp: number, cardEl: HTMLElem
   const added = addSecondaryPoints(player, vp);
   moveSecondary(player, id, "discard");
   secondaries[player].scored.push({ id, vp: added, turn });
+  playSound("score");
   playCardExit(cardEl, "is-scored", `+${added}`);
 }
 
@@ -2545,12 +2687,14 @@ function restoreSecondary(player: Player, id: string): void {
   pile.hand.push(id);
   const turns = scoreByTurn[player].secondary;
   turns[scored.turn] = Math.max(0, turns[scored.turn] - scored.vp);
+  playSound("undo");
   renderMiniCounters();
   if (cardsPlayer !== player) return;
   // Back to the hand, where the card is dealt in again
   cardsMode = "hand";
   cardsOverlay.dataset.mode = "hand";
   renderCards([id]);
+  playSound("draw", 1);
 }
 
 function canSwapSecondary(player: Player): boolean {
@@ -2631,6 +2775,8 @@ function revealPrimaries(): void {
   primaryCards = { 1: primaryFor(mine, theirs), 2: primaryFor(theirs, mine) };
   primaryScored = { 1: new Map(), 2: new Map() };
   closeDispositions();
+  // The battle music rises with the VS
+  setBattleMusic(true);
   openCards(1, "primary");
 }
 
@@ -2708,7 +2854,6 @@ function primaryCardEl(player: Player, index: number, deal: boolean, scorable: b
     // At a turn end, only what scores at that moment: a Command phase line waits for the next turn
     const scoresNow = sectionOpen(player, section) && scoresInView(player, section.when);
     const open = scorable && scoresNow;
-    const pickedInSection = section.items.some((_, i) => scored.has(`${turnKey}|${s}|${i}`));
     const block = document.createElement("section");
     block.className = "pri-section";
     // Dimmed out of its rounds while playing; on the reveal the whole card reads at full strength
@@ -2730,7 +2875,7 @@ function primaryCardEl(player: Player, index: number, deal: boolean, scorable: b
     section.items.forEach((item, i) => {
       const key = `${turnKey}|${s}|${i}`;
       const done = scored.get(key);
-      const blocked = !open || (!!section.pickOne && pickedInSection && done === undefined);
+      const blocked = !open;
       if ("vp" in item || done !== undefined) {
         // A fixed score, or any line already scored this turn (click again to undo)
         const button = document.createElement("button");
@@ -2806,16 +2951,28 @@ function togglePrimaryScore(player: Player, s: number, i: number, vp: number): v
   const key = `${turnKey}|${s}|${i}`;
   const scored = primaryScored[player];
   const done = scored.get(key);
-  if (done !== undefined) {
-    scored.delete(key);
-    if (turnKey === "end") endBonus[player] = Math.max(0, endBonus[player] - done);
+  // The points of a line leave the turn, or the end bonus, they went to
+  const takeBack = (lineKey: string, points: number): void => {
+    scored.delete(lineKey);
+    if (turnKey === "end") endBonus[player] = Math.max(0, endBonus[player] - points);
     else {
       const turns = scoreByTurn[player].primary;
-      turns[Number(turnKey)] = Math.max(0, turns[Number(turnKey)] - done);
+      turns[Number(turnKey)] = Math.max(0, turns[Number(turnKey)] - points);
     }
+  };
+  if (done !== undefined) {
+    takeBack(key, done);
+    playSound("undo");
   } else {
     if (!sectionOpen(player, section)) return;
-    if (section.pickOne && section.items.some((_, other) => scored.has(`${turnKey}|${s}|${other}`))) return;
+    // One of: picking another line takes back the one picked before
+    if (section.pickOne) {
+      section.items.forEach((_, other) => {
+        const otherKey = `${turnKey}|${s}|${other}`;
+        const points = scored.get(otherKey);
+        if (points !== undefined) takeBack(otherKey, points);
+      });
+    }
     let added = vp;
     if (turnKey === "end") endBonus[player] += vp;
     else {
@@ -2825,6 +2982,7 @@ function togglePrimaryScore(player: Player, s: number, i: number, vp: number): v
       turns[turnIdx] += added;
     }
     scored.set(key, added);
+    playSound("score");
   }
   renderMiniCounters();
   renderCards();
@@ -3173,6 +3331,11 @@ function handleSpaceLikeInput(): void {
 }
 
 window.addEventListener("keydown", (e) => {
+  if (e.code === MUTE_KEY_CODE && !e.repeat && !e.metaKey && !e.ctrlKey && !e.altKey && !isTypingTarget(e.target)) {
+    e.preventDefault();
+    toggleMute();
+    return;
+  }
   // The abilities panel is a form: keys keep their usual meaning there
   if (abilitiesOverlay.classList.contains("is-visible")) {
     if (e.key === "Escape") {
@@ -3379,6 +3542,22 @@ document.addEventListener("pointerdown", (e) => {
   if (openPicker && !openPicker.root.contains(e.target as Node)) closePicker();
 });
 onSegmentedPick(uiSizeOptions, applyUiSize);
+onSegmentedPick(sfxOptions, applySounds);
+// A tick when a switch or an option is set, brighter when it turns on.
+// Not the card scores nor the card tabs: they have their own sounds
+app.addEventListener("click", (e) => {
+  const button = (e.target as HTMLElement).closest<HTMLElement>("button[aria-pressed]");
+  if (!button || button.closest(".cards-row, .cards-switch")) return;
+  playSound(button.getAttribute("aria-pressed") === "true" ? "checkOn" : "checkOff");
+});
+app.addEventListener("change", (e) => {
+  if (e.target instanceof HTMLInputElement && e.target.type === "checkbox") playSound(e.target.checked ? "checkOn" : "checkOff");
+});
+onSegmentedPick(musicOptions, applyMusic);
+volumeInput.addEventListener("input", () => applyVolume(Number(volumeInput.value)));
+// Browsers hold audio back until the page gets a click or a key
+window.addEventListener("pointerdown", unlockAudio);
+window.addEventListener("keydown", unlockAudio);
 onSegmentedPick(layoutOptions, applyLayout);
 onSegmentedPick(langOptions, applyLang);
 
@@ -3399,6 +3578,7 @@ loadTheme();
 loadFactions();
 loadLayout();
 loadUiSize();
+loadSound();
 updateManualInputsVisibility();
 applyTimesToDisplay();
 setActivePanels();
