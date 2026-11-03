@@ -2936,9 +2936,11 @@ function continueCards(): void {
 
 btnCardsClose.addEventListener("click", continueCards);
 // The board behind is out of reach; a click beside the cards goes back to it, as Escape does.
-// Not the second click of a double-click: that one would close what the first click opened
+// Not the second click of a double-click: that one would close what the first click opened.
+// Not on the primaries reveal either: the game starts from there, a stray click must not cancel it
 cardsOverlay.addEventListener("click", (e) => {
-  if (cardsPlayer === null || e.detail > 1 || (e.target as HTMLElement).closest(".sec-card, button, a")) return;
+  if (cardsPlayer === null || cardsMode === "primary" || e.detail > 1) return;
+  if ((e.target as HTMLElement).closest(".sec-card, button, a")) return;
   closeCards();
 });
 dispoOverlay.addEventListener("click", (e) => {
