@@ -1,14 +1,23 @@
 import "./style.css";
 import { getLang, setLang, t, type Lang, type StringKey } from "./i18n";
+import { SECONDARY_BY_ID, SECONDARY_CARDS } from "./secondaries";
+import {
+  DISPOSITIONS,
+  primaryFor,
+  type Disposition,
+  type PrimaryCard,
+  type PrimaryItem,
+  type PrimarySection,
+} from "./primaries";
 
 type Player = 1 | 2;
 
 const PRESETS = [
-  { label: "1h", sec: 3600 },
-  { label: "1h15", sec: 4500 },
   { label: "1h30", sec: 5400 },
   { label: "1h45", sec: 6300 },
   { label: "2h", sec: 7200 },
+  { label: "2h15", sec: 8100 },
+  { label: "2h30", sec: 9000 },
 ] as const;
 
 const CUSTOM_PRESET_VALUE = "custom";
@@ -68,6 +77,7 @@ function formatTime(totalSeconds: number): string {
 const svgIcon = (body: string, viewBox = "0 0 24 24"): string =>
   `<svg class="icon" viewBox="${viewBox}" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">${body}</svg>`;
 
+const ICON_CARDS = svgIcon('<rect x="4" y="6" width="11" height="15" rx="2" /><path d="M9 3h9a2 2 0 0 1 2 2v13" />');
 const ICON_CLOCK = svgIcon('<circle cx="12" cy="13" r="8" /><path d="M12 9v4l2.5 2.5M10 2h4" />');
 const ICON_CAMERA = svgIcon('<path d="M4 8h3l2-3h6l2 3h3v11H4z" /><circle cx="12" cy="13" r="3.5" />');
 const ICON_SLIDERS = svgIcon(
@@ -86,7 +96,7 @@ const ICON_COLUMNS = svgIcon('<rect x="2" y="2" width="11" height="16" rx="1" />
 function scoreCounterHtml(player: Player, corner: "tl" | "bl"): string {
   const rows = SCORE_KINDS.map(
     ({ kind, label, ariaMinus, ariaPlus }) => `
-        <div class="score-box__row">
+        <div class="score-box__row" data-kind="${kind}">
           <span class="score-box__kind" data-i18n="${label}"></span>
           <button type="button" class="mini-counter__btn" id="p${player}-${kind}-minus" data-i18n-aria="${ariaMinus}" data-v-n="${player}">−</button>
           <span class="mini-counter__val" id="p${player}-${kind}-val">0</span>
@@ -106,6 +116,9 @@ function scoreCounterHtml(player: Player, corner: "tl" | "bl"): string {
           <span class="mini-counter__val" id="p${player}-bonus-val">0</span>
           <button type="button" class="mini-counter__btn" id="p${player}-bonus-plus" data-i18n-aria="ariaBonusPlus" data-v-n="${player}">+</button>
         </div>
+        <button type="button" class="score-box__hand" id="p${player}-hand-btn" hidden>
+          ${ICON_CARDS}<span data-i18n="secondaryHand"></span><span class="score-box__hand-count">0</span>
+        </button>
       </div>`;
 }
 
@@ -171,6 +184,12 @@ app.innerHTML = `
         <input type="checkbox" id="photo-breaks" />
         ${ICON_CAMERA}
         <span data-i18n="photoBreaks"></span>
+        <span class="toggle-chip__switch" aria-hidden="true"></span>
+      </label>
+      <label class="toggle-chip">
+        <input type="checkbox" id="secondary-cards" checked />
+        ${ICON_CARDS}
+        <span data-i18n="secondaryCards"></span>
         <span class="toggle-chip__switch" aria-hidden="true"></span>
       </label>
     </div>
@@ -276,6 +295,42 @@ app.innerHTML = `
       </div>
     </div>
   </div>
+  <div class="overlay overlay--cards" id="cards-overlay" role="dialog" aria-modal="true" aria-labelledby="cards-title" aria-hidden="true">
+    <div class="cards-stage">
+      <h2 class="cards-title" id="cards-title"></h2>
+      <p class="cards-sub" id="cards-sub"></p>
+      <div class="cards-row" id="cards-row"></div>
+      <div class="overlay-actions cards-actions">
+        <button type="button" class="btn-primary" id="btn-cards-close"><span data-i18n="continue"></span> <kbd data-i18n="keyEnter"></kbd></button>
+      </div>
+    </div>
+  </div>
+  <div class="overlay overlay--dispo" id="dispo-overlay" role="dialog" aria-modal="true" aria-labelledby="dispo-title" aria-hidden="true">
+    <div class="overlay-inner">
+      <h2 id="dispo-title" data-i18n="dispoTitle"></h2>
+      <p class="overlay-msg" data-i18n="dispoIntro"></p>
+      <div class="dispo-grid">
+        ${([1, 2] as const)
+          .map(
+            (player) => `
+          <div class="dispo-column is-p${player}">
+            <span class="dispo-column__label" data-i18n="player" data-v-n="${player}"></span>
+            <div class="dispo-options" data-player="${player}">
+              ${DISPOSITIONS.map(
+                (disposition) =>
+                  `<button type="button" class="dispo-option" data-value="${disposition.id}" aria-pressed="false"><span class="dispo-option__name">${disposition.name}</span><span class="dispo-option__hint"></span></button>`,
+              ).join("")}
+            </div>
+          </div>`,
+          )
+          .join("")}
+      </div>
+      <div class="overlay-actions">
+        <button type="button" class="btn-secondary" id="btn-dispo-cancel"><span data-i18n="cancel"></span> <kbd data-i18n="keyEsc"></kbd></button>
+        <button type="button" class="btn-primary" id="btn-dispo-ok" disabled><span data-i18n="revealPrimaries"></span> <kbd data-i18n="keyEnter"></kbd></button>
+      </div>
+    </div>
+  </div>
   <div class="overlay overlay--abilities" id="abilities-overlay" role="dialog" aria-modal="true" aria-labelledby="abilities-title" aria-hidden="true">
     <div class="overlay-inner">
       <h2 id="abilities-title"></h2>
@@ -322,6 +377,19 @@ const abilitiesOverlay = app.querySelector<HTMLElement>("#abilities-overlay")!;
 const abilitiesTitle = app.querySelector<HTMLElement>("#abilities-title")!;
 const abilityList = app.querySelector<HTMLUListElement>("#ability-list")!;
 const btnAbilitiesClose = app.querySelector<HTMLButtonElement>("#btn-abilities-close")!;
+const secondaryCardsToggle = app.querySelector<HTMLInputElement>("#secondary-cards")!;
+const handButtonEl: Record<Player, HTMLButtonElement> = {
+  1: app.querySelector<HTMLButtonElement>("#p1-hand-btn")!,
+  2: app.querySelector<HTMLButtonElement>("#p2-hand-btn")!,
+};
+const cardsOverlay = app.querySelector<HTMLElement>("#cards-overlay")!;
+const cardsTitle = app.querySelector<HTMLElement>("#cards-title")!;
+const cardsSub = app.querySelector<HTMLElement>("#cards-sub")!;
+const cardsRow = app.querySelector<HTMLElement>("#cards-row")!;
+const btnCardsClose = app.querySelector<HTMLButtonElement>("#btn-cards-close")!;
+const dispoOverlay = app.querySelector<HTMLElement>("#dispo-overlay")!;
+const btnDispoOk = app.querySelector<HTMLButtonElement>("#btn-dispo-ok")!;
+const btnDispoCancel = app.querySelector<HTMLButtonElement>("#btn-dispo-cancel")!;
 const scoreTotalEl: Record<Player, HTMLElement> = {
   1: app.querySelector<HTMLElement>("#p1-score-total")!,
   2: app.querySelector<HTMLElement>("#p2-score-total")!,
@@ -550,6 +618,7 @@ function applyTurnConfirm(): void {
     }
     setActivePanels();
     if (photoBreaksToggle.checked) startPhotoBreak();
+    startTurnSecondaries(2);
     return;
   }
   if (kind === "finish-game") {
@@ -562,6 +631,7 @@ function applyTurnConfirm(): void {
   }
   advanceGameTurn();
   if (photoBreaksToggle.checked) startPhotoBreak();
+  startTurnSecondaries(1);
 }
 
 function startPhotoBreak(): void {
@@ -581,6 +651,10 @@ function endPhotoBreak(): void {
   photoOverlay.classList.remove("is-visible");
   photoOverlay.setAttribute("aria-hidden", "true");
   if (running) startLoop();
+  if (pendingDraw) {
+    openCards(pendingDraw.player, "draw", pendingDraw.drawn);
+    pendingDraw = null;
+  }
 }
 
 function readMinutes(): { a: number; b: number } {
@@ -737,6 +811,8 @@ function applyLang(value: string): void {
   renderMiniCounters();
   renderAbilities(1);
   renderAbilities(2);
+  renderCards();
+  renderDispositions();
   syncFullscreenLabel();
 }
 
@@ -836,6 +912,7 @@ function setInputsEnabled(on: boolean): void {
   m1.disabled = !on;
   m2.disabled = !on;
   photoBreaksToggle.disabled = !on;
+  secondaryCardsToggle.disabled = !on;
 }
 
 function renderKeyHint(): void {
@@ -1005,6 +1082,9 @@ function start(): void {
   updateButtons();
   void tryAcquireWakeLock();
   startLoop();
+  secondaries = { 1: newSecondaryPile(), 2: newSecondaryPile() };
+  newCardUsed = { 1: false, 2: false };
+  startTurnSecondaries(1);
 }
 
 function pause(): void {
@@ -1051,6 +1131,12 @@ function reset(): void {
   cpHistoryRemoved1 = Array<number>(MAX_PLAYER_TURNS).fill(0);
   cpHistoryAdded2 = Array<number>(MAX_PLAYER_TURNS).fill(0);
   cpHistoryRemoved2 = Array<number>(MAX_PLAYER_TURNS).fill(0);
+  pendingDraw = null;
+  closeCards();
+  primaryCards = { 1: null, 2: null };
+  primaryScored = { 1: new Map(), 2: new Map() };
+  secondaries = { 1: newSecondaryPile(), 2: newSecondaryPile() };
+  newCardUsed = { 1: false, 2: false };
   renderMiniCounters();
   closeAbilities();
   for (const player of [1, 2] as const) {
@@ -1082,6 +1168,7 @@ function renderMiniCounters(): void {
   }
   p1CpVal.textContent = String(cp1);
   p2CpVal.textContent = String(cp2);
+  renderHandButtons();
   updateVisibleScoreTooltip();
   updateVisibleCpTooltip();
 }
@@ -1363,10 +1450,12 @@ function cpCoinEl(ability: Ability): HTMLElement {
   coin.type = "button";
   coin.className = "cp-coin";
   coin.classList.toggle("is-spent", ability.spent);
+  coin.classList.toggle("is-restored", ability.id === restoredCoinId);
   coin.disabled = ability.lost;
   coin.dataset.abilityId = String(ability.id);
   const owner = t("stratagem");
   coin.setAttribute("aria-label", ability.spent ? t("coinSpentAria", { owner }) : t("coinAria", { owner }));
+  coin.title = ability.spent ? t("coinUndo") : "";
   // A spent coin shows ↻: it comes back next battle round
   coin.innerHTML = `
     <span class="cp-coin__face" aria-hidden="true">${CP_COIN_SVG}
@@ -1406,10 +1495,21 @@ function prefersReducedMotion(): boolean {
 
 const CP_COIN_ANIM_MS = 900;
 
+/** Coin whose come-back animation plays on the next render only */
+let restoredCoinId: number | null = null;
+
+/** A click on a spent coin brings it back: a misclick is one click away from undo */
 function spendCpCoin(player: Player, coin: HTMLButtonElement): void {
   if (!running && !paused) return;
   const ability = abilities[player].find(({ id }) => String(id) === coin.dataset.abilityId);
-  if (!ability || ability.lost || ability.spent || coin.classList.contains("is-animating")) return;
+  if (!ability || ability.lost || coin.classList.contains("is-animating")) return;
+  if (ability.spent) {
+    ability.spent = false;
+    restoredCoinId = ability.id;
+    renderAbilities(player);
+    restoredCoinId = null;
+    return;
+  }
 
   const face = coin.querySelector<HTMLElement>(".cp-coin__face")!;
   let completed = false;
@@ -1551,6 +1651,584 @@ function toggleAbilityLost(player: Player, id: number): void {
   if (abilitiesPlayer === player) renderAbilityList();
 }
 
+/* ---------- Secondary mission cards (tactical) ---------- */
+
+type SecondaryPile = { deck: string[]; hand: string[]; discard: string[] };
+
+function shuffled<T>(items: T[]): T[] {
+  const result = [...items];
+  for (let i = result.length - 1; i > 0; i--) {
+    const j = Math.floor(Math.random() * (i + 1));
+    [result[i], result[j]] = [result[j], result[i]];
+  }
+  return result;
+}
+
+function newSecondaryPile(): SecondaryPile {
+  return { deck: shuffled(SECONDARY_CARDS.map(({ id }) => id)), hand: [], discard: [] };
+}
+
+let secondaries: Record<Player, SecondaryPile> = { 1: newSecondaryPile(), 2: newSecondaryPile() };
+/** Swapping a card for a new one (−1 CP) is allowed once per battle */
+let newCardUsed: Record<Player, boolean> = { 1: false, 2: false };
+
+const WHEN_KEYS = { yours: "whenYours", any: "whenAny", opponent: "whenOpponent" } as const;
+
+/** Whose cards are shown, and whether it is the reveal of a fresh draw or the whole hand */
+let cardsPlayer: Player | null = null;
+let cardsMode: "draw" | "hand" | "primary" = "hand";
+/** Cards of the current draw: the reveal shows only them */
+let drawnIds: string[] = [];
+/** A draw made during a photo break waits for the break to end */
+let pendingDraw: { player: Player; drawn: string[] } | null = null;
+
+const CARD_EXIT_MS = 450;
+
+function secondaryCardsOn(): boolean {
+  return secondaryCardsToggle.checked;
+}
+
+function drawSecondaries(player: Player, count: number): string[] {
+  const pile = secondaries[player];
+  const drawn = pile.deck.splice(0, count);
+  pile.hand.push(...drawn);
+  return drawn;
+}
+
+/** Start of a player's own turn: two new secondaries, revealed once any photo break is over */
+function startTurnSecondaries(player: Player): void {
+  if (!secondaryCardsOn()) return;
+  const drawn = drawSecondaries(player, 2);
+  renderHandButtons();
+  if (drawn.length === 0) return;
+  if (photoBreak) pendingDraw = { player, drawn };
+  else openCards(player, "draw", drawn);
+}
+
+function moveSecondary(player: Player, id: string, to: "discard" | "deck"): void {
+  const pile = secondaries[player];
+  pile.hand = pile.hand.filter((cardId) => cardId !== id);
+  if (to === "discard") pile.discard.push(id);
+  // Shuffled back: anywhere in the deck
+  else pile.deck.splice(Math.floor(Math.random() * (pile.deck.length + 1)), 0, id);
+}
+
+/** Card points go to the secondary score of the player's turn, within the 15 per turn */
+function addSecondaryPoints(player: Player, vp: number): number {
+  const turns = scoreByTurn[player].secondary;
+  const turnIdx = scoringTurnIdx(player);
+  const added = Math.max(0, Math.min(vp, MAX_POINTS_PER_TURN - turns[turnIdx]));
+  turns[turnIdx] += added;
+  renderMiniCounters();
+  return added;
+}
+
+function renderHandButtons(): void {
+  // With the cards, secondary points come from scoring them: no −/+ on that row
+  app.classList.toggle("uses-secondary-cards", secondaryCardsOn());
+  for (const player of [1, 2] as const) {
+    const button = handButtonEl[player];
+    const count = secondaries[player].hand.length;
+    button.hidden = !secondaryCardsOn() || !(running || paused);
+    button.querySelector(".score-box__hand-count")!.textContent = String(count);
+    button.setAttribute("aria-label", t("handAria", { n: count }));
+  }
+}
+
+/** Card ids of the primary cards, to deal them like the others */
+const primaryCardId = (player: Player): string => `primary-${player}`;
+
+function openCards(player: Player, mode: "draw" | "hand" | "primary", drawn: string[] = []): void {
+  cardsPlayer = player;
+  cardsMode = mode;
+  drawnIds = drawn;
+  cardsOverlay.classList.remove("is-p1", "is-p2");
+  if (mode !== "primary") cardsOverlay.classList.add(`is-p${player}`);
+  cardsOverlay.dataset.mode = mode;
+  if (mode === "draw") renderCards(drawn);
+  else if (mode === "primary") renderCards([primaryCardId(1), primaryCardId(2)]);
+  else renderCards([primaryCardId(player), ...secondaries[player].hand]);
+  cardsOverlay.classList.add("is-visible");
+  cardsOverlay.setAttribute("aria-hidden", "false");
+  btnCardsClose.focus();
+}
+
+function closeCards(): void {
+  if (cardsPlayer === null) return;
+  cardsPlayer = null;
+  drawnIds = [];
+  cardsOverlay.classList.remove("is-visible");
+  cardsOverlay.setAttribute("aria-hidden", "true");
+  (document.activeElement as HTMLElement | null)?.blur();
+}
+
+/** `dealIds` fly in from the deck; the others are already on the table */
+function renderCards(dealIds: string[] = []): void {
+  if (cardsPlayer === null) return;
+  const player = cardsPlayer;
+  const pile = secondaries[player];
+  btnCardsClose.querySelector("span")!.textContent = t(cardsMode === "primary" ? "startGame" : "continue");
+  if (cardsMode === "primary") {
+    cardsTitle.textContent = t("primaryTitle");
+    cardsSub.textContent = t("primarySub");
+    // The two missions face off: they rush in from each side and clash on a "VS"
+    const versus = document.createElement("div");
+    versus.className = "versus";
+    versus.setAttribute("aria-hidden", "true");
+    versus.innerHTML = "<span class=\"versus__line\"></span><span class=\"versus__text\">VS</span>";
+    const [first, second] = ([1, 2] as const).map((owner, index) =>
+      primaryCardEl(owner, index, dealIds.includes(primaryCardId(owner)), false),
+    );
+    cardsRow.classList.toggle("is-clashing", dealIds.length > 0);
+    cardsRow.replaceChildren(first, versus, second);
+    layoutCardsRow();
+    return;
+  }
+  const ids = cardsMode === "draw" ? drawnIds.filter((id) => pile.hand.includes(id)) : pile.hand;
+  cardsTitle.textContent = t(cardsMode === "draw" ? "drawTitle" : "handTitle", { n: player });
+  const deck = pile.deck.length > 0 ? t("deckLeft", { n: pile.deck.length }) : t("deckEmpty");
+  cardsSub.textContent = cardsMode === "draw" ? `${deck} · ${t("scoreFromHand")}` : deck;
+  // The hand starts with the primary card, kept all game
+  const primary = cardsMode === "hand" && primaryCards[player] ? [primaryCardEl(player, 0, dealIds.includes(primaryCardId(player)), true)] : [];
+  const cards = [
+    ...primary,
+    ...ids.map((id, index) => secondaryCardEl(player, id, index + primary.length, dealIds.includes(id))),
+  ];
+  if (cards.length === 0) {
+    const empty = document.createElement("p");
+    empty.className = "cards-empty";
+    empty.textContent = t("emptyHand");
+    cardsRow.replaceChildren(empty);
+    return;
+  }
+  cardsRow.replaceChildren(...cards);
+  layoutCardsRow();
+}
+
+/** Card width and gap in rem, as in the CSS */
+const CARD_REM = 16;
+const CARD_GAP_REM = 1.5;
+
+/**
+ * Like a hand in a card game: one row, the cards overlapping as much as needed to fit
+ * the screen width. The hovered card comes to the front.
+ */
+function layoutCardsRow(): void {
+  if (cardsMode === "primary") {
+    cardsRow.classList.remove("is-fanned");
+    return;
+  }
+  cardsRow.classList.remove("is-clashing");
+  const count = cardsRow.querySelectorAll(".sec-card").length;
+  const rootPx = parseFloat(getComputedStyle(document.documentElement).fontSize) || 16;
+  const scale = parseFloat(getComputedStyle(document.documentElement).getPropertyValue("--ui-scale")) || 1;
+  // Room for the row, in rem of the zoomed stage (its padding taken out)
+  const available = ((cardsOverlay.clientWidth - 2 * rootPx) / scale - 2 * rootPx) / rootPx;
+  const natural = count * CARD_REM + (count - 1) * CARD_GAP_REM;
+  const fanned = count > 1 && natural > available;
+  cardsRow.classList.toggle("is-fanned", fanned);
+  // At least 3rem of each card stays visible, enough to read its name
+  const overlap = fanned ? Math.min((count * CARD_REM - available) / (count - 1), CARD_REM - 3) : 0;
+  cardsRow.style.setProperty("--overlap", `${overlap}rem`);
+}
+
+function repeatTotal(option: HTMLElement): number {
+  const per = Number(option.dataset.per);
+  const max = Number(option.dataset.max);
+  return Math.min(per * Number(option.dataset.count), max);
+}
+
+function secondaryCardEl(player: Player, id: string, index: number, deal: boolean): HTMLElement {
+  const data = SECONDARY_BY_ID.get(id)!;
+  const lang = getLang();
+  const el = document.createElement("article");
+  el.className = "sec-card";
+  el.classList.toggle("is-dealt", deal);
+  el.style.setProperty("--i", String(index));
+  el.dataset.cardId = id;
+  el.innerHTML = `
+    <div class="sec-card__inner">
+      <header class="sec-card__head">
+        <span class="sec-card__kicker"></span>
+        <h3 class="sec-card__name"></h3>
+        <span class="sec-card__when"></span>
+      </header>
+      <p class="sec-card__note"></p>
+      <div class="sec-card__options"></div>
+      <footer class="sec-card__actions"></footer>
+    </div>`;
+  el.querySelector(".sec-card__kicker")!.textContent = t("secondaryKicker");
+  el.querySelector(".sec-card__name")!.textContent = data.name;
+  el.querySelector(".sec-card__when")!.textContent = data.when ? t(WHEN_KEYS[data.when]) : "";
+  const note = el.querySelector<HTMLElement>(".sec-card__note")!;
+  note.textContent = data.note ? data.note[lang] : "";
+  note.hidden = !data.note;
+
+  const unit = t("vpUnit");
+  const scorable = cardsMode === "hand";
+  const options = data.options.map((option) => {
+    if ("vp" in option) {
+      const button = document.createElement("button");
+      button.type = "button";
+      button.className = "sec-option";
+      button.disabled = !scorable;
+      button.dataset.action = "score";
+      button.dataset.vp = String(option.vp);
+      button.innerHTML = `<span class="sec-option__vp">${option.vp}<small>${unit}</small></span><span class="sec-option__label"></span>`;
+      button.querySelector(".sec-option__label")!.textContent = option.label[lang];
+      return button;
+    }
+    // "For each …, up to max": count the things, then score the capped total
+    const block = document.createElement("div");
+    block.className = "sec-option sec-option--repeat";
+    block.dataset.per = String(option.per);
+    block.dataset.max = String(option.max);
+    block.dataset.count = "1";
+    block.innerHTML = `
+      <span class="sec-option__vp">${option.per}<small>${unit}</small></span>
+      <span class="sec-option__label"></span>
+      <span class="sec-option__repeat">
+        <span class="sec-option__stepper">
+          <button type="button" class="mini-counter__btn" data-action="less">−</button>
+          <span class="sec-option__count">1</span>
+          <button type="button" class="mini-counter__btn" data-action="more">+</button>
+        </span>
+        <button type="button" class="sec-option__go" data-action="score-repeat"></button>
+      </span>`;
+    block.querySelector(".sec-option__label")!.textContent = `${option.label[lang]} · ${t("maxVp", { n: option.max })}`;
+    block.querySelector(".sec-option__go")!.textContent = `${t("scoreIt")} ${repeatTotal(block)} ${unit}`;
+    block.querySelector<HTMLElement>(".sec-option__repeat")!.hidden = !scorable;
+    return block;
+  });
+  el.querySelector(".sec-card__options")!.replaceChildren(...options);
+
+  const actions: HTMLElement[] = [];
+  if (cardsMode === "draw" && data.redraw && drawnIds.includes(id) && secondaries[player].deck.length > 0) {
+    const redraw = document.createElement("button");
+    redraw.type = "button";
+    redraw.className = "sec-action sec-action--redraw";
+    redraw.dataset.action = "redraw";
+    redraw.innerHTML = `<span></span><small></small>`;
+    redraw.querySelector("span")!.textContent = t("redrawFree");
+    redraw.querySelector("small")!.textContent = t("redrawIf", { cond: data.redraw.condition[lang] });
+    actions.push(redraw);
+  }
+  const swapCard = document.createElement("button");
+  swapCard.type = "button";
+  swapCard.className = "sec-action sec-action--discard";
+  swapCard.dataset.action = "swap";
+  swapCard.textContent = newCardUsed[player] ? t("swapUsed") : t("swapCp");
+  swapCard.disabled = !canSwapSecondary(player);
+  actions.push(swapCard);
+  const link = document.createElement("a");
+  link.className = "sec-action sec-action--link";
+  link.href = data.url;
+  link.target = "_blank";
+  link.rel = "noopener";
+  link.textContent = `${t("fullCard")} ↗`;
+  actions.push(link);
+  el.querySelector(".sec-card__actions")!.replaceChildren(...actions);
+  return el;
+}
+
+/** The card leaves with an animation, then the cards are redrawn (`dealIds` flying in) */
+function playCardExit(cardEl: HTMLElement, exit: "is-scored" | "is-discarded", burst?: string, dealIds: string[] = []): void {
+  if (burst) {
+    const label = document.createElement("span");
+    label.className = "sec-card__burst";
+    label.textContent = burst;
+    cardEl.appendChild(label);
+  }
+  cardEl.classList.add(exit);
+  const done = () => {
+    renderCards(dealIds);
+    renderHandButtons();
+  };
+  if (prefersReducedMotion()) done();
+  else window.setTimeout(done, CARD_EXIT_MS);
+}
+
+function scoreSecondary(player: Player, id: string, vp: number, cardEl: HTMLElement): void {
+  const added = addSecondaryPoints(player, vp);
+  moveSecondary(player, id, "discard");
+  playCardExit(cardEl, "is-scored", `+${added}`);
+}
+
+function canSwapSecondary(player: Player): boolean {
+  return !newCardUsed[player] && (player === 1 ? cp1 : cp2) >= 1 && secondaries[player].deck.length > 0;
+}
+
+/** −1 CP, once per battle: the card is discarded and a new one is dealt in its place */
+function swapSecondary(player: Player, id: string, cardEl: HTMLElement): void {
+  if (!canSwapSecondary(player)) return;
+  adjustCp(player, -1);
+  newCardUsed[player] = true;
+  const [replacement] = drawSecondaries(player, 1);
+  moveSecondary(player, id, "discard");
+  drawnIds = drawnIds.map((cardId) => (cardId === id ? replacement : cardId));
+  // The other cards lose their swap button at once: it is spent for the battle
+  cardsRow.querySelectorAll<HTMLButtonElement>('[data-action="swap"]').forEach((button) => {
+    button.disabled = true;
+    button.textContent = t("swapUsed");
+  });
+  playCardExit(cardEl, "is-discarded", undefined, [replacement]);
+}
+
+/** Free redraw allowed by the card when drawn: it leaves, a new card is dealt in its place */
+function redrawSecondary(player: Player, id: string): void {
+  const data = SECONDARY_BY_ID.get(id);
+  if (!data?.redraw) return;
+  const [replacement] = drawSecondaries(player, 1);
+  if (!replacement) return;
+  moveSecondary(player, id, data.redraw.to);
+  drawnIds = drawnIds.map((cardId) => (cardId === id ? replacement : cardId));
+  renderCards([replacement]);
+  renderHandButtons();
+}
+
+/* ---------- Force dispositions and primary missions ---------- */
+
+let dispositions: Record<Player, Disposition | null> = { 1: null, 2: null };
+let primaryCards: Record<Player, PrimaryCard | null> = { 1: null, 2: null };
+/** Points scored by each primary line and turn: one score per line per turn, a second click undoes it */
+let primaryScored: Record<Player, Map<string, number>> = { 1: new Map(), 2: new Map() };
+
+/** With the cards on, the game starts by choosing force dispositions */
+function requestStart(): void {
+  if (secondaryCardsOn()) openDispositions();
+  else openTurnConfirmModal("start-game");
+}
+
+function openDispositions(): void {
+  renderDispositions();
+  dispoOverlay.classList.add("is-visible");
+  dispoOverlay.setAttribute("aria-hidden", "false");
+}
+
+function closeDispositions(): void {
+  dispoOverlay.classList.remove("is-visible");
+  dispoOverlay.setAttribute("aria-hidden", "true");
+  (document.activeElement as HTMLElement | null)?.blur();
+}
+
+function renderDispositions(): void {
+  const lang = getLang();
+  dispoOverlay.querySelectorAll<HTMLElement>(".dispo-options").forEach((group) => {
+    const player = Number(group.dataset.player) as Player;
+    group.querySelectorAll<HTMLButtonElement>(".dispo-option").forEach((option) => {
+      const data = DISPOSITIONS.find(({ id }) => id === option.dataset.value)!;
+      option.setAttribute("aria-pressed", String(dispositions[player] === data.id));
+      option.querySelector(".dispo-option__hint")!.textContent = data.hint[lang];
+    });
+  });
+  btnDispoOk.disabled = !dispositions[1] || !dispositions[2];
+}
+
+/** Both dispositions known: each player gets the card of their deck facing the other's */
+function revealPrimaries(): void {
+  const mine = dispositions[1];
+  const theirs = dispositions[2];
+  if (!mine || !theirs) return;
+  primaryCards = { 1: primaryFor(mine, theirs), 2: primaryFor(theirs, mine) };
+  primaryScored = { 1: new Map(), 2: new Map() };
+  closeDispositions();
+  openCards(1, "primary");
+}
+
+function sectionTurnKey(player: Player, section: PrimarySection): string {
+  return section.rounds === "end" ? "end" : String(scoringTurnIdx(player));
+}
+
+/** Whether a primary section scores now, from the player's own battle round */
+function sectionOpen(player: Player, section: PrimarySection): boolean {
+  const turnIdx = scoringTurnIdx(player);
+  if (section.rounds === "end") return gameOver || turnIdx === MAX_GAME_TURN - 1;
+  const round = turnIdx + 1;
+  return round >= section.rounds[0] && round <= section.rounds[1];
+}
+
+function roundsLabel(section: PrimarySection): string {
+  if (section.rounds === "end") return t("endOfBattle");
+  const [from, to] = section.rounds;
+  if (from === 1 && to === MAX_GAME_TURN) return t("anyRound");
+  if (from === to) return t("roundN", { n: from });
+  if (to === MAX_GAME_TURN) return t("roundFrom", { n: from });
+  return t("roundsRange", { a: from, b: to });
+}
+
+const PRIMARY_WHEN_KEYS = { yours: "whenYours", command: "whenCommand", any: "whenAny", end: "" } as const;
+
+function itemTotal(item: PrimaryItem, block: HTMLElement): number {
+  const count = Number(block.dataset.count ?? 0);
+  const bonus = Number(block.dataset.bonus ?? 0);
+  if ("vp" in item) return item.vp;
+  if ("per" in item) return item.per * count + (item.bonus ? item.bonus.per * bonus : 0);
+  return item.base + item.plus.per * count;
+}
+
+function stepperHtml(field: "count" | "bonus", value: number): string {
+  return `
+    <span class="sec-option__stepper">
+      <button type="button" class="mini-counter__btn" data-action="pri-step" data-field="${field}" data-delta="-1">−</button>
+      <span class="sec-option__count" data-value="${field}">${value}</span>
+      <button type="button" class="mini-counter__btn" data-action="pri-step" data-field="${field}" data-delta="1">+</button>
+    </span>`;
+}
+
+function primaryCardEl(player: Player, index: number, deal: boolean, scorable: boolean): HTMLElement {
+  const data = primaryCards[player]!;
+  const lang = getLang();
+  const unit = t("vpUnit");
+  const el = document.createElement("article");
+  el.className = `sec-card sec-card--primary is-p${player}`;
+  el.classList.toggle("is-dealt", deal);
+  el.style.setProperty("--i", String(index));
+  el.dataset.primaryPlayer = String(player);
+  el.innerHTML = `
+    <div class="sec-card__inner">
+      <header class="sec-card__head">
+        <span class="sec-card__kicker"></span>
+        <h3 class="sec-card__name"></h3>
+        <span class="sec-card__when"></span>
+      </header>
+      <p class="sec-card__note"></p>
+      <div class="pri-sections"></div>
+      <footer class="sec-card__actions"></footer>
+    </div>`;
+  el.querySelector(".sec-card__kicker")!.textContent = `${t("primaryKicker")} · ${t("player", { n: player })}`;
+  el.querySelector(".sec-card__name")!.textContent = data.name;
+  // The force disposition this card belongs to
+  el.querySelector(".sec-card__when")!.textContent = DISPOSITIONS.find(({ id }) => id === data.deck)!.name;
+  const note = el.querySelector<HTMLElement>(".sec-card__note")!;
+  note.textContent = data.note ? data.note[lang] : "";
+  note.hidden = !data.note;
+
+  const scored = primaryScored[player];
+  const sections = data.sections.map((section, s) => {
+    const turnKey = sectionTurnKey(player, section);
+    const open = scorable && sectionOpen(player, section);
+    const pickedInSection = section.items.some((_, i) => scored.has(`${turnKey}|${s}|${i}`));
+    const block = document.createElement("section");
+    block.className = "pri-section";
+    // Dimmed out of its rounds while playing; on the reveal the whole card reads at full strength
+    block.classList.toggle("is-closed", scorable && !sectionOpen(player, section));
+    const whenKey = PRIMARY_WHEN_KEYS[section.when];
+    block.innerHTML = `
+      <header class="pri-section__head">
+        <span class="pri-section__rounds"></span>
+        <span class="pri-section__when"></span>
+      </header>`;
+    block.querySelector(".pri-section__rounds")!.textContent = roundsLabel(section);
+    block.querySelector(".pri-section__when")!.textContent = whenKey ? t(whenKey) : "";
+    if (section.pickOne) {
+      const pick = document.createElement("span");
+      pick.className = "pri-section__pick";
+      pick.textContent = t("pickOneOf");
+      block.appendChild(pick);
+    }
+    section.items.forEach((item, i) => {
+      const key = `${turnKey}|${s}|${i}`;
+      const done = scored.get(key);
+      const blocked = !open || (!!section.pickOne && pickedInSection && done === undefined);
+      if ("vp" in item || done !== undefined) {
+        // A fixed score, or any line already scored this turn (click again to undo)
+        const button = document.createElement("button");
+        button.type = "button";
+        button.className = "sec-option";
+        button.classList.toggle("is-scored", done !== undefined);
+        button.disabled = blocked;
+        button.dataset.action = "pri-score";
+        button.dataset.section = String(s);
+        button.dataset.item = String(i);
+        button.setAttribute("aria-pressed", String(done !== undefined));
+        if (done !== undefined) button.title = t("scoredUndo");
+        const shown = done ?? ("vp" in item ? item.vp : 0);
+        button.innerHTML = `<span class="sec-option__vp">${done !== undefined ? "✓" : ""}${shown}<small>${unit}</small></span><span class="sec-option__label"></span>`;
+        button.querySelector(".sec-option__label")!.textContent = item.label[lang];
+        block.appendChild(button);
+        return;
+      }
+      // Counted scores: how many things, then score the total
+      const row = document.createElement("div");
+      row.className = "sec-option sec-option--repeat";
+      row.dataset.section = String(s);
+      row.dataset.item = String(i);
+      row.dataset.count = "per" in item ? "1" : "0";
+      row.dataset.bonus = "0";
+      const per = "per" in item ? item.per : item.base;
+      const extra = "per" in item ? item.bonus : item.plus;
+      row.innerHTML = `
+        <span class="sec-option__vp">${"per" in item ? `${per}×` : per}<small>${unit}</small></span>
+        <span class="sec-option__label"></span>
+        <span class="sec-option__repeat">
+          ${stepperHtml("count", Number(row.dataset.count))}
+          <button type="button" class="sec-option__go" data-action="pri-score"></button>
+        </span>`;
+      row.querySelector(".sec-option__label")!.textContent = "per" in item ? item.label[lang] : `${item.label[lang]} · +${item.plus.per} ${item.plus.label[lang]}`;
+      if ("per" in item && extra) {
+        const bonus = document.createElement("span");
+        bonus.className = "sec-option__bonus";
+        bonus.innerHTML = `<span class="sec-option__bonus-label"></span>${stepperHtml("bonus", 0)}`;
+        bonus.querySelector(".sec-option__bonus-label")!.textContent = `+${extra.per} · ${extra.label[lang]}`;
+        row.insertBefore(bonus, row.querySelector(".sec-option__repeat"));
+      }
+      const go = row.querySelector<HTMLButtonElement>(".sec-option__go")!;
+      go.dataset.section = String(s);
+      go.dataset.item = String(i);
+      go.textContent = `${t("scoreIt")} ${itemTotal(item, row)} ${unit}`;
+      row.querySelectorAll<HTMLButtonElement>("button").forEach((button) => {
+        button.disabled = blocked;
+      });
+      row.querySelector<HTMLElement>(".sec-option__repeat")!.hidden = !scorable;
+      block.appendChild(row);
+    });
+    return block;
+  });
+  el.querySelector(".pri-sections")!.replaceChildren(...sections);
+
+  const link = document.createElement("a");
+  link.className = "sec-action sec-action--link";
+  link.href = data.url;
+  link.target = "_blank";
+  link.rel = "noopener";
+  link.textContent = `${t("fullCard")} ↗`;
+  el.querySelector(".sec-card__actions")!.replaceChildren(link);
+  return el;
+}
+
+/** Primary points: the turn's primary score (15 max) or, at the end of the battle, the end bonus */
+function togglePrimaryScore(player: Player, s: number, i: number, vp: number): void {
+  const card = primaryCards[player];
+  if (!card) return;
+  const section = card.sections[s];
+  const turnKey = sectionTurnKey(player, section);
+  const key = `${turnKey}|${s}|${i}`;
+  const scored = primaryScored[player];
+  const done = scored.get(key);
+  if (done !== undefined) {
+    scored.delete(key);
+    if (turnKey === "end") endBonus[player] = Math.max(0, endBonus[player] - done);
+    else {
+      const turns = scoreByTurn[player].primary;
+      turns[Number(turnKey)] = Math.max(0, turns[Number(turnKey)] - done);
+    }
+  } else {
+    if (!sectionOpen(player, section)) return;
+    if (section.pickOne && section.items.some((_, other) => scored.has(`${turnKey}|${s}|${other}`))) return;
+    let added = vp;
+    if (turnKey === "end") endBonus[player] += vp;
+    else {
+      const turns = scoreByTurn[player].primary;
+      const turnIdx = Number(turnKey);
+      added = Math.max(0, Math.min(vp, MAX_POINTS_PER_TURN - turns[turnIdx]));
+      turns[turnIdx] += added;
+    }
+    scored.set(key, added);
+  }
+  renderMiniCounters();
+  renderCards();
+}
+
 function adjustScore(player: Player, kind: ScoreKind, delta: 1 | -1): void {
   const turns = scoreByTurn[player][kind];
   const turnIdx = scoringTurnIdx(player);
@@ -1664,6 +2342,95 @@ abilityList.addEventListener("click", (e) => {
   if (toggle) toggleAbilitySlot(abilitiesPlayer, toggle.dataset.slot as AbilitySlot);
 });
 btnAbilitiesClose.addEventListener("click", closeAbilities);
+
+for (const player of [1, 2] as const) {
+  handButtonEl[player].addEventListener("click", () => openCards(player, "hand"));
+}
+/** Continue: after the primaries reveal, the game starts */
+function continueCards(): void {
+  const startsGame = cardsMode === "primary";
+  closeCards();
+  if (startsGame) start();
+}
+
+btnCardsClose.addEventListener("click", continueCards);
+dispoOverlay.addEventListener("click", (e) => {
+  const option = (e.target as HTMLElement).closest<HTMLButtonElement>(".dispo-option");
+  if (!option) return;
+  const player = Number(option.closest<HTMLElement>(".dispo-options")!.dataset.player) as Player;
+  dispositions[player] = option.dataset.value as Disposition;
+  renderDispositions();
+});
+btnDispoOk.addEventListener("click", revealPrimaries);
+btnDispoCancel.addEventListener("click", closeDispositions);
+window.addEventListener("resize", () => {
+  if (cardsPlayer !== null) layoutCardsRow();
+});
+secondaryCardsToggle.addEventListener("change", () => {
+  secondaryCardsToggle.blur();
+  renderHandButtons();
+});
+cardsRow.addEventListener("click", (e) => {
+  const button = (e.target as HTMLElement).closest<HTMLButtonElement>("button[data-action]");
+  const cardEl = button?.closest<HTMLElement>(".sec-card");
+  if (button && cardEl?.dataset.primaryPlayer && cardsMode === "hand") {
+    const owner = Number(cardEl.dataset.primaryPlayer) as Player;
+    const card = primaryCards[owner];
+    const s = Number(button.dataset.section ?? button.closest<HTMLElement>(".sec-option--repeat")?.dataset.section);
+    const row = button.closest<HTMLElement>(".sec-option--repeat");
+    const i = Number(button.dataset.item ?? row?.dataset.item);
+    const item = card?.sections[s]?.items[i];
+    if (!card || !item) return;
+    if (button.dataset.action === "pri-step" && row) {
+      const field = button.dataset.field === "bonus" ? "bonus" : "count";
+      const min = field === "count" && "per" in item ? 1 : 0;
+      const max = field === "bonus" ? Number(row.dataset.count) : 99;
+      const value = Math.max(min, Math.min(max, Number(row.dataset[field]) + Number(button.dataset.delta)));
+      row.dataset[field] = String(value);
+      // Fewer things than bonus things makes no sense
+      if (Number(row.dataset.bonus) > Number(row.dataset.count)) row.dataset.bonus = row.dataset.count;
+      row.querySelectorAll<HTMLElement>("[data-value]").forEach((span) => {
+        span.textContent = row.dataset[span.dataset.value === "bonus" ? "bonus" : "count"] ?? "0";
+      });
+      row.querySelector(".sec-option__go")!.textContent = `${t("scoreIt")} ${itemTotal(item, row)} ${t("vpUnit")}`;
+      return;
+    }
+    if (button.dataset.action === "pri-score") togglePrimaryScore(owner, s, i, row ? itemTotal(item, row) : "vp" in item ? item.vp : 0);
+    return;
+  }
+  if (!button || !cardEl || cardsPlayer === null || cardEl.matches(".is-scored, .is-discarded")) return;
+  const player = cardsPlayer;
+  const id = cardEl.dataset.cardId!;
+  const option = button.closest<HTMLElement>(".sec-option--repeat");
+  const scoring = ["score", "less", "more", "score-repeat"].includes(button.dataset.action ?? "");
+  if (scoring && cardsMode !== "hand") return;
+  switch (button.dataset.action) {
+    case "score":
+      scoreSecondary(player, id, Number(button.dataset.vp), cardEl);
+      break;
+    case "less":
+    case "more": {
+      if (!option) return;
+      const per = Number(option.dataset.per);
+      const maxCount = Math.ceil(Number(option.dataset.max) / per);
+      const delta = button.dataset.action === "more" ? 1 : -1;
+      const count = Math.max(1, Math.min(maxCount, Number(option.dataset.count) + delta));
+      option.dataset.count = String(count);
+      option.querySelector(".sec-option__count")!.textContent = String(count);
+      option.querySelector(".sec-option__go")!.textContent = `${t("scoreIt")} ${repeatTotal(option)} ${t("vpUnit")}`;
+      break;
+    }
+    case "score-repeat":
+      if (option) scoreSecondary(player, id, repeatTotal(option), cardEl);
+      break;
+    case "swap":
+      swapSecondary(player, id, cardEl);
+      break;
+    case "redraw":
+      redrawSecondary(player, id);
+      break;
+  }
+});
 
 function renderTurnDots(): void {
   turnDots.innerHTML = "";
@@ -1791,6 +2558,30 @@ window.addEventListener("keydown", (e) => {
     }
     return;
   }
+  if (dispoOverlay.classList.contains("is-visible")) {
+    if (e.code === "Enter" && !e.repeat) {
+      e.preventDefault();
+      revealPrimaries();
+    } else if (e.key === "Escape") {
+      e.preventDefault();
+      closeDispositions();
+    } else if (e.code === "Space") {
+      e.preventDefault();
+    }
+    return;
+  }
+  if (cardsOverlay.classList.contains("is-visible")) {
+    if (e.code === "Enter" && !e.repeat) {
+      e.preventDefault();
+      continueCards();
+    } else if (e.key === "Escape") {
+      e.preventDefault();
+      closeCards();
+    } else if (e.code === "Space") {
+      e.preventDefault();
+    }
+    return;
+  }
   if (e.key === "Escape" && POPOVERS.some(([, panel]) => !panel.hidden)) {
     e.preventDefault();
     closePopovers();
@@ -1852,7 +2643,7 @@ window.addEventListener("keydown", (e) => {
       e.preventDefault();
       if (gameOver) return;
       if (paused) handleSpaceLikeInput();
-      else openTurnConfirmModal("start-game");
+      else requestStart();
       return;
     }
     if (turnPlayer === 1) {
@@ -1888,6 +2679,7 @@ board.addEventListener("pointerdown", (e) => {
   /* Touch / pen only — mouse clicks use Start / Space, not board taps */
   if (e.pointerType === "mouse") return;
   if (abilitiesOverlay.classList.contains("is-visible")) return;
+  if (cardsOverlay.classList.contains("is-visible")) return;
   if (photoOverlay.classList.contains("is-visible")) return;
   if (resultOverlay.classList.contains("is-visible")) return;
   if (turnConfirmOverlay.classList.contains("is-visible")) return;
@@ -1946,7 +2738,9 @@ document.addEventListener("pointerdown", (e) => {
 });
 
 btnStart.addEventListener("click", () => {
-  if (!running && !paused) start();
+  if (running || paused) return;
+  if (secondaryCardsOn()) openDispositions();
+  else start();
 });
 
 setTimePreset(String(DEFAULT_TIME_SEC));

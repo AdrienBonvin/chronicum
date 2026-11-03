@@ -1073,6 +1073,11 @@ kbd {
   gap: 0.3rem;
 }
 
+#app.uses-secondary-cards .score-box__row[data-kind="secondary"] .mini-counter__btn {
+  visibility: hidden;
+  pointer-events: none;
+}
+
 .score-box__row[hidden] {
   display: none;
 }
@@ -1375,7 +1380,8 @@ kbd {
 @media (prefers-reduced-motion: reduce) {
   .is-just-toggled,
   .is-just-toggled .cp-coin,
-  .is-just-toggled .unit-toggle__text::after {
+  .is-just-toggled .unit-toggle__text::after,
+  .cp-coin.is-restored .cp-coin__face {
     animation: none !important;
   }
 }
@@ -1450,7 +1456,7 @@ kbd {
   transform-style: preserve-3d;
 }
 
-#app.match-started .cp-coin:not(.is-spent) {
+#app.match-started .cp-coin:not(:disabled) {
   cursor: pointer;
 }
 
@@ -1533,6 +1539,32 @@ kbd {
 .cp-coin.is-spent .cp-coin__inner,
 .cp-coin.is-spent .cp-coin__ticks {
   opacity: 0;
+}
+
+/* Hovering a spent coin previews it coming back */
+@media (hover: hover) {
+  #app.match-started .cp-coin.is-spent:not(:disabled):hover .cp-coin__outer {
+    stroke: var(--pc);
+  }
+
+  #app.match-started .cp-coin.is-spent:not(:disabled):hover .cp-coin__value {
+    color: var(--pc);
+  }
+}
+
+.cp-coin.is-restored .cp-coin__face {
+  animation: cpCoinBack 0.5s ease-out both;
+}
+
+@keyframes cpCoinBack {
+  0% {
+    transform: translateZ(0) rotateY(-180deg) scale(0.8);
+    opacity: 0;
+  }
+  100% {
+    transform: translateZ(0) rotateY(0deg) scale(1);
+    opacity: 1;
+  }
 }
 
 .cp-coin.is-spent .cp-coin__value,
@@ -1695,6 +1727,819 @@ kbd {
     opacity: 1;
     transform: none;
   }
+}
+
+/* ---------- Secondary cards ---------- */
+
+/* Hand button at the foot of the score box */
+.score-box__hand {
+  display: flex;
+  align-items: center;
+  gap: 0.45rem;
+  margin-top: 0.2rem;
+  padding: 0.35rem 0.5rem;
+  border: 1px dashed var(--line-strong);
+  border-radius: 4px;
+  background: transparent;
+  color: var(--muted);
+  font-size: 0.6rem;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.14em;
+}
+
+.score-box__hand[hidden] {
+  display: none;
+}
+
+.score-box__hand .icon {
+  width: 0.95rem;
+  height: 0.95rem;
+}
+
+.score-box__hand-count {
+  margin-left: auto;
+  font-family: var(--font-num);
+  font-size: 0.85rem;
+  font-weight: 700;
+  letter-spacing: 0;
+  color: var(--text);
+}
+
+.score-box__hand:hover {
+  color: var(--text);
+  border-color: var(--pc-line);
+}
+
+.overlay--cards.is-p1 {
+  --pc: var(--p1);
+  --pc-soft: var(--p1-soft);
+  --pc-line: var(--p1-line);
+}
+
+.overlay--cards.is-p2 {
+  --pc: var(--p2);
+  --pc-soft: var(--p2-soft);
+  --pc-line: var(--p2-line);
+}
+
+/* Light backdrop: the clocks and the score boxes stay readable behind the cards */
+.overlay.overlay--cards {
+  z-index: 12;
+  align-items: flex-start;
+  justify-content: flex-start;
+  overflow-y: auto;
+  background: rgba(4, 6, 9, 0.5);
+  backdrop-filter: none;
+  -webkit-backdrop-filter: none;
+}
+
+/* Only the cards catch the mouse: score and CP counters stay usable around them,
+   e.g. to score primary at the start of the turn while the draw is on screen */
+.overlay.overlay--cards.is-visible {
+  pointer-events: none;
+}
+
+.overlay--cards.is-visible .cards-stage {
+  pointer-events: auto;
+}
+
+.cards-stage {
+  zoom: var(--ui-scale);
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 0.4rem;
+  max-width: calc((100vw - 2rem) / var(--ui-scale));
+  /* Centred when it fits, scrollable from the top when it does not */
+  margin: auto;
+  padding: 1rem;
+}
+
+.cards-title {
+  margin: 0;
+  font-size: 1.5rem;
+  font-weight: 600;
+  color: var(--pc);
+}
+
+.cards-sub {
+  margin: 0 0 1rem;
+  color: var(--muted);
+  font-size: 0.85rem;
+}
+
+.cards-row {
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: center;
+  align-items: flex-start;
+  gap: 1.5rem;
+  perspective: 1400px;
+}
+
+/* Many cards: one overlapping row instead of wrapping off the screen */
+.cards-row.is-fanned {
+  flex-wrap: nowrap;
+  gap: 0;
+}
+
+.cards-row.is-fanned .sec-card {
+  flex: 0 0 auto;
+}
+
+.cards-row.is-fanned .sec-card + .sec-card {
+  margin-left: calc(-1 * var(--overlap));
+}
+
+.cards-row.is-fanned .sec-card:hover {
+  z-index: 5;
+  transform: translateY(-14px);
+}
+
+.cards-empty {
+  margin: 2rem 0;
+  color: var(--muted);
+}
+
+.cards-actions {
+  margin-top: 1.25rem;
+}
+
+.sec-card {
+  position: relative;
+  width: 16rem;
+  transition: transform 0.2s ease;
+}
+
+.sec-card:hover {
+  transform: translateY(-6px);
+}
+
+.sec-card__inner {
+  position: relative;
+  display: flex;
+  flex-direction: column;
+  gap: 0.75rem;
+  min-height: 21rem;
+  padding: 1.1rem 1rem 0.9rem;
+  border: 1px solid var(--pc-line);
+  border-radius: 12px;
+  background:
+    radial-gradient(120% 60% at 50% 0%, color-mix(in srgb, var(--pc) 14%, transparent), transparent 70%),
+    linear-gradient(180deg, var(--surface), var(--bg));
+  box-shadow:
+    0 26px 60px rgba(0, 0, 0, 0.6),
+    0 0 36px color-mix(in srgb, var(--pc) 18%, transparent);
+  animation: cardFloat 5s ease-in-out infinite;
+  animation-delay: calc(var(--i, 0) * -1.7s);
+}
+
+.sec-card__inner::before {
+  content: "";
+  position: absolute;
+  top: 0;
+  left: 1rem;
+  right: 1rem;
+  height: 3px;
+  border-radius: 0 0 3px 3px;
+  background: var(--pc);
+}
+
+/* Dealt from the deck: flies in, turns face up, lands */
+.sec-card.is-dealt {
+  animation: cardDeal 0.75s cubic-bezier(0.2, 0.9, 0.25, 1) backwards;
+  animation-delay: calc(var(--i, 0) * 160ms);
+}
+
+.overlay--cards[data-mode="hand"] .sec-card.is-dealt {
+  animation-duration: 0.4s;
+  animation-delay: calc(var(--i, 0) * 60ms);
+}
+
+@keyframes cardDeal {
+  0% {
+    opacity: 0;
+    transform: translate(-10vw, 28vh) rotate(-14deg) scale(0.75);
+    filter: blur(8px);
+  }
+  60% {
+    opacity: 1;
+    filter: blur(0);
+  }
+  100% {
+    opacity: 1;
+    transform: none;
+    filter: none;
+  }
+}
+
+@keyframes cardFloat {
+  0%,
+  100% {
+    transform: translateY(0) rotate(-0.4deg);
+  }
+  50% {
+    transform: translateY(-8px) rotate(0.4deg);
+  }
+}
+
+.sec-card.is-scored {
+  animation: cardScored 0.45s ease-in forwards;
+  pointer-events: none;
+}
+
+.sec-card.is-discarded {
+  animation: cardDiscarded 0.4s ease-in forwards;
+  pointer-events: none;
+}
+
+@keyframes cardScored {
+  to {
+    opacity: 0;
+    transform: translateY(-50px) scale(1.06);
+  }
+}
+
+@keyframes cardDiscarded {
+  to {
+    opacity: 0;
+    transform: translateY(50px) rotate(8deg) scale(0.92);
+  }
+}
+
+/* "+5" rising from a scored card */
+.sec-card__burst {
+  position: absolute;
+  top: 40%;
+  left: 50%;
+  z-index: 2;
+  font-family: var(--font-num);
+  font-size: 2.6rem;
+  font-weight: 700;
+  color: var(--pc);
+  text-shadow: 0 0 24px color-mix(in srgb, var(--pc) 60%, transparent);
+  transform: translate(-50%, -50%);
+  animation: burstUp 0.45s ease-out forwards;
+}
+
+@keyframes burstUp {
+  from {
+    opacity: 0;
+    transform: translate(-50%, -20%) scale(0.7);
+  }
+  40% {
+    opacity: 1;
+  }
+  to {
+    opacity: 1;
+    transform: translate(-50%, -120%) scale(1.1);
+  }
+}
+
+.sec-card__head {
+  display: flex;
+  flex-direction: column;
+  gap: 0.25rem;
+}
+
+.sec-card__kicker {
+  font-size: 0.56rem;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.2em;
+  color: var(--pc);
+}
+
+.sec-card__name {
+  margin: 0;
+  font-size: 1.15rem;
+  font-weight: 700;
+  line-height: 1.15;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+}
+
+.sec-card__when {
+  font-size: 0.7rem;
+  color: var(--muted);
+}
+
+.sec-card__note {
+  margin: 0;
+  padding: 0.4rem 0.55rem;
+  border-left: 2px solid var(--pc-line);
+  background: var(--pc-soft);
+  font-size: 0.72rem;
+  line-height: 1.35;
+  color: var(--text);
+}
+
+.sec-card__note[hidden] {
+  display: none;
+}
+
+.sec-card__options {
+  display: flex;
+  flex-direction: column;
+  gap: 0.45rem;
+  flex: 1;
+}
+
+/* A way to score: click the points */
+.sec-option {
+  display: grid;
+  grid-template-columns: 3rem 1fr;
+  align-items: center;
+  gap: 0.6rem;
+  width: 100%;
+  padding: 0.55rem 0.6rem;
+  border: 1px solid var(--line-strong);
+  border-radius: 7px;
+  background: rgba(255, 255, 255, 0.02);
+  color: var(--text);
+  text-align: left;
+  letter-spacing: 0;
+}
+
+button.sec-option:disabled {
+  opacity: 1;
+  cursor: default;
+}
+
+.sec-option__repeat[hidden] {
+  display: none;
+}
+
+button.sec-option:hover:not(:disabled) {
+  border-color: var(--pc);
+  background: var(--pc-soft);
+}
+
+.sec-option__vp {
+  font-family: var(--font-num);
+  font-size: 1.35rem;
+  font-weight: 700;
+  line-height: 1;
+  color: var(--pc);
+}
+
+.sec-option__vp small {
+  margin-left: 0.15rem;
+  font-size: 0.55rem;
+  font-weight: 600;
+  color: var(--muted);
+}
+
+.sec-option__label {
+  font-size: 0.74rem;
+  font-weight: 500;
+  line-height: 1.3;
+}
+
+.sec-option--repeat {
+  grid-template-columns: 3rem 1fr;
+}
+
+.sec-option__repeat {
+  grid-column: 1 / -1;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 0.5rem;
+}
+
+.sec-option__stepper {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.35rem;
+}
+
+.sec-option__count {
+  min-width: 1.5ch;
+  text-align: center;
+  font-family: var(--font-num);
+  font-weight: 700;
+}
+
+.sec-option__go {
+  padding: 0.35rem 0.7rem;
+  border: 1px solid var(--pc);
+  border-radius: 5px;
+  background: var(--pc-soft);
+  color: var(--text);
+  font-size: 0.72rem;
+}
+
+.sec-option__go:hover {
+  background: var(--pc);
+  color: var(--bg);
+}
+
+.sec-card__actions {
+  display: flex;
+  flex-direction: column;
+  gap: 0.35rem;
+  padding-top: 0.6rem;
+  border-top: 1px solid var(--line);
+}
+
+.sec-action {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 0.1rem;
+  padding: 0.35rem 0.5rem;
+  border: 1px solid var(--line-strong);
+  border-radius: 5px;
+  background: transparent;
+  color: var(--muted);
+  font-size: 0.7rem;
+  text-align: center;
+  text-decoration: none;
+}
+
+.sec-action small {
+  font-size: 0.62rem;
+  font-weight: 500;
+  opacity: 0.8;
+}
+
+.sec-action--redraw {
+  border-color: var(--pc-line);
+  color: var(--text);
+}
+
+.sec-action--redraw:hover {
+  background: var(--pc-soft);
+}
+
+.sec-action--discard:hover:not(:disabled) {
+  color: var(--danger);
+  border-color: rgba(255, 95, 95, 0.45);
+}
+
+.sec-action--link {
+  border: none;
+  padding: 0.15rem;
+  font-size: 0.65rem;
+}
+
+.sec-action--link:hover {
+  color: var(--text);
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .sec-card__inner,
+  .sec-card.is-dealt {
+    animation: none;
+  }
+}
+
+/* ---------- Force dispositions and primary cards ---------- */
+
+.overlay.overlay--dispo {
+  z-index: 12;
+}
+
+.overlay--dispo .overlay-inner {
+  width: 40rem;
+}
+
+.dispo-grid {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 1.25rem;
+  margin-top: 1.1rem;
+}
+
+.dispo-column.is-p1 {
+  --pc: var(--p1);
+  --pc-soft: var(--p1-soft);
+  --pc-line: var(--p1-line);
+}
+
+.dispo-column.is-p2 {
+  --pc: var(--p2);
+  --pc-soft: var(--p2-soft);
+  --pc-line: var(--p2-line);
+}
+
+.dispo-column__label {
+  display: block;
+  margin-bottom: 0.5rem;
+  font-size: 0.7rem;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.2em;
+  color: var(--pc);
+}
+
+.dispo-options {
+  display: flex;
+  flex-direction: column;
+  gap: 0.4rem;
+}
+
+.dispo-option {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 0.1rem;
+  width: 100%;
+  padding: 0.55rem 0.75rem;
+  border: 1px solid var(--line-strong);
+  border-radius: 6px;
+  background: transparent;
+  color: var(--text);
+  text-align: left;
+}
+
+.dispo-option:hover:not([aria-pressed="true"]) {
+  border-color: var(--pc-line);
+  background: var(--pc-soft);
+}
+
+.dispo-option[aria-pressed="true"] {
+  border-color: var(--pc);
+  background: var(--pc);
+  color: var(--bg);
+}
+
+.dispo-option__name {
+  font-size: 0.9rem;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+}
+
+.dispo-option__hint {
+  font-size: 0.72rem;
+  font-weight: 500;
+  opacity: 0.75;
+}
+
+/* Cards of both players side by side: each one carries its player's color */
+.sec-card.is-p1 {
+  --pc: var(--p1);
+  --pc-soft: var(--p1-soft);
+  --pc-line: var(--p1-line);
+}
+
+.sec-card.is-p2 {
+  --pc: var(--p2);
+  --pc-soft: var(--p2-soft);
+  --pc-line: var(--p2-line);
+}
+
+.overlay--cards[data-mode="primary"] .cards-title {
+  color: var(--text);
+}
+
+/* Primaries reveal: two cards facing off around a "VS" */
+.overlay--cards[data-mode="primary"] .cards-row {
+  flex-wrap: nowrap;
+  align-items: center;
+  gap: 2.5rem;
+}
+
+.versus {
+  position: relative;
+  display: grid;
+  place-items: center;
+  align-self: stretch;
+  width: 4.5rem;
+}
+
+/* An energy line from one player's color to the other's */
+.versus__line {
+  position: absolute;
+  top: 6%;
+  bottom: 6%;
+  left: 50%;
+  width: 2px;
+  background: linear-gradient(180deg, transparent, var(--p1) 25%, var(--p2) 75%, transparent);
+  transform: translateX(-50%);
+  opacity: 0.7;
+}
+
+.versus__text {
+  position: relative;
+  display: grid;
+  place-content: center;
+  width: 4.5rem;
+  height: 4.5rem;
+  border: 1px solid var(--line-strong);
+  border-radius: 50%;
+  background: var(--bg);
+  font-size: 1.7rem;
+  font-weight: 700;
+  font-style: italic;
+  letter-spacing: 0.04em;
+  color: var(--text);
+  box-shadow:
+    -10px 0 28px color-mix(in srgb, var(--p1) 35%, transparent),
+    10px 0 28px color-mix(in srgb, var(--p2) 35%, transparent);
+}
+
+/* Shockwave of the clash */
+.versus__text::after {
+  content: "";
+  position: absolute;
+  inset: -2px;
+  border-radius: 50%;
+  border: 2px solid var(--text);
+  opacity: 0;
+}
+
+.cards-row.is-clashing .sec-card--primary.is-p1 {
+  animation: clashFromLeft 0.75s cubic-bezier(0.2, 0.9, 0.2, 1) backwards;
+}
+
+.cards-row.is-clashing .sec-card--primary.is-p2 {
+  animation: clashFromRight 0.75s cubic-bezier(0.2, 0.9, 0.2, 1) backwards;
+}
+
+.cards-row.is-clashing .versus__text {
+  animation: versusSlam 0.5s cubic-bezier(0.3, 1.6, 0.5, 1) 0.45s backwards;
+}
+
+.cards-row.is-clashing .versus__text::after {
+  animation: versusShock 0.6s ease-out 0.55s;
+}
+
+.cards-row.is-clashing .versus__line {
+  animation: versusLine 0.4s ease-out 0.5s backwards;
+}
+
+/* The whole row takes the hit */
+.cards-row.is-clashing {
+  animation: clashShake 0.3s linear 0.55s;
+}
+
+@keyframes clashFromLeft {
+  0% {
+    opacity: 0;
+    transform: translateX(-45vw) rotate(-10deg) scale(0.85);
+  }
+  70% {
+    opacity: 1;
+    transform: translateX(14px) rotate(1deg);
+  }
+  100% {
+    transform: none;
+  }
+}
+
+@keyframes clashFromRight {
+  0% {
+    opacity: 0;
+    transform: translateX(45vw) rotate(10deg) scale(0.85);
+  }
+  70% {
+    opacity: 1;
+    transform: translateX(-14px) rotate(-1deg);
+  }
+  100% {
+    transform: none;
+  }
+}
+
+@keyframes versusSlam {
+  0% {
+    opacity: 0;
+    transform: scale(2.6) rotate(-12deg);
+  }
+  100% {
+    opacity: 1;
+    transform: none;
+  }
+}
+
+@keyframes versusShock {
+  0% {
+    opacity: 0.9;
+    transform: scale(1);
+  }
+  100% {
+    opacity: 0;
+    transform: scale(2.4);
+  }
+}
+
+@keyframes versusLine {
+  from {
+    opacity: 0;
+    transform: translateX(-50%) scaleY(0);
+  }
+}
+
+@keyframes clashShake {
+  0%,
+  100% {
+    transform: none;
+  }
+  20% {
+    transform: translate(-5px, 2px);
+  }
+  40% {
+    transform: translate(5px, -2px);
+  }
+  60% {
+    transform: translate(-3px, 1px);
+  }
+  80% {
+    transform: translate(2px, 0);
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .cards-row.is-clashing,
+  .cards-row.is-clashing .sec-card--primary,
+  .cards-row.is-clashing .versus__text,
+  .cards-row.is-clashing .versus__text::after,
+  .cards-row.is-clashing .versus__line {
+    animation: none;
+  }
+}
+
+/* Primary card: kept all game, set apart by a double frame */
+.sec-card--primary .sec-card__inner {
+  border-width: 2px;
+  outline: 1px solid var(--pc-line);
+  outline-offset: 3px;
+}
+
+.pri-sections {
+  display: flex;
+  flex-direction: column;
+  gap: 0.6rem;
+  flex: 1;
+}
+
+.pri-section {
+  display: flex;
+  flex-direction: column;
+  gap: 0.35rem;
+}
+
+.pri-section__head {
+  display: flex;
+  justify-content: space-between;
+  gap: 0.5rem;
+  padding-bottom: 0.2rem;
+  border-bottom: 1px solid var(--line);
+}
+
+.pri-section__rounds {
+  font-size: 0.6rem;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.12em;
+  color: var(--pc);
+}
+
+.pri-section__when {
+  font-size: 0.6rem;
+  color: var(--muted);
+  text-align: right;
+}
+
+.pri-section__pick {
+  font-size: 0.6rem;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.12em;
+  color: var(--muted);
+}
+
+/* Not this round: shown, but out of play */
+.pri-section.is-closed {
+  opacity: 0.4;
+}
+
+.sec-option.is-scored {
+  border-color: var(--pc);
+  background: var(--pc-soft);
+}
+
+.sec-option.is-scored .sec-option__vp {
+  color: var(--text);
+}
+
+/* Primaries reveal: the counters only matter once the game is on */
+.overlay--cards[data-mode="primary"] .sec-option__stepper {
+  display: none;
+}
+
+.sec-option__bonus {
+  grid-column: 1 / -1;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 0.5rem;
+  font-size: 0.68rem;
+  color: var(--muted);
 }
 
 /* ---------- Hover history (score per round, CP per turn) ---------- */
