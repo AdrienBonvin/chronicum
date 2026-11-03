@@ -33,6 +33,85 @@
   font-family: var(--font-ui);
 }
 
+/* Factions: a neutral dark base, each player's colors come from their army */
+:root[data-theme="factions"] {
+  --bg: #08090b;
+  --surface: #111317;
+  --text: #ecebe7;
+  --muted: #8a8b90;
+  --faint: #43454b;
+}
+
+:root[data-theme="factions"][data-p1-faction="aeldari"] {
+  --p1: #1fc8d6;
+  --p1-time: #dff9fb;
+}
+
+:root[data-theme="factions"][data-p2-faction="aeldari"] {
+  --p2: #1fc8d6;
+  --p2-time: #dff9fb;
+}
+
+:root[data-theme="factions"][data-p1-faction="chaos-space-marines"] {
+  --p1: #e0313f;
+  --p1-time: #ffe0e2;
+}
+
+:root[data-theme="factions"][data-p2-faction="chaos-space-marines"] {
+  --p2: #e0313f;
+  --p2-time: #ffe0e2;
+}
+
+:root[data-theme="factions"][data-p1-faction="imperial-fists"] {
+  --p1: #f5c518;
+  --p1-time: #fff2c2;
+}
+
+:root[data-theme="factions"][data-p2-faction="imperial-fists"] {
+  --p2: #f5c518;
+  --p2-time: #fff2c2;
+}
+
+:root[data-theme="factions"][data-p1-faction="necrons"] {
+  --p1: #2ee68a;
+  --p1-time: #dcffee;
+}
+
+:root[data-theme="factions"][data-p2-faction="necrons"] {
+  --p2: #2ee68a;
+  --p2-time: #dcffee;
+}
+
+:root[data-theme="factions"][data-p1-faction="orks"] {
+  --p1: #8cc63f;
+  --p1-time: #eef7d8;
+}
+
+:root[data-theme="factions"][data-p2-faction="orks"] {
+  --p2: #8cc63f;
+  --p2-time: #eef7d8;
+}
+
+:root[data-theme="factions"][data-p1-faction="tyranids"] {
+  --p1: #b45fe0;
+  --p1-time: #f1e5cf;
+}
+
+:root[data-theme="factions"][data-p2-faction="tyranids"] {
+  --p2: #b45fe0;
+  --p2-time: #f1e5cf;
+}
+
+:root[data-theme="factions"][data-p1-faction="ultramarines"] {
+  --p1: #3d7cf0;
+  --p1-time: #e2ebff;
+}
+
+:root[data-theme="factions"][data-p2-faction="ultramarines"] {
+  --p2: #3d7cf0;
+  --p2-time: #e2ebff;
+}
+
 /* War zone: dark warm greys, orange, and hazard tape on the no man's land between the players */
 :root[data-theme="warzone"] {
   --bg: #0b0b0a;
@@ -472,22 +551,217 @@ body {
   width: 28rem;
 }
 
-/* Theme preview: background, player 1, player 2 (and the tape for war zone) */
-.swatch {
-  width: 2.6rem;
-  height: 1.6rem;
-  border-radius: 3px;
+/* Theme preview: the board in miniature, in the theme's own colors whatever the current one */
+.theme-preview {
+  --tp-bg: #07090d;
+  --tp-p1: #4a9bff;
+  --tp-p2: #ff5d77;
+  --tp-time1: #d4e6ff;
+  --tp-time2: #ffdbe1;
+  position: relative;
+  display: grid;
+  grid-template-rows: 1fr 1fr;
+  width: 4.6rem;
+  height: 2.9rem;
+  overflow: hidden;
+  border: 1px solid rgba(255, 255, 255, 0.14);
+  border-radius: 4px;
+  background: var(--tp-bg);
+}
+
+.theme-preview__half {
+  position: relative;
+  display: grid;
+  place-items: center;
+  font-family: var(--font-num);
+  font-size: 0.66rem;
+  font-weight: 700;
+  line-height: 1;
+}
+
+/* Player 1's clock runs: lit, with the wash of its color, as on the board */
+.theme-preview__half:first-child {
+  color: var(--tp-time1);
+  background: linear-gradient(0deg, color-mix(in srgb, var(--tp-p1) 26%, transparent), transparent 85%);
+  box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--tp-p1) 55%, transparent);
+  text-shadow: 0 0 8px color-mix(in srgb, var(--tp-p1) 70%, transparent);
+}
+
+.theme-preview__half:last-child {
+  color: color-mix(in srgb, var(--tp-time2) 45%, transparent);
+}
+
+.theme-preview--warzone {
+  --tp-bg: #0b0b0a;
+  --tp-p1: #ff7a1a;
+  --tp-p2: #8fb3cc;
+  --tp-time1: #ffe2cc;
+  --tp-time2: #e1ebf2;
+}
+
+/* War zone: hazard tape on the no man's land */
+.theme-preview--warzone::after {
+  content: "";
+  position: absolute;
+  top: calc(50% - 2px);
+  left: 0;
+  right: 0;
+  height: 4px;
+  background: repeating-linear-gradient(-45deg, #f2b705 0 3px, #0b0b0a 3px 6px);
+}
+
+.theme-preview--factions {
+  --tp-bg: #08090b;
+  --tp-p1: #f5c518;
+  --tp-p2: #b45fe0;
+  --tp-time1: #fff2c2;
+  --tp-time2: #f1e5cf;
+}
+
+/* Factions: each army on its own edge, Imperial Fists chevrons against Tyranid spines */
+.theme-preview--factions::before,
+.theme-preview--factions::after {
+  content: "";
+  position: absolute;
+  left: 0;
+  right: 0;
+  height: 4px;
+}
+
+.theme-preview--factions::before {
+  top: 0;
+  background: repeating-linear-gradient(-45deg, #f5c518 0 3px, #0b0b0a 3px 6px);
+}
+
+.theme-preview--factions::after {
+  bottom: 0;
+  background: radial-gradient(circle at 50% 100%, #b45fe0 0 2px, transparent 2.5px) 0 0 / 7px 4px repeat-x;
+}
+
+#theme-options {
+  grid-template-columns: repeat(3, 1fr);
+}
+
+/* Theme: at the foot of the menu, smaller and quieter than the settings above */
+.settings__section--theme {
+  padding-top: 0.9rem;
+  border-top: 1px dashed var(--line);
+}
+
+.settings__section--theme .segmented--tiles .segmented__option {
+  gap: 0.3rem;
+  padding: 0.4rem 0.4rem 0.35rem;
+  font-size: 0.66rem;
+}
+
+
+/* Factions: a sub-menu hanging from its tile, its arrow pointing at it */
+.faction-menu {
+  --menu-bg: color-mix(in srgb, var(--text) 4%, var(--surface));
+  position: relative;
+  display: flex;
+  flex-direction: column;
+  gap: 0.45rem;
+  margin-top: 0.4rem;
+  padding: 0.7rem 0.75rem;
   border: 1px solid var(--line-strong);
+  border-radius: 4px;
+  background: var(--menu-bg);
 }
 
-.swatch--clean {
-  background: linear-gradient(90deg, #07090d 0 40%, #4a9bff 40% 70%, #ff5d77 70%);
+.faction-menu[hidden] {
+  display: none;
 }
 
-.swatch--warzone {
-  background:
-    repeating-linear-gradient(-45deg, #f2b705 0 4px, #0b0b0a 4px 8px) bottom / 100% 5px no-repeat,
-    linear-gradient(90deg, #0b0b0a 0 40%, #ff7a1a 40% 70%, #8fb3cc 70%);
+/* The Factions tile is the last of three: the arrow sits under its middle */
+.faction-menu::before {
+  content: "";
+  position: absolute;
+  top: -0.45rem;
+  right: calc(100% / 6 - 0.45rem);
+  width: 0.8rem;
+  height: 0.8rem;
+  border-top: 1px solid var(--line-strong);
+  border-left: 1px solid var(--line-strong);
+  background: var(--menu-bg);
+  transform: rotate(45deg);
+}
+
+.faction-row {
+  display: grid;
+  grid-template-columns: 5rem 1fr;
+  align-items: center;
+  gap: 0.6rem;
+}
+
+.faction-row__player {
+  font-size: 0.68rem;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.14em;
+  cursor: pointer;
+}
+
+.faction-row__player.is-p1 {
+  color: var(--p1);
+}
+
+.faction-row__player.is-p2 {
+  color: var(--p2);
+}
+
+/* A native list, styled: the chevron says it opens, the edge takes the faction color */
+.select {
+  position: relative;
+  display: flex;
+}
+
+.select select {
+  flex: 1;
+  appearance: none;
+  padding: 0.45rem 2rem 0.45rem 0.7rem;
+  border: 1px solid var(--line-strong);
+  border-radius: 4px;
+  background: var(--surface);
+  color: var(--text);
+  color-scheme: dark;
+  font-family: var(--font-ui);
+  font-size: 0.78rem;
+  font-weight: 600;
+  cursor: pointer;
+  transition: border-color 0.15s ease;
+}
+
+.faction-row:has(.is-p1) .select select {
+  border-left: 3px solid var(--p1);
+}
+
+.faction-row:has(.is-p2) .select select {
+  border-left: 3px solid var(--p2);
+}
+
+.select select:hover {
+  border-color: rgba(255, 255, 255, 0.35);
+}
+
+.select select:focus-visible {
+  outline: 2px solid var(--text);
+  outline-offset: 2px;
+}
+
+.select .icon {
+  position: absolute;
+  top: 50%;
+  right: 0.55rem;
+  width: 1rem;
+  height: 1rem;
+  color: var(--muted);
+  transform: translateY(-50%);
+  pointer-events: none;
+}
+
+.settings__section[hidden] {
+  display: none;
 }
 
 /* Game length: the value at a glance, the choices as tiles */
@@ -776,6 +1050,159 @@ kbd {
   box-shadow: inset 0 0 0 1px var(--p2-line);
 }
 
+
+/* ---------- Faction decor of a player's half ---------- */
+
+/*
+ * Each faction sets a glow from the player's edge (--fx-glow), a texture over the half
+ * (--fx-texture) and a band along the edge (--fx-band, --fx-band-v when the halves sit side by side).
+ * --edge is that edge, for the gradients that start from it.
+ */
+:root[data-theme="factions"] .panel {
+  --edge: 50% 0%;
+  --glow-size: 120% 70%;
+}
+
+:root[data-theme="factions"] .panel--b {
+  --edge: 50% 100%;
+}
+
+:root[data-theme="factions"][data-layout="columns"] .panel {
+  --edge: 0% 50%;
+  --glow-size: 80% 110%;
+}
+
+:root[data-theme="factions"][data-layout="columns"] .panel--b {
+  --edge: 100% 50%;
+}
+
+:root[data-theme="factions"] .panel::before,
+:root[data-theme="factions"] .panel::after {
+  content: "";
+  position: absolute;
+  z-index: -1;
+  pointer-events: none;
+}
+
+:root[data-theme="factions"] .panel::before {
+  inset: 0;
+  background:
+    radial-gradient(var(--glow-size) at var(--edge), var(--fx-glow, transparent), transparent 60%),
+    var(--fx-texture, none);
+}
+
+/* The band runs along the player's own edge of the screen */
+:root[data-theme="factions"] .panel::after {
+  left: 0;
+  right: 0;
+  height: 10px;
+  background: var(--fx-band, none);
+  opacity: 0.85;
+}
+
+:root[data-theme="factions"] .panel--a::after {
+  top: 0;
+}
+
+:root[data-theme="factions"] .panel--b::after {
+  bottom: 0;
+}
+
+:root[data-theme="factions"][data-layout="columns"] .panel::after {
+  top: 0;
+  bottom: 0;
+  left: auto;
+  right: auto;
+  width: 10px;
+  height: auto;
+  background: var(--fx-band-v, var(--fx-band, none));
+}
+
+:root[data-theme="factions"][data-layout="columns"] .panel--a::after {
+  left: 0;
+}
+
+:root[data-theme="factions"][data-layout="columns"] .panel--b::after {
+  right: 0;
+}
+
+/* Aeldari: wraithbone and sea green, long graceful lines, spirit stones */
+.panel[data-faction="aeldari"] {
+  --fx-glow: rgba(31, 200, 214, 0.11);
+  --fx-texture:
+    radial-gradient(circle at 16% 68%, rgba(31, 200, 214, 0.4) 0 3px, rgba(31, 200, 214, 0.08) 4px 16px, transparent 17px),
+    radial-gradient(circle at 84% 32%, rgba(31, 200, 214, 0.4) 0 3px, rgba(31, 200, 214, 0.08) 4px 16px, transparent 17px),
+    repeating-linear-gradient(115deg, rgba(239, 230, 210, 0.035) 0 1px, transparent 1px 30px);
+  --fx-band:
+    radial-gradient(circle, #1fc8d6 0 3px, transparent 3.5px) 0 50% / 26px 10px repeat-x,
+    linear-gradient(180deg, transparent 4px, rgba(239, 230, 210, 0.5) 4px 6px, transparent 6px);
+  --fx-band-v:
+    radial-gradient(circle, #1fc8d6 0 3px, transparent 3.5px) 50% 0 / 10px 26px repeat-y,
+    linear-gradient(90deg, transparent 4px, rgba(239, 230, 210, 0.5) 4px 6px, transparent 6px);
+}
+
+/* Chaos Space Marines: crimson and brass, the rays of the eight-pointed star */
+.panel[data-faction="chaos-space-marines"] {
+  --fx-glow: rgba(224, 49, 63, 0.12);
+  --fx-texture: repeating-conic-gradient(from 0deg at var(--edge), rgba(224, 49, 63, 0.07) 0 2.5deg, transparent 2.5deg 22.5deg);
+  --fx-band: repeating-linear-gradient(45deg, #c8892c 0 4px, #5c0f18 4px 12px);
+}
+
+/* Imperial Fists: yellow and black, fortress masonry, siege chevrons on the edge */
+.panel[data-faction="imperial-fists"] {
+  --fx-glow: rgba(245, 197, 24, 0.1);
+  --fx-texture:
+    repeating-linear-gradient(0deg, rgba(245, 197, 24, 0.045) 0 1px, transparent 1px 32px),
+    repeating-linear-gradient(90deg, rgba(245, 197, 24, 0.03) 0 1px, transparent 1px 64px);
+  --fx-band: repeating-linear-gradient(-45deg, #f5c518 0 12px, #0b0b0a 12px 24px);
+}
+
+/* Necrons: gauss green on dark metal, circuit lines and glyph nodes, a glowing dashed seam */
+.panel[data-faction="necrons"] {
+  --fx-glow: rgba(46, 230, 138, 0.11);
+  --fx-texture:
+    radial-gradient(circle, rgba(46, 230, 138, 0.22) 0 1.5px, transparent 2px) 0 0 / 48px 48px,
+    repeating-linear-gradient(90deg, rgba(46, 230, 138, 0.045) 0 1px, transparent 1px 48px),
+    repeating-linear-gradient(0deg, rgba(46, 230, 138, 0.03) 0 1px, transparent 1px 96px);
+  --fx-band:
+    repeating-linear-gradient(90deg, #2ee68a 0 18px, transparent 18px 26px) 0 50% / 100% 3px no-repeat,
+    linear-gradient(rgba(46, 230, 138, 0.16), rgba(46, 230, 138, 0.16));
+  --fx-band-v:
+    repeating-linear-gradient(180deg, #2ee68a 0 18px, transparent 18px 26px) 50% 0 / 3px 100% no-repeat,
+    linear-gradient(rgba(46, 230, 138, 0.16), rgba(46, 230, 138, 0.16));
+}
+
+/* Orks: green, scrap plates with rivets and rust scratches, Goff checks on the edge */
+.panel[data-faction="orks"] {
+  --fx-glow: rgba(140, 198, 63, 0.1);
+  --fx-texture:
+    radial-gradient(circle, rgba(220, 220, 210, 0.12) 0 1.5px, transparent 2px) 0 0 / 56px 56px,
+    repeating-linear-gradient(-60deg, rgba(196, 98, 45, 0.05) 0 2px, transparent 2px 19px),
+    repeating-linear-gradient(30deg, rgba(0, 0, 0, 0.2) 0 1px, transparent 1px 23px);
+  --fx-band: conic-gradient(#0b0b0a 25%, #e9e4d8 0 50%, #0b0b0a 0 75%, #e9e4d8 0) 0 0 / 10px 10px;
+}
+
+/* Tyranids: violet and bone, living glows, carapace ridges, a row of spines on the edge */
+.panel[data-faction="tyranids"] {
+  --fx-glow: rgba(180, 95, 224, 0.08);
+  --fx-texture:
+    radial-gradient(55% 75% at 12% 25%, rgba(180, 95, 224, 0.16), transparent 70%),
+    radial-gradient(45% 65% at 88% 75%, rgba(180, 95, 224, 0.1), transparent 70%),
+    repeating-radial-gradient(circle at 50% 130%, rgba(241, 229, 207, 0.035) 0 2px, transparent 2px 24px);
+  --fx-band: radial-gradient(circle at var(--edge), rgba(180, 95, 224, 0.75) 0 5px, transparent 6px) 0 0 / 22px 10px repeat-x;
+  --fx-band-v: radial-gradient(circle at var(--edge), rgba(180, 95, 224, 0.75) 0 5px, transparent 6px) 0 0 / 10px 22px repeat-y;
+}
+
+/* Ultramarines: blue and gold, a heraldic lattice, a gold-trimmed edge */
+.panel[data-faction="ultramarines"] {
+  --fx-glow: rgba(61, 124, 240, 0.2);
+  --fx-texture:
+    repeating-linear-gradient(45deg, rgba(212, 175, 55, 0.06) 0 1px, transparent 1px 44px),
+    repeating-linear-gradient(-45deg, rgba(212, 175, 55, 0.06) 0 1px, transparent 1px 44px);
+  --fx-band: linear-gradient(180deg, #d4af37 0 2px, #2c62d6 2px 8px, #d4af37 8px);
+  --fx-band-v: linear-gradient(90deg, #d4af37 0 2px, #2c62d6 2px 8px, #d4af37 8px);
+}
+
 .panel-head {
   position: absolute;
   top: 1rem;
@@ -933,13 +1360,14 @@ kbd {
   border-top: 2px solid var(--p2-line);
 }
 
+/* One row, the CP box in the corner: a column would outgrow the waiting player's shorter half */
 .panel-corner {
   position: absolute;
   z-index: 3;
   display: flex;
-  flex-direction: column;
-  align-items: flex-end;
-  gap: 0.5rem;
+  flex-direction: row-reverse;
+  align-items: center;
+  gap: 0.6rem;
   /* One perspective for both players so rotateY projects correctly (fixes P2 / WebKit) */
   perspective: 480px;
   transform-style: preserve-3d;
@@ -957,8 +1385,6 @@ kbd {
 .panel-corner--br {
   right: 0.75rem;
   bottom: 0.75rem;
-  /* Same DOM order as P1 (CP box, abilities, button); reversed so the CP box sits in the corner */
-  flex-direction: column-reverse;
 }
 
 .mini-counter__label {
@@ -1130,8 +1556,8 @@ kbd {
 /* "+1 CP · Captain" next to the counter when an ability pays out */
 .cp-toast {
   position: absolute;
-  top: 50%;
-  right: calc(100% + 0.6rem);
+  top: calc(100% + 0.4rem);
+  right: 0;
   padding: 0.3rem 0.6rem;
   border: 1px solid var(--pc-line);
   border-radius: 3px;
@@ -1143,15 +1569,22 @@ kbd {
   white-space: nowrap;
   pointer-events: none;
   opacity: 0;
-  transform: translate(0.5rem, -50%);
+  transform: translateY(-0.4rem);
   transition:
     opacity 0.25s ease,
     transform 0.25s ease;
 }
 
-.cp-toast.is-visible {
+.panel-corner--br .cp-toast {
+  top: auto;
+  bottom: calc(100% + 0.4rem);
+  transform: translateY(0.4rem);
+}
+
+.cp-toast.is-visible,
+.panel-corner--br .cp-toast.is-visible {
   opacity: 1;
-  transform: translate(0, -50%);
+  transform: none;
 }
 
 .cp-toast.is-capped {
@@ -1159,21 +1592,18 @@ kbd {
   color: var(--muted);
 }
 
+/* The coin next to the CP box, the +1 CP unit beyond it */
 .panel-corner .abilities {
   position: relative;
   z-index: 2;
   display: flex;
-  flex-direction: column;
-  align-items: flex-end;
-  gap: 0.4rem;
+  flex-direction: row-reverse;
+  align-items: center;
+  gap: 0.6rem;
 }
 
 .abilities:empty {
   display: none;
-}
-
-.panel-corner--br .abilities {
-  flex-direction: column-reverse;
 }
 
 .abilities__coins {
@@ -1425,7 +1855,10 @@ kbd {
   cursor: default;
 }
 
+/* At the foot of the CP box */
 .abilities-btn {
+  align-self: stretch;
+  margin-top: 0.1rem;
   padding: 0.25rem 0.6rem;
   border: 1px dashed var(--line-strong);
   border-radius: 3px;
@@ -1731,44 +2164,131 @@ kbd {
 
 /* ---------- Secondary cards ---------- */
 
-/* Hand button at the foot of the score box */
-.score-box__hand {
-  display: flex;
-  align-items: center;
-  gap: 0.45rem;
-  margin-top: 0.2rem;
-  padding: 0.35rem 0.5rem;
-  border: 1px dashed var(--line-strong);
-  border-radius: 4px;
-  background: transparent;
-  color: var(--muted);
-  font-size: 0.6rem;
-  font-weight: 600;
-  text-transform: uppercase;
-  letter-spacing: 0.14em;
+/* Primary and hand side by side at the foot of the score box: cards of the player's color, easy to spot and hit */
+.score-box__cards {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 0.35rem;
+  margin-top: 0.35rem;
 }
 
-.score-box__hand[hidden] {
+.score-box__cards[hidden],
+.score-box__deck[hidden] {
   display: none;
 }
 
-.score-box__hand .icon {
-  width: 0.95rem;
-  height: 0.95rem;
+.score-box__deck {
+  position: relative;
+  isolation: isolate;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 0.4rem;
+  padding: 0.55rem 0.4rem 0.45rem;
+  border: 1px solid var(--pc-line);
+  border-radius: 4px;
+  background: color-mix(in srgb, var(--pc) 16%, var(--surface));
+  color: var(--text);
+  font-size: 0.6rem;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.14em;
+  transition:
+    background 0.15s ease,
+    border-color 0.15s ease,
+    transform 0.08s ease;
+}
+
+.score-box__deck:hover {
+  background: color-mix(in srgb, var(--pc) 28%, var(--surface));
+  border-color: var(--pc);
+}
+
+.score-box__deck:active {
+  transform: scale(0.97);
+}
+
+/* The shortcut only shows on the cards it opens */
+.score-box__deck kbd {
+  position: absolute;
+  top: 0.3rem;
+  right: 0.3rem;
+  margin: 0;
+  opacity: 1;
+  color: var(--text);
+  border-color: var(--pc-line);
+  visibility: hidden;
+}
+
+.panel.is-active .score-box__deck kbd,
+#app.is-paused .panel.is-turn .score-box__deck kbd {
+  visibility: visible;
+}
+
+/* The primary: one card kept all game, with its target */
+.score-box__primary-card {
+  display: grid;
+  place-items: center;
+  width: 1.5rem;
+  height: 2.05rem;
+  border: 1.5px solid var(--pc);
+  border-radius: 3px;
+  background: var(--surface);
+  color: var(--pc);
+  box-shadow: 0 2px 6px rgba(0, 0, 0, 0.45);
+}
+
+.score-box__primary-card .icon {
+  width: 1rem;
+  height: 1rem;
+}
+
+/* The hand: three stacked cards, the front one carries the count; they fan out on hover */
+.score-box__hand-stack {
+  position: relative;
+  display: grid;
+  place-items: center;
+  width: 1.5rem;
+  height: 2.05rem;
+  border-radius: 3px;
+  background: var(--pc);
+  box-shadow: 0 2px 6px rgba(0, 0, 0, 0.45);
+}
+
+.score-box__hand-stack::before,
+.score-box__hand-stack::after {
+  content: "";
+  position: absolute;
+  inset: 0;
+  z-index: -1;
+  border-radius: inherit;
+  border: 1px solid var(--pc-line);
+  background: color-mix(in srgb, var(--pc) 40%, var(--surface));
+  transition: transform 0.2s ease;
+}
+
+.score-box__hand-stack::before {
+  transform: translateX(-3px) rotate(-10deg);
+}
+
+.score-box__hand-stack::after {
+  transform: translateX(3px) rotate(8deg);
+}
+
+.score-box__deck:hover .score-box__hand-stack::before {
+  transform: translate(-6px, -1px) rotate(-18deg);
+}
+
+.score-box__deck:hover .score-box__hand-stack::after {
+  transform: translate(6px, -1px) rotate(15deg);
 }
 
 .score-box__hand-count {
-  margin-left: auto;
   font-family: var(--font-num);
-  font-size: 0.85rem;
+  font-size: 0.95rem;
   font-weight: 700;
   letter-spacing: 0;
-  color: var(--text);
-}
-
-.score-box__hand:hover {
-  color: var(--text);
-  border-color: var(--pc-line);
+  color: var(--bg);
 }
 
 .overlay--cards.is-p1 {
@@ -1792,6 +2312,9 @@ kbd {
   background: rgba(4, 6, 9, 0.5);
   backdrop-filter: none;
   -webkit-backdrop-filter: none;
+  transition:
+    opacity 0.2s ease,
+    background-color 0.3s ease;
 }
 
 /* Only the cards catch the mouse: score and CP counters stay usable around them,
@@ -1829,6 +2352,74 @@ kbd {
   font-size: 0.85rem;
 }
 
+/* End of a turn: one tab per player who can score */
+.cards-switch {
+  display: flex;
+  align-items: center;
+  gap: 0.4rem;
+  margin: -0.4rem 0 1rem;
+}
+
+.cards-switch[hidden] {
+  display: none;
+}
+
+.cards-switch__side {
+  display: flex;
+  align-items: center;
+  gap: 0.55rem;
+  padding: 0.4rem 0.8rem;
+  border: 1px solid var(--line-strong);
+  border-radius: 4px;
+  background: var(--surface);
+  color: var(--muted);
+  font-size: 0.7rem;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.14em;
+  transition:
+    background 0.15s ease,
+    border-color 0.15s ease,
+    color 0.15s ease;
+}
+
+.cards-switch__side.is-p1 {
+  --side: var(--p1);
+}
+
+.cards-switch__side.is-p2 {
+  --side: var(--p2);
+}
+
+.cards-switch__side:hover {
+  color: var(--text);
+  border-color: color-mix(in srgb, var(--side) 60%, transparent);
+}
+
+.cards-switch__side[aria-pressed="true"] {
+  color: var(--text);
+  border-color: var(--side);
+  background: color-mix(in srgb, var(--side) 18%, var(--surface));
+}
+
+.cards-switch__count {
+  min-width: 1.4rem;
+  padding: 0.05rem 0.35rem;
+  border-radius: 999px;
+  background: var(--side);
+  color: var(--bg);
+  font-family: var(--font-num);
+  font-size: 0.75rem;
+  letter-spacing: 0;
+  text-align: center;
+}
+
+.cards-switch kbd {
+  margin-left: 0.3rem;
+  color: var(--muted);
+  border-color: var(--line-strong);
+}
+
 .cards-row {
   display: flex;
   flex-wrap: wrap;
@@ -1862,8 +2453,21 @@ kbd {
   color: var(--muted);
 }
 
-.cards-actions {
-  margin-top: 1.25rem;
+/* Always in reach, however tall the cards: they scroll under it */
+.cards-stage .cards-actions {
+  position: sticky;
+  bottom: 0;
+  z-index: 3;
+  align-self: stretch;
+  justify-content: center;
+  margin-top: 0.5rem;
+  padding: 1.5rem 0 1rem;
+  background: linear-gradient(180deg, transparent, rgba(4, 6, 9, 0.9) 45%);
+  pointer-events: none;
+}
+
+.cards-actions > * {
+  pointer-events: auto;
 }
 
 .sec-card {
@@ -1912,7 +2516,10 @@ kbd {
   animation-delay: calc(var(--i, 0) * 160ms);
 }
 
-.overlay--cards[data-mode="hand"] .sec-card.is-dealt {
+.overlay--cards[data-mode="hand"] .sec-card.is-dealt,
+.overlay--cards[data-mode="scored"] .sec-card.is-dealt,
+.overlay--cards[data-mode="mission"] .sec-card.is-dealt,
+.overlay--cards[data-mode="end-turn"] .sec-card.is-dealt {
   animation-duration: 0.4s;
   animation-delay: calc(var(--i, 0) * 60ms);
 }
@@ -2179,6 +2786,45 @@ button.sec-option:hover:not(:disabled) {
   border-color: rgba(255, 95, 95, 0.45);
 }
 
+/* Scored page: the whole card undoes its score, the options are only a reminder */
+.overlay--cards[data-mode="scored"] .sec-card {
+  cursor: pointer;
+}
+
+.overlay--cards[data-mode="scored"] .sec-card__options {
+  opacity: 0.55;
+}
+
+/* Stamped across the faded options, clear of the card's name */
+.sec-card__stamp {
+  position: absolute;
+  top: 52%;
+  left: 50%;
+  padding: 0.3rem 0.6rem;
+  border: 2px solid var(--pc);
+  border-radius: 4px;
+  background: color-mix(in srgb, var(--bg) 75%, transparent);
+  color: var(--pc);
+  font-family: var(--font-num);
+  font-size: 0.9rem;
+  font-weight: 700;
+  text-transform: uppercase;
+  white-space: nowrap;
+  transform: translate(-50%, -50%) rotate(-8deg);
+  pointer-events: none;
+}
+
+.sec-action--undo {
+  border-color: var(--pc-line);
+  color: var(--text);
+}
+
+.overlay--cards[data-mode="scored"] .sec-card:hover .sec-action--undo {
+  border-color: var(--danger);
+  color: var(--danger);
+  background: color-mix(in srgb, var(--danger) 10%, transparent);
+}
+
 .sec-action--link {
   border: none;
   padding: 0.15rem;
@@ -2292,7 +2938,8 @@ button.sec-option:hover:not(:disabled) {
   --pc-line: var(--p2-line);
 }
 
-.overlay--cards[data-mode="primary"] .cards-title {
+.overlay--cards[data-mode="primary"] .cards-title,
+.overlay--cards[data-mode="end-turn"] .cards-title {
   color: var(--text);
 }
 
@@ -2461,6 +3108,34 @@ button.sec-option:hover:not(:disabled) {
   .cards-row.is-clashing .versus__line {
     animation: none;
   }
+}
+
+/* Closing: the deal played backwards, the last card first, as if the cards were put away */
+.overlay.overlay--cards.is-closing {
+  background-color: transparent;
+}
+
+.overlay--cards.is-closing .cards-stage {
+  pointer-events: none;
+}
+
+.overlay--cards.is-closing :is(.cards-title, .cards-sub, .cards-switch, .cards-actions, .versus, .cards-empty) {
+  opacity: 0;
+  transition: opacity 0.2s ease;
+}
+
+.overlay--cards.is-closing .cards-row > .sec-card {
+  animation: cardDeal 0.35s cubic-bezier(0.2, 0.9, 0.25, 1) reverse forwards;
+  animation-delay: calc((var(--n, 1) - 1 - var(--i, 0)) * 50ms);
+}
+
+/* The two primaries go back to their side */
+.overlay--cards.is-closing[data-mode="primary"] .cards-row > .sec-card--primary.is-p1 {
+  animation-name: clashFromLeft;
+}
+
+.overlay--cards.is-closing[data-mode="primary"] .cards-row > .sec-card--primary.is-p2 {
+  animation-name: clashFromRight;
 }
 
 /* Primary card: kept all game, set apart by a double frame */
@@ -2794,8 +3469,9 @@ button.sec-option:hover:not(:disabled) {
   pointer-events: auto;
 }
 
+/* Above the cards: undoing a score is asked over them */
 .overlay.overlay--turn-confirm {
-  z-index: 11;
+  z-index: 13;
 }
 
 .overlay.overlay--result {
@@ -3080,12 +3756,27 @@ button.sec-option:hover:not(:disabled) {
 :root[data-layout="columns"] .panel-corner--br {
   top: 0.75rem;
   bottom: auto;
-  flex-direction: column;
   transform-origin: top right;
 }
 
-:root[data-layout="columns"] .panel-corner--br .abilities {
+/* Half the width but the full height: the corner stacks down, the toast pops at the side */
+:root[data-layout="columns"] .panel-corner,
+:root[data-layout="columns"] .panel-corner .abilities {
   flex-direction: column;
+  align-items: flex-end;
+}
+
+:root[data-layout="columns"] .cp-toast,
+:root[data-layout="columns"] .panel-corner--br .cp-toast {
+  top: 50%;
+  bottom: auto;
+  right: calc(100% + 0.6rem);
+  transform: translate(0.5rem, -50%);
+}
+
+:root[data-layout="columns"] .cp-toast.is-visible,
+:root[data-layout="columns"] .panel-corner--br .cp-toast.is-visible {
+  transform: translate(0, -50%);
 }
 
 /* Half the width leaves no room between the corner boxes: the name sits above the clock */

@@ -1,6 +1,6 @@
 import "./style.css";
 import { getLang, setLang, t, type Lang, type StringKey } from "./i18n";
-import { SECONDARY_BY_ID, SECONDARY_CARDS } from "./secondaries";
+import { SECONDARY_BY_ID, SECONDARY_CARDS, type SecondaryCard } from "./secondaries";
 import {
   DISPOSITIONS,
   primaryFor,
@@ -27,6 +27,14 @@ type ScoreKind = "primary" | "secondary";
 
 /** Mission rule: at most 15 primary and 15 secondary points per player turn */
 const MAX_POINTS_PER_TURN = 15;
+
+/** Open the hand (S) and the primary (P) of the player whose clock runs; physical keys, the same on AZERTY */
+const HAND_KEY = "S";
+const HAND_KEY_CODE = "KeyS";
+const PRIMARY_KEY = "P";
+const PRIMARY_KEY_CODE = "KeyP";
+/** At the end of a turn, from one player's scoring cards to the other's */
+const SWITCH_KEY = "Tab";
 
 const SCORE_KINDS: { kind: ScoreKind; label: StringKey; ariaMinus: StringKey; ariaPlus: StringKey }[] = [
   { kind: "primary", label: "primary", ariaMinus: "ariaPrimaryMinus", ariaPlus: "ariaPrimaryPlus" },
@@ -61,6 +69,19 @@ const LAYOUT_DEFAULT = "rows";
 const LANG_STORAGE_KEY = "warhammerClock.lang";
 
 const THEME_STORAGE_KEY = "warhammerClock.theme";
+
+/** Factions theme: each player's half takes the look of their army */
+const FACTIONS: { id: string; name: StringKey }[] = [
+  { id: "aeldari", name: "factionAeldari" },
+  { id: "chaos-space-marines", name: "factionChaosSpaceMarines" },
+  { id: "imperial-fists", name: "factionImperialFists" },
+  { id: "necrons", name: "factionNecrons" },
+  { id: "orks", name: "factionOrks" },
+  { id: "tyranids", name: "factionTyranids" },
+  { id: "ultramarines", name: "factionUltramarines" },
+];
+const FACTION_DEFAULTS: Record<Player, string> = { 1: "imperial-fists", 2: "tyranids" };
+const factionStorageKey = (player: Player): string => `warhammerClock.faction.p${player}`;
 const THEME_DEFAULT = "clean";
 
 const app = document.querySelector<HTMLDivElement>("#app")!;
@@ -77,6 +98,11 @@ function formatTime(totalSeconds: number): string {
 const svgIcon = (body: string, viewBox = "0 0 24 24"): string =>
   `<svg class="icon" viewBox="${viewBox}" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">${body}</svg>`;
 
+/** A tiny clock screen in the theme's own colors: player 1's clock running, player 2's waiting */
+const themePreviewHtml = (theme: string): string =>
+  `<span class="theme-preview theme-preview--${theme}" aria-hidden="true"><span class="theme-preview__half">2:00</span><span class="theme-preview__half">2:00</span></span>`;
+
+const ICON_TARGET = svgIcon('<circle cx="12" cy="12" r="7" /><circle cx="12" cy="12" r="2.5" /><path d="M12 2v3M12 19v3M2 12h3M19 12h3" />');
 const ICON_CARDS = svgIcon('<rect x="4" y="6" width="11" height="15" rx="2" /><path d="M9 3h9a2 2 0 0 1 2 2v13" />');
 const ICON_CLOCK = svgIcon('<circle cx="12" cy="13" r="8" /><path d="M12 9v4l2.5 2.5M10 2h4" />');
 const ICON_CAMERA = svgIcon('<path d="M4 8h3l2-3h6l2 3h3v11H4z" /><circle cx="12" cy="13" r="3.5" />');
@@ -116,9 +142,18 @@ function scoreCounterHtml(player: Player, corner: "tl" | "bl"): string {
           <span class="mini-counter__val" id="p${player}-bonus-val">0</span>
           <button type="button" class="mini-counter__btn" id="p${player}-bonus-plus" data-i18n-aria="ariaBonusPlus" data-v-n="${player}">+</button>
         </div>
-        <button type="button" class="score-box__hand" id="p${player}-hand-btn" hidden>
-          ${ICON_CARDS}<span data-i18n="secondaryHand"></span><span class="score-box__hand-count">0</span>
-        </button>
+        <div class="score-box__cards" id="p${player}-card-btns" hidden>
+          <button type="button" class="score-box__deck" id="p${player}-primary-btn" data-i18n-aria="primaryAria" data-v-n="${player}">
+            <span class="score-box__primary-card" aria-hidden="true">${ICON_TARGET}</span>
+            <span class="score-box__deck-label" data-i18n="primaryCard"></span>
+            <kbd>${PRIMARY_KEY}</kbd>
+          </button>
+          <button type="button" class="score-box__deck" id="p${player}-hand-btn">
+            <span class="score-box__hand-stack" aria-hidden="true"><span class="score-box__hand-count">0</span></span>
+            <span class="score-box__deck-label" data-i18n="secondaryHand"></span>
+            <kbd>${HAND_KEY}</kbd>
+          </button>
+        </div>
       </div>`;
 }
 
@@ -132,10 +167,10 @@ function cpCornerHtml(player: Player, corner: "tr" | "br"): string {
             <span class="mini-counter__val" id="p${player}-cp-val">1</span>
             <button type="button" class="mini-counter__btn" id="p${player}-cp-plus" data-i18n-aria="ariaCpPlus" data-v-n="${player}">+</button>
           </div>
+          <button type="button" class="abilities-btn" id="p${player}-abilities-btn" data-i18n="abilities"></button>
           <span class="cp-toast" id="p${player}-cp-toast" role="status"></span>
         </div>
         <div class="abilities" id="p${player}-abilities"></div>
-        <button type="button" class="abilities-btn" id="p${player}-abilities-btn" data-i18n="abilities"></button>
       </div>`;
 }
 
@@ -198,13 +233,6 @@ app.innerHTML = `
         <button type="button" class="btn-icon" id="btn-settings" aria-expanded="false" aria-controls="settings-panel" data-i18n-aria="display" data-i18n-title="display">${ICON_SLIDERS}</button>
         <div class="popover popover--end settings__panel" id="settings-panel" hidden>
           <div class="settings__section">
-            <span class="settings__label" data-i18n="theme"></span>
-            <div class="segmented segmented--tiles" id="theme-options" role="group" data-i18n-aria="theme">
-              <button type="button" class="segmented__option" data-value="clean"><span class="swatch swatch--clean"></span><span data-i18n="themeClean"></span></button>
-              <button type="button" class="segmented__option" data-value="warzone"><span class="swatch swatch--warzone"></span><span data-i18n="themeWarzone"></span></button>
-            </div>
-          </div>
-          <div class="settings__section">
             <span class="settings__label" data-i18n="layout"></span>
             <div class="segmented segmented--tiles" id="layout-options" role="group" data-i18n-aria="layoutAria">
               <button type="button" class="segmented__option" data-value="rows">${ICON_ROWS}<span data-i18n="layoutRows"></span></button>
@@ -226,6 +254,30 @@ app.innerHTML = `
             <div class="segmented" id="lang-options" role="group" data-i18n-aria="language">
               <button type="button" class="segmented__option" data-value="en">English</button>
               <button type="button" class="segmented__option" data-value="fr">Français</button>
+            </div>
+          </div>
+          <div class="settings__section settings__section--theme">
+            <span class="settings__label" data-i18n="theme"></span>
+            <div class="segmented segmented--tiles" id="theme-options" role="group" data-i18n-aria="theme">
+              <button type="button" class="segmented__option" data-value="clean">${themePreviewHtml("clean")}<span data-i18n="themeClean"></span></button>
+              <button type="button" class="segmented__option" data-value="warzone">${themePreviewHtml("warzone")}<span data-i18n="themeWarzone"></span></button>
+              <button type="button" class="segmented__option" data-value="factions">${themePreviewHtml("factions")}<span data-i18n="themeFactions"></span></button>
+            </div>
+            <div class="faction-menu" id="factions-section" hidden>
+              ${([1, 2] as const)
+                .map(
+                  (player) => `
+              <div class="faction-row">
+                <label class="faction-row__player is-p${player}" for="p${player}-faction" data-i18n="player" data-v-n="${player}"></label>
+                <span class="select">
+                  <select id="p${player}-faction">
+                    ${FACTIONS.map((faction) => `<option value="${faction.id}" data-i18n="${faction.name}"></option>`).join("")}
+                  </select>
+                  ${ICON_CHEVRON}
+                </span>
+              </div>`,
+                )
+                .join("")}
             </div>
           </div>
         </div>
@@ -299,6 +351,7 @@ app.innerHTML = `
     <div class="cards-stage">
       <h2 class="cards-title" id="cards-title"></h2>
       <p class="cards-sub" id="cards-sub"></p>
+      <div class="cards-switch" id="cards-switch" role="group" data-i18n-aria="switchSideAria" hidden></div>
       <div class="cards-row" id="cards-row"></div>
       <div class="overlay-actions cards-actions">
         <button type="button" class="btn-primary" id="btn-cards-close"><span data-i18n="continue"></span> <kbd data-i18n="keyEnter"></kbd></button>
@@ -343,6 +396,11 @@ app.innerHTML = `
 `;
 
 const themeOptions = app.querySelector<HTMLElement>("#theme-options")!;
+const factionsSection = app.querySelector<HTMLElement>("#factions-section")!;
+const factionSelect: Record<Player, HTMLSelectElement> = {
+  1: app.querySelector<HTMLSelectElement>("#p1-faction")!,
+  2: app.querySelector<HTMLSelectElement>("#p2-faction")!,
+};
 const layoutOptions = app.querySelector<HTMLElement>("#layout-options")!;
 const uiSizeOptions = app.querySelector<HTMLElement>("#ui-size-options")!;
 const langOptions = app.querySelector<HTMLElement>("#lang-options")!;
@@ -382,6 +440,15 @@ const handButtonEl: Record<Player, HTMLButtonElement> = {
   1: app.querySelector<HTMLButtonElement>("#p1-hand-btn")!,
   2: app.querySelector<HTMLButtonElement>("#p2-hand-btn")!,
 };
+const primaryButtonEl: Record<Player, HTMLButtonElement> = {
+  1: app.querySelector<HTMLButtonElement>("#p1-primary-btn")!,
+  2: app.querySelector<HTMLButtonElement>("#p2-primary-btn")!,
+};
+const cardButtonsEl: Record<Player, HTMLElement> = {
+  1: app.querySelector<HTMLElement>("#p1-card-btns")!,
+  2: app.querySelector<HTMLElement>("#p2-card-btns")!,
+};
+const cardsSwitch = app.querySelector<HTMLElement>("#cards-switch")!;
 const cardsOverlay = app.querySelector<HTMLElement>("#cards-overlay")!;
 const cardsTitle = app.querySelector<HTMLElement>("#cards-title")!;
 const cardsSub = app.querySelector<HTMLElement>("#cards-sub")!;
@@ -501,7 +568,7 @@ let settlingAbilityId: number | null = null;
 /** Unit whose strike / restore animation plays on the next render only */
 let justToggledId: number | null = null;
 
-type TurnConfirmKind = "start-game" | "p1-to-p2" | "next-round" | "finish-game" | "reset";
+type TurnConfirmKind = "start-game" | "p1-to-p2" | "next-round" | "finish-game" | "reset" | "unscore";
 
 let turnConfirmKind: TurnConfirmKind | null = null;
 
@@ -532,6 +599,10 @@ function openTurnConfirmModal(kind: TurnConfirmKind): void {
   } else if (kind === "reset") {
     turnConfirmTitle.textContent = t("resetTitle");
     turnConfirmMsg.textContent = t("resetMsg");
+  } else if (kind === "unscore") {
+    const scored = pendingUnscore && secondaries[pendingUnscore.player].scored.find(({ id }) => id === pendingUnscore?.id);
+    turnConfirmTitle.textContent = t("unscoreTitle", { card: scored ? SECONDARY_BY_ID.get(scored.id)!.name : "" });
+    turnConfirmMsg.textContent = t("unscoreMsg", { vp: scored?.vp ?? 0, unit: t("vpUnit"), n: (scored?.turn ?? 0) + 1 });
   } else {
     turnConfirmTitle.textContent = t("nextRoundTitle", { n: currentGameTurn + 1 });
     turnConfirmMsg.textContent = t("nextRoundMsg");
@@ -604,6 +675,15 @@ function applyTurnConfirm(): void {
   if (turnConfirmKind === null) return;
   const kind = turnConfirmKind;
   hideTurnConfirmModal();
+  applyConfirmed(kind);
+}
+
+function applyConfirmed(kind: TurnConfirmKind): void {
+  if (kind === "unscore") {
+    if (pendingUnscore) restoreSecondary(pendingUnscore.player, pendingUnscore.id);
+    pendingUnscore = null;
+    return;
+  }
   if (kind === "start-game") {
     start();
     return;
@@ -729,16 +809,42 @@ function togglePopover(button: HTMLButtonElement, panel: HTMLElement): void {
 
 const UI_SIZES = new Set(["s", "m", "l", "xl", "uw"]);
 const LAYOUTS = new Set(["rows", "columns"]);
-const THEMES = new Set(["clean", "warzone"]);
+const THEMES = new Set(["clean", "warzone", "factions"]);
 
 function applyTheme(theme: string): void {
   const v = THEMES.has(theme) ? theme : THEME_DEFAULT;
   document.documentElement.dataset.theme = v;
   setSegmentedValue(themeOptions, v);
+  factionsSection.hidden = v !== "factions";
   try {
     localStorage.setItem(THEME_STORAGE_KEY, v);
   } catch {
     /* quota / private mode */
+  }
+}
+
+/** On <html> for the player colors used everywhere, on the panel for its own decor */
+function applyFaction(player: Player, faction: string): void {
+  const v = FACTIONS.some(({ id }) => id === faction) ? faction : FACTION_DEFAULTS[player];
+  document.documentElement.dataset[`p${player}Faction`] = v;
+  (player === 1 ? panel1 : panel2).dataset.faction = v;
+  factionSelect[player].value = v;
+  try {
+    localStorage.setItem(factionStorageKey(player), v);
+  } catch {
+    /* quota / private mode */
+  }
+}
+
+function loadFactions(): void {
+  for (const player of [1, 2] as const) {
+    let stored = FACTION_DEFAULTS[player];
+    try {
+      stored = localStorage.getItem(factionStorageKey(player)) ?? stored;
+    } catch {
+      /* ignore */
+    }
+    applyFaction(player, stored);
   }
 }
 
@@ -920,7 +1026,10 @@ function renderKeyHint(): void {
   const space = `<kbd>${t("keySpace")}</kbd>`;
   const sep = '<span class="key-hint__sep"></span>';
   if (running) {
-    keyHint.innerHTML = `${enter} ${t("hintEndTurn")} ${sep} ${space} ${t("hintSwitch")} ${sep} ${space}${space} ${t("hintPause")}`;
+    const hand = secondaryCardsOn()
+      ? ` ${sep} <kbd>${HAND_KEY}</kbd> ${t("hintHand")} <kbd>${PRIMARY_KEY}</kbd> ${t("hintPrimary")}`
+      : "";
+    keyHint.innerHTML = `${enter} ${t("hintEndTurn")} ${sep} ${space} ${t("hintSwitch")} ${sep} ${space}${space} ${t("hintPause")}${hand}`;
   } else if (gameOver) {
     keyHint.innerHTML = `<span class="key-hint__status">${t("gameOver")}</span> ${t("hintPlayAgain")}`;
   } else if (paused) {
@@ -1132,7 +1241,8 @@ function reset(): void {
   cpHistoryAdded2 = Array<number>(MAX_PLAYER_TURNS).fill(0);
   cpHistoryRemoved2 = Array<number>(MAX_PLAYER_TURNS).fill(0);
   pendingDraw = null;
-  closeCards();
+  afterPutAway = null;
+  closeCards(false);
   primaryCards = { 1: null, 2: null };
   primaryScored = { 1: new Map(), 2: new Map() };
   secondaries = { 1: newSecondaryPile(), 2: newSecondaryPile() };
@@ -1653,7 +1763,9 @@ function toggleAbilityLost(player: Player, id: number): void {
 
 /* ---------- Secondary mission cards (tactical) ---------- */
 
-type SecondaryPile = { deck: string[]; hand: string[]; discard: string[] };
+/** A scored card keeps what it gave and when, so a misclick can be undone */
+type ScoredSecondary = { id: string; vp: number; turn: number };
+type SecondaryPile = { deck: string[]; hand: string[]; discard: string[]; scored: ScoredSecondary[] };
 
 function shuffled<T>(items: T[]): T[] {
   const result = [...items];
@@ -1665,7 +1777,7 @@ function shuffled<T>(items: T[]): T[] {
 }
 
 function newSecondaryPile(): SecondaryPile {
-  return { deck: shuffled(SECONDARY_CARDS.map(({ id }) => id)), hand: [], discard: [] };
+  return { deck: shuffled(SECONDARY_CARDS.map(({ id }) => id)), hand: [], discard: [], scored: [] };
 }
 
 let secondaries: Record<Player, SecondaryPile> = { 1: newSecondaryPile(), 2: newSecondaryPile() };
@@ -1674,15 +1786,29 @@ let newCardUsed: Record<Player, boolean> = { 1: false, 2: false };
 
 const WHEN_KEYS = { yours: "whenYours", any: "whenAny", opponent: "whenOpponent" } as const;
 
-/** Whose cards are shown, and whether it is the reveal of a fresh draw or the whole hand */
+/**
+ * Whose cards are shown, and which: a fresh draw, the secondaries in hand or already scored, the
+ * primaries reveal, one player's primary, or what scores at the end of a turn
+ */
 let cardsPlayer: Player | null = null;
-let cardsMode: "draw" | "hand" | "primary" = "hand";
+let cardsMode: "draw" | "hand" | "scored" | "primary" | "mission" | "end-turn" = "hand";
+/** The turn end waiting behind the end-of-turn scoring */
+let endTurnKind: TurnConfirmKind | null = null;
+/** Players who had something to score when it opened: with both, a switch goes from one to the other */
+let endTurnSides: Player[] = [];
 /** Cards of the current draw: the reveal shows only them */
 let drawnIds: string[] = [];
 /** A draw made during a photo break waits for the break to end */
 let pendingDraw: { player: Player; drawn: string[] } | null = null;
 
 const CARD_EXIT_MS = 450;
+
+/** Closing puts the cards away, as in the CSS: the deal played backwards, the last card first */
+const PUT_AWAY_MS = 350;
+const PUT_AWAY_STAGGER_MS = 50;
+/** While the cards are put away the overlay stays up; a view asked meanwhile opens right after */
+let putAwayTimer: number | null = null;
+let afterPutAway: (() => void) | null = null;
 
 function secondaryCardsOn(): boolean {
   return secondaryCardsToggle.checked;
@@ -1729,16 +1855,38 @@ function renderHandButtons(): void {
   for (const player of [1, 2] as const) {
     const button = handButtonEl[player];
     const count = secondaries[player].hand.length;
-    button.hidden = !secondaryCardsOn() || !(running || paused);
+    cardButtonsEl[player].hidden = !secondaryCardsOn() || !(running || paused);
+    primaryButtonEl[player].hidden = !primaryCards[player];
     button.querySelector(".score-box__hand-count")!.textContent = String(count);
     button.setAttribute("aria-label", t("handAria", { n: count }));
   }
 }
 
+/** The cards of the player whose clock runs or, while paused, whose turn it is */
+function cardKeyPlayer(): Player | null {
+  if (!secondaryCardsOn()) return null;
+  if (running) return active;
+  return paused ? turnPlayer : null;
+}
+
+/** S opens the hand, P the primary */
+function cardKeyMode(e: KeyboardEvent): "hand" | "mission" | null {
+  if (e.repeat || e.metaKey || e.ctrlKey || e.altKey) return null;
+  if (e.code === HAND_KEY_CODE) return "hand";
+  return e.code === PRIMARY_KEY_CODE ? "mission" : null;
+}
+
+const anyModalOpen = (): boolean =>
+  resultOverlay.classList.contains("is-visible") || turnConfirmOverlay.classList.contains("is-visible");
+
 /** Card ids of the primary cards, to deal them like the others */
 const primaryCardId = (player: Player): string => `primary-${player}`;
 
-function openCards(player: Player, mode: "draw" | "hand" | "primary", drawn: string[] = []): void {
+function openCards(player: Player, mode: typeof cardsMode, drawn: string[] = []): void {
+  if (putAwayTimer !== null) {
+    afterPutAway ??= () => openCards(player, mode, drawn);
+    return;
+  }
   cardsPlayer = player;
   cardsMode = mode;
   drawnIds = drawn;
@@ -1747,19 +1895,124 @@ function openCards(player: Player, mode: "draw" | "hand" | "primary", drawn: str
   cardsOverlay.dataset.mode = mode;
   if (mode === "draw") renderCards(drawn);
   else if (mode === "primary") renderCards([primaryCardId(1), primaryCardId(2)]);
-  else renderCards([primaryCardId(player), ...secondaries[player].hand]);
+  else {
+    const pile = secondaries[player];
+    renderCards([primaryCardId(player), ...pile.hand, ...pile.scored.map(({ id }) => id)]);
+  }
   cardsOverlay.classList.add("is-visible");
   cardsOverlay.setAttribute("aria-hidden", "false");
   btnCardsClose.focus();
 }
 
-function closeCards(): void {
+function closeCards(putAway = true): void {
   if (cardsPlayer === null) return;
   cardsPlayer = null;
   drawnIds = [];
-  cardsOverlay.classList.remove("is-visible");
+  endTurnKind = null;
   cardsOverlay.setAttribute("aria-hidden", "true");
   (document.activeElement as HTMLElement | null)?.blur();
+  const count = cardsRow.querySelectorAll(".sec-card").length;
+  if (!putAway || count === 0 || prefersReducedMotion()) {
+    hideCards();
+    return;
+  }
+  cardsRow.style.setProperty("--n", String(count));
+  cardsOverlay.classList.add("is-closing");
+  putAwayTimer = window.setTimeout(hideCards, PUT_AWAY_MS + (count - 1) * PUT_AWAY_STAGGER_MS);
+}
+
+function hideCards(): void {
+  if (putAwayTimer !== null) window.clearTimeout(putAwayTimer);
+  putAwayTimer = null;
+  cardsOverlay.classList.remove("is-visible", "is-closing");
+  const next = afterPutAway;
+  afterPutAway = null;
+  next?.();
+}
+
+/**
+ * At the end of a turn: the player's "end of your turn" missions, the opponent's "end of the enemy
+ * turn" ones, anyone's "end of any turn" ones, and the end of the battle on the very last turn
+ */
+function scoresAtTurnEnd(owner: Player, when: SecondaryCard["when"] | PrimarySection["when"]): boolean {
+  if (when === undefined || when === "any") return true;
+  if (when === "end") return endTurnKind === "finish-game";
+  if (when === "command") return false;
+  return when === (owner === turnPlayer ? "yours" : "opponent");
+}
+
+function turnEndSecondaries(owner: Player): string[] {
+  return secondaries[owner].hand.filter((id) => scoresAtTurnEnd(owner, SECONDARY_BY_ID.get(id)!.when));
+}
+
+function primaryScoresAtTurnEnd(owner: Player): boolean {
+  const card = primaryCards[owner];
+  return !!card && card.sections.some((section) => sectionOpen(owner, section) && scoresAtTurnEnd(owner, section.when));
+}
+
+const turnEndCount = (owner: Player): number =>
+  turnEndSecondaries(owner).length + (primaryScoresAtTurnEnd(owner) ? 1 : 0);
+
+/** With the cards, ending a turn first shows what scores now; with nothing to score, the plain confirmation */
+function requestEndTurn(kind: TurnConfirmKind): void {
+  endTurnKind = kind;
+  const opponent: Player = turnPlayer === 1 ? 2 : 1;
+  endTurnSides = secondaryCardsOn() ? [turnPlayer, opponent].filter((side) => turnEndCount(side) > 0) : [];
+  if (endTurnSides.length === 0) {
+    endTurnKind = null;
+    openTurnConfirmModal(kind);
+    return;
+  }
+  openCards(endTurnSides[0], "end-turn");
+}
+
+type CardsTab = { value: string; label: string; count: number; side: Player; on: boolean };
+
+/** Tabs over the cards: both players at a turn end, or a player's hand and scored cards */
+function cardsTabs(): CardsTab[] {
+  if (cardsMode === "end-turn" && endTurnSides.length > 1) {
+    return endTurnSides.map((side) => ({
+      value: String(side),
+      label: t("player", { n: side }),
+      count: turnEndCount(side),
+      side,
+      on: side === cardsPlayer,
+    }));
+  }
+  if ((cardsMode === "hand" || cardsMode === "scored") && cardsPlayer !== null) {
+    const pile = secondaries[cardsPlayer];
+    return [
+      { value: "hand", label: t("secondaryHand"), count: pile.hand.length, side: cardsPlayer, on: cardsMode === "hand" },
+      { value: "scored", label: t("scoredTab"), count: pile.scored.length, side: cardsPlayer, on: cardsMode === "scored" },
+    ];
+  }
+  return [];
+}
+
+function renderCardsSwitch(): void {
+  const tabs = cardsTabs();
+  cardsSwitch.hidden = tabs.length === 0;
+  if (cardsSwitch.hidden) return;
+  const buttons = tabs.map((tab) => {
+    const button = document.createElement("button");
+    button.type = "button";
+    button.className = `cards-switch__side is-p${tab.side}`;
+    button.dataset.tab = tab.value;
+    button.disabled = tab.count === 0 && !tab.on;
+    button.setAttribute("aria-pressed", String(tab.on));
+    button.innerHTML = `<span></span><span class="cards-switch__count">${tab.count}</span>`;
+    button.querySelector("span")!.textContent = tab.label;
+    return button;
+  });
+  const key = document.createElement("kbd");
+  key.textContent = SWITCH_KEY;
+  cardsSwitch.replaceChildren(...buttons, key);
+}
+
+function showCardsTab(value: string): void {
+  if (cardsPlayer === null) return;
+  if (cardsMode === "end-turn") openCards(Number(value) as Player, "end-turn");
+  else openCards(cardsPlayer, value === "scored" ? "scored" : "hand");
 }
 
 /** `dealIds` fly in from the deck; the others are already on the table */
@@ -1767,7 +2020,10 @@ function renderCards(dealIds: string[] = []): void {
   if (cardsPlayer === null) return;
   const player = cardsPlayer;
   const pile = secondaries[player];
-  btnCardsClose.querySelector("span")!.textContent = t(cardsMode === "primary" ? "startGame" : "continue");
+  const closeLabel: StringKey =
+    cardsMode === "primary" ? "startGame" : cardsMode !== "end-turn" ? "continue" : endTurnKind === "finish-game" ? "endBattleBtn" : "endTurnBtn";
+  btnCardsClose.querySelector("span")!.textContent = t(closeLabel);
+  renderCardsSwitch();
   if (cardsMode === "primary") {
     cardsTitle.textContent = t("primaryTitle");
     cardsSub.textContent = t("primarySub");
@@ -1784,12 +2040,33 @@ function renderCards(dealIds: string[] = []): void {
     layoutCardsRow();
     return;
   }
-  const ids = cardsMode === "draw" ? drawnIds.filter((id) => pile.hand.includes(id)) : pile.hand;
-  cardsTitle.textContent = t(cardsMode === "draw" ? "drawTitle" : "handTitle", { n: player });
-  const deck = pile.deck.length > 0 ? t("deckLeft", { n: pile.deck.length }) : t("deckEmpty");
-  cardsSub.textContent = cardsMode === "draw" ? `${deck} · ${t("scoreFromHand")}` : deck;
-  // The hand starts with the primary card, kept all game
-  const primary = cardsMode === "hand" && primaryCards[player] ? [primaryCardEl(player, 0, dealIds.includes(primaryCardId(player)), true)] : [];
+  const ids =
+    cardsMode === "draw"
+      ? drawnIds.filter((id) => pile.hand.includes(id))
+      : cardsMode === "hand"
+        ? pile.hand
+        : cardsMode === "scored"
+          ? pile.scored.map(({ id }) => id)
+          : cardsMode === "end-turn"
+          ? turnEndSecondaries(player)
+          : [];
+  if (cardsMode === "end-turn") {
+    cardsTitle.textContent = t("endTurnScoringTitle", { n: turnPlayer });
+    cardsSub.textContent = player === turnPlayer ? t("endTurnScoringSub") : t("endTurnOpponentSub", { n: player });
+  } else if (cardsMode === "mission") {
+    cardsTitle.textContent = t("missionTitle", { n: player });
+    cardsSub.textContent = t("primarySub");
+  } else if (cardsMode === "scored") {
+    cardsTitle.textContent = t("scoredTitle", { n: player });
+    cardsSub.textContent = t("scoredSub");
+  } else {
+    cardsTitle.textContent = t(cardsMode === "draw" ? "drawTitle" : "handTitle", { n: player });
+    const deck = pile.deck.length > 0 ? t("deckLeft", { n: pile.deck.length }) : t("deckEmpty");
+    cardsSub.textContent = cardsMode === "draw" ? `${deck} · ${t("scoreFromHand")}` : deck;
+  }
+  // The primary card stays apart from the hand: on its own, or at a turn end when it scores
+  const withPrimary = cardsMode === "mission" || (cardsMode === "end-turn" && primaryScoresAtTurnEnd(player));
+  const primary = withPrimary && primaryCards[player] ? [primaryCardEl(player, 0, dealIds.includes(primaryCardId(player)), true)] : [];
   const cards = [
     ...primary,
     ...ids.map((id, index) => secondaryCardEl(player, id, index + primary.length, dealIds.includes(id))),
@@ -1797,7 +2074,7 @@ function renderCards(dealIds: string[] = []): void {
   if (cards.length === 0) {
     const empty = document.createElement("p");
     empty.className = "cards-empty";
-    empty.textContent = t("emptyHand");
+    empty.textContent = t(cardsMode === "end-turn" ? "nothingToScore" : cardsMode === "scored" ? "emptyScored" : "emptyHand");
     cardsRow.replaceChildren(empty);
     return;
   }
@@ -1865,7 +2142,7 @@ function secondaryCardEl(player: Player, id: string, index: number, deal: boolea
   note.hidden = !data.note;
 
   const unit = t("vpUnit");
-  const scorable = cardsMode === "hand";
+  const scorable = cardsMode === "hand" || cardsMode === "end-turn";
   const options = data.options.map((option) => {
     if ("vp" in option) {
       const button = document.createElement("button");
@@ -1913,13 +2190,26 @@ function secondaryCardEl(player: Player, id: string, index: number, deal: boolea
     redraw.querySelector("small")!.textContent = t("redrawIf", { cond: data.redraw.condition[lang] });
     actions.push(redraw);
   }
-  const swapCard = document.createElement("button");
-  swapCard.type = "button";
-  swapCard.className = "sec-action sec-action--discard";
-  swapCard.dataset.action = "swap";
-  swapCard.textContent = newCardUsed[player] ? t("swapUsed") : t("swapCp");
-  swapCard.disabled = !canSwapSecondary(player);
-  actions.push(swapCard);
+  const scored = cardsMode === "scored" ? secondaries[player].scored.find((entry) => entry.id === id) : undefined;
+  if (scored) {
+    const stamp = document.createElement("span");
+    stamp.className = "sec-card__stamp";
+    stamp.textContent = t("scoredStamp", { vp: scored.vp, unit, n: scored.turn + 1 });
+    el.querySelector(".sec-card__inner")!.appendChild(stamp);
+    const undo = document.createElement("button");
+    undo.type = "button";
+    undo.className = "sec-action sec-action--undo";
+    undo.textContent = t("unscoreBtn");
+    actions.push(undo);
+  } else {
+    const swapCard = document.createElement("button");
+    swapCard.type = "button";
+    swapCard.className = "sec-action sec-action--discard";
+    swapCard.dataset.action = "swap";
+    swapCard.textContent = newCardUsed[player] ? t("swapUsed") : t("swapCp");
+    swapCard.disabled = !canSwapSecondary(player);
+    actions.push(swapCard);
+  }
   const link = document.createElement("a");
   link.className = "sec-action sec-action--link";
   link.href = data.url;
@@ -1949,9 +2239,38 @@ function playCardExit(cardEl: HTMLElement, exit: "is-scored" | "is-discarded", b
 }
 
 function scoreSecondary(player: Player, id: string, vp: number, cardEl: HTMLElement): void {
+  const turn = scoringTurnIdx(player);
   const added = addSecondaryPoints(player, vp);
   moveSecondary(player, id, "discard");
+  secondaries[player].scored.push({ id, vp: added, turn });
   playCardExit(cardEl, "is-scored", `+${added}`);
+}
+
+/** Pending undo, until the player confirms it */
+let pendingUnscore: { player: Player; id: string } | null = null;
+
+function askUnscore(player: Player, id: string): void {
+  if (gameOver) return;
+  pendingUnscore = { player, id };
+  openTurnConfirmModal("unscore");
+}
+
+/** A score clicked by mistake: its points leave the turn they went to, the card goes back to the hand */
+function restoreSecondary(player: Player, id: string): void {
+  const pile = secondaries[player];
+  const scored = pile.scored.find((entry) => entry.id === id);
+  if (!scored) return;
+  pile.scored = pile.scored.filter((entry) => entry !== scored);
+  pile.discard = pile.discard.filter((cardId) => cardId !== id);
+  pile.hand.push(id);
+  const turns = scoreByTurn[player].secondary;
+  turns[scored.turn] = Math.max(0, turns[scored.turn] - scored.vp);
+  renderMiniCounters();
+  if (cardsPlayer !== player) return;
+  // Back to the hand, where the card is dealt in again
+  cardsMode = "hand";
+  cardsOverlay.dataset.mode = "hand";
+  renderCards([id]);
 }
 
 function canSwapSecondary(player: Player): boolean {
@@ -2106,12 +2425,14 @@ function primaryCardEl(player: Player, index: number, deal: boolean, scorable: b
   const scored = primaryScored[player];
   const sections = data.sections.map((section, s) => {
     const turnKey = sectionTurnKey(player, section);
-    const open = scorable && sectionOpen(player, section);
+    // At a turn end, only what scores at that moment: a Command phase line waits for the next turn
+    const scoresNow = sectionOpen(player, section) && (cardsMode !== "end-turn" || scoresAtTurnEnd(player, section.when));
+    const open = scorable && scoresNow;
     const pickedInSection = section.items.some((_, i) => scored.has(`${turnKey}|${s}|${i}`));
     const block = document.createElement("section");
     block.className = "pri-section";
     // Dimmed out of its rounds while playing; on the reveal the whole card reads at full strength
-    block.classList.toggle("is-closed", scorable && !sectionOpen(player, section));
+    block.classList.toggle("is-closed", scorable && !scoresNow);
     const whenKey = PRIMARY_WHEN_KEYS[section.when];
     block.innerHTML = `
       <header class="pri-section__head">
@@ -2345,12 +2666,20 @@ btnAbilitiesClose.addEventListener("click", closeAbilities);
 
 for (const player of [1, 2] as const) {
   handButtonEl[player].addEventListener("click", () => openCards(player, "hand"));
+  primaryButtonEl[player].addEventListener("click", () => openCards(player, "mission"));
 }
+cardsSwitch.addEventListener("click", (e) => {
+  const tab = (e.target as HTMLElement).closest<HTMLButtonElement>("[data-tab]");
+  if (tab && !tab.disabled) showCardsTab(tab.dataset.tab!);
+});
 /** Continue: after the primaries reveal, the game starts */
 function continueCards(): void {
+  if (cardsPlayer === null) return;
   const startsGame = cardsMode === "primary";
+  const turnEnd = cardsMode === "end-turn" ? endTurnKind : null;
   closeCards();
   if (startsGame) start();
+  if (turnEnd) applyConfirmed(turnEnd);
 }
 
 btnCardsClose.addEventListener("click", continueCards);
@@ -2371,9 +2700,15 @@ secondaryCardsToggle.addEventListener("change", () => {
   renderHandButtons();
 });
 cardsRow.addEventListener("click", (e) => {
-  const button = (e.target as HTMLElement).closest<HTMLButtonElement>("button[data-action]");
+  const target = e.target as HTMLElement;
+  const scoredCard = cardsMode === "scored" && !target.closest("a") ? target.closest<HTMLElement>(".sec-card") : null;
+  if (scoredCard && cardsPlayer !== null) {
+    askUnscore(cardsPlayer, scoredCard.dataset.cardId!);
+    return;
+  }
+  const button = target.closest<HTMLButtonElement>("button[data-action]");
   const cardEl = button?.closest<HTMLElement>(".sec-card");
-  if (button && cardEl?.dataset.primaryPlayer && cardsMode === "hand") {
+  if (button && cardEl?.dataset.primaryPlayer && (cardsMode === "mission" || cardsMode === "end-turn")) {
     const owner = Number(cardEl.dataset.primaryPlayer) as Player;
     const card = primaryCards[owner];
     const s = Number(button.dataset.section ?? button.closest<HTMLElement>(".sec-option--repeat")?.dataset.section);
@@ -2403,7 +2738,7 @@ cardsRow.addEventListener("click", (e) => {
   const id = cardEl.dataset.cardId!;
   const option = button.closest<HTMLElement>(".sec-option--repeat");
   const scoring = ["score", "less", "more", "score-repeat"].includes(button.dataset.action ?? "");
-  if (scoring && cardsMode !== "hand") return;
+  if (scoring && cardsMode !== "hand" && cardsMode !== "end-turn") return;
   switch (button.dataset.action) {
     case "score":
       scoreSecondary(player, id, Number(button.dataset.vp), cardEl);
@@ -2570,13 +2905,23 @@ window.addEventListener("keydown", (e) => {
     }
     return;
   }
-  if (cardsOverlay.classList.contains("is-visible")) {
+  const keyMode = cardKeyMode(e);
+  if (cardsPlayer !== null && !turnConfirmOverlay.classList.contains("is-visible")) {
+    const sameView = keyMode === cardsMode || (keyMode === "hand" && cardsMode === "scored");
     if (e.code === "Enter" && !e.repeat) {
       e.preventDefault();
       continueCards();
-    } else if (e.key === "Escape") {
+    } else if (e.key === "Escape" || sameView) {
       e.preventDefault();
       closeCards();
+    } else if (keyMode !== null && (cardsMode === "hand" || cardsMode === "scored" || cardsMode === "mission")) {
+      // From the secondaries to the primary and back
+      e.preventDefault();
+      openCards(cardsPlayer, keyMode);
+    } else if (e.key === SWITCH_KEY && !cardsSwitch.hidden) {
+      e.preventDefault();
+      const next = cardsTabs().find((tab) => !tab.on && tab.count > 0);
+      if (next) showCardsTab(next.value);
     } else if (e.code === "Space") {
       e.preventDefault();
     }
@@ -2637,6 +2982,12 @@ window.addEventListener("keydown", (e) => {
       return;
     }
   }
+  const keyPlayer = keyMode && !isTypingTarget(e.target) && !anyModalOpen() ? cardKeyPlayer() : null;
+  if (keyMode && keyPlayer && (keyMode === "hand" || primaryCards[keyPlayer])) {
+    e.preventDefault();
+    openCards(keyPlayer, keyMode);
+    return;
+  }
   if (e.code === "Enter" && !e.repeat) {
     if (shouldIgnoreSpaceLike(e.target)) return;
     if (!running) {
@@ -2646,17 +2997,9 @@ window.addEventListener("keydown", (e) => {
       else requestStart();
       return;
     }
-    if (turnPlayer === 1) {
-      e.preventDefault();
-      openTurnConfirmModal("p1-to-p2");
-      return;
-    }
     e.preventDefault();
-    if (currentGameTurn >= MAX_GAME_TURN) {
-      openTurnConfirmModal("finish-game");
-      return;
-    }
-    openTurnConfirmModal("next-round");
+    if (turnPlayer === 1) requestEndTurn("p1-to-p2");
+    else requestEndTurn(currentGameTurn >= MAX_GAME_TURN ? "finish-game" : "next-round");
     return;
   }
   if (e.code !== "Space") return;
@@ -2679,7 +3022,7 @@ board.addEventListener("pointerdown", (e) => {
   /* Touch / pen only — mouse clicks use Start / Space, not board taps */
   if (e.pointerType === "mouse") return;
   if (abilitiesOverlay.classList.contains("is-visible")) return;
-  if (cardsOverlay.classList.contains("is-visible")) return;
+  if (cardsPlayer !== null) return;
   if (photoOverlay.classList.contains("is-visible")) return;
   if (resultOverlay.classList.contains("is-visible")) return;
   if (turnConfirmOverlay.classList.contains("is-visible")) return;
@@ -2728,6 +3071,9 @@ timePicker.addEventListener("mouseenter", () => {
 });
 
 onSegmentedPick(themeOptions, applyTheme);
+for (const player of [1, 2] as const) {
+  factionSelect[player].addEventListener("change", () => applyFaction(player, factionSelect[player].value));
+}
 onSegmentedPick(uiSizeOptions, applyUiSize);
 onSegmentedPick(layoutOptions, applyLayout);
 onSegmentedPick(langOptions, applyLang);
@@ -2746,6 +3092,7 @@ btnStart.addEventListener("click", () => {
 setTimePreset(String(DEFAULT_TIME_SEC));
 loadLang();
 loadTheme();
+loadFactions();
 loadLayout();
 loadUiSize();
 updateManualInputsVisibility();
