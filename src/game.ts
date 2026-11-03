@@ -80,6 +80,8 @@ export type GameState = {
   primaries: Record<Player, string | null>;
   /** Points scored by each primary line and turn ("turn|section|item"): a second click undoes it */
   primaryScored: Record<Player, Record<string, number>>;
+  /** The latest draw at the start of a turn: the drawing player's phone shows it, whoever made it */
+  lastDraw: { player: Player; ids: string[]; n: number };
 };
 
 export const other = (player: Player): Player => (player === 1 ? 2 : 1);
@@ -128,6 +130,7 @@ export function newGame(seconds: number = DEFAULT_TIME_SEC): GameState {
     dispositions: { 1: null, 2: null },
     primaries: { 1: null, 2: null },
     primaryScored: { 1: {}, 2: {} },
+    lastDraw: { player: 1, ids: [], n: 0 },
   };
 }
 
@@ -140,31 +143,40 @@ export const isStopped = (game: GameState): boolean => game.phase === "paused" |
 
 /* ---------- Clocks ---------- */
 
+/** Online, the server's clock: two phones a few seconds apart still read the same time left */
+let clockOffsetMs = 0;
+
+export function setClockOffset(ms: number): void {
+  clockOffsetMs = ms;
+}
+
+export const nowMs = (): number => Date.now() + clockOffsetMs;
+
 /** Seconds left on a player's clock at `now` */
-export function secondsLeft(clock: Clock, player: Player, now = Date.now()): number {
+export function secondsLeft(clock: Clock, player: Player, now = nowMs()): number {
   if (player !== clock.active || clock.since === null) return clock.left[player];
   // A clock set back on the device never gives time back
   return clock.left[player] - Math.max(0, now - clock.since) / 1000;
 }
 
 /** Banks the running clock's time, so the next change starts from now */
-export function settleClock(clock: Clock, now = Date.now()): void {
+export function settleClock(clock: Clock, now = nowMs()): void {
   if (clock.since === null) return;
   clock.left[clock.active] = secondsLeft(clock, clock.active, now);
   clock.since = now;
 }
 
-export function stopClock(clock: Clock, now = Date.now()): void {
+export function stopClock(clock: Clock, now = nowMs()): void {
   settleClock(clock, now);
   clock.since = null;
 }
 
-export function runClock(clock: Clock, now = Date.now()): void {
+export function runClock(clock: Clock, now = nowMs()): void {
   if (clock.since === null) clock.since = now;
 }
 
 /** The other clock runs from now on (or will, once resumed) */
-export function setActiveClock(clock: Clock, player: Player, now = Date.now()): void {
+export function setActiveClock(clock: Clock, player: Player, now = nowMs()): void {
   settleClock(clock, now);
   clock.active = player;
 }

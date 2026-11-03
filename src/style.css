@@ -4142,3 +4142,489 @@ button.sec-option:hover:not(:disabled) {
     flex-direction: column;
   }
 }
+
+/* ---------- Online: one phone per player ---------- */
+
+.btn-online {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.45rem;
+  padding: 0.35rem 0.7rem;
+  border: 1px solid var(--line-strong);
+  border-radius: 5px;
+  background: var(--surface);
+  color: var(--muted);
+  font-size: 0.75rem;
+}
+
+.btn-online:hover {
+  color: var(--text);
+}
+
+:root[data-seat] .btn-online {
+  color: var(--text);
+  border-color: var(--me);
+}
+
+/* This phone's player: their color leads, the opponent's only marks their strip */
+:root[data-seat="1"] {
+  --me: var(--p1);
+  --me-time: var(--p1-time);
+  --me-glow: var(--p1-glow);
+  --them: var(--p2);
+}
+
+:root[data-seat="2"] {
+  --me: var(--p2);
+  --me-time: var(--p2-time);
+  --me-glow: var(--p2-glow);
+  --them: var(--p1);
+}
+
+.seat {
+  display: none;
+}
+
+:root[data-seat] .board {
+  display: none;
+}
+
+:root[data-seat] .seat {
+  --pc: var(--me);
+  --pc-soft: color-mix(in srgb, var(--me) 8%, transparent);
+  --pc-line: color-mix(in srgb, var(--me) 50%, transparent);
+  flex: 1 1 auto;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 0.7rem;
+  width: 100%;
+  max-width: 34rem;
+  margin: 0 auto;
+  padding: 0.75rem max(1rem, env(safe-area-inset-right, 0px)) max(0.9rem, env(safe-area-inset-bottom, 0px))
+    max(1rem, env(safe-area-inset-left, 0px));
+  overflow-y: auto;
+}
+
+.seat-bar {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 1rem;
+}
+
+.seat-room {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.5rem;
+  padding: 0.3rem 0.75rem;
+  border: 1px solid var(--line-strong);
+  border-radius: 999px;
+  background: var(--surface);
+  color: var(--text);
+  font-family: var(--font-num);
+  font-size: 0.8rem;
+  letter-spacing: 0.2em;
+}
+
+.seat-room__dot {
+  width: 0.5rem;
+  height: 0.5rem;
+  border-radius: 50%;
+  background: #3ecf8e;
+}
+
+.seat-room.is-offline .seat-room__dot {
+  background: var(--danger);
+}
+
+.seat-bar__round {
+  color: var(--muted);
+  font-size: 0.7rem;
+  font-weight: 600;
+  letter-spacing: 0.18em;
+  text-transform: uppercase;
+}
+
+/* The opponent: one discreet line */
+.seat-opp {
+  display: flex;
+  align-items: baseline;
+  gap: 0.9rem;
+  padding: 0.55rem 0.85rem;
+  border: 1px solid var(--line);
+  border-left: 3px solid var(--them);
+  border-radius: 6px;
+  background: var(--surface);
+  color: var(--muted);
+}
+
+.seat-opp__name {
+  flex: 1;
+  color: var(--them);
+  font-size: 0.7rem;
+  font-weight: 600;
+  letter-spacing: 0.16em;
+  text-transform: uppercase;
+}
+
+.seat-opp__score {
+  color: var(--text);
+  font-family: var(--font-num);
+  font-size: 1.05rem;
+  font-weight: 700;
+}
+
+.seat-opp__score small {
+  color: var(--muted);
+  font-size: 0.7rem;
+  font-weight: 600;
+}
+
+.seat-opp__time {
+  font-family: var(--font-num);
+  font-size: 0.9rem;
+  font-variant-numeric: tabular-nums;
+}
+
+.seat-opp.is-running .seat-opp__time {
+  color: var(--text);
+}
+
+.seat-opp.is-running .seat-opp__time::before {
+  content: "";
+  display: inline-block;
+  width: 0.45rem;
+  height: 0.45rem;
+  margin-right: 0.4rem;
+  border-radius: 50%;
+  background: var(--them);
+  vertical-align: 0.1em;
+}
+
+/* This phone's clock: the whole block is the button that passes it */
+.seat-clock {
+  flex: 1 0 9rem;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 0.6rem;
+  padding: 1rem;
+  border: 1px solid var(--line);
+  border-radius: 10px;
+  background: var(--surface);
+  color: var(--muted);
+  touch-action: manipulation;
+  user-select: none;
+}
+
+.seat-clock[aria-disabled="true"] {
+  cursor: default;
+}
+
+.seat-clock[aria-disabled="true"]:active {
+  transform: none;
+}
+
+.seat-clock.is-running {
+  border-color: var(--me);
+  box-shadow:
+    inset 0 0 0 1px var(--me),
+    0 0 48px -12px var(--me-glow);
+  color: var(--text);
+}
+
+.seat-clock__who {
+  color: var(--me);
+  font-size: 0.72rem;
+  font-weight: 600;
+  letter-spacing: 0.18em;
+  text-transform: uppercase;
+}
+
+.seat-clock__time.time {
+  font-size: clamp(3.2rem, 17vw, 6.5rem);
+  color: var(--me-time);
+  opacity: 0.5;
+}
+
+.seat-clock.is-running .seat-clock__time {
+  opacity: 1;
+  text-shadow: 0 0 40px var(--me-glow);
+}
+
+.seat-clock__hint {
+  font-size: 0.78rem;
+  letter-spacing: 0.04em;
+}
+
+.seat-stats {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 0.7rem;
+}
+
+.seat-card {
+  display: flex;
+  flex-direction: column;
+  gap: 0.45rem;
+  min-width: 0;
+  padding: 0.7rem 0.75rem;
+  border: 1px solid var(--line);
+  border-top: 2px solid var(--me);
+  border-radius: 6px;
+  background: var(--surface);
+}
+
+.seat-card__head {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 0.5rem;
+  color: var(--muted);
+  font-size: 0.62rem;
+  font-weight: 600;
+  letter-spacing: 0.14em;
+  text-transform: uppercase;
+}
+
+.seat-card__head b {
+  color: var(--text);
+  font-family: var(--font-num);
+  font-size: 1.7rem;
+  letter-spacing: 0;
+  line-height: 1;
+}
+
+.seat-card__sub {
+  color: var(--muted);
+  font-size: 0.62rem;
+  letter-spacing: 0.14em;
+  text-transform: uppercase;
+}
+
+.seat-card__sub:empty {
+  display: none;
+}
+
+/* The label on top, then − value +: fits the narrowest phones */
+.seat-row {
+  display: grid;
+  grid-template-columns: auto 1fr auto;
+  align-items: center;
+  justify-items: center;
+  gap: 0.2rem 0.3rem;
+  color: var(--muted);
+  font-size: 0.6rem;
+  font-weight: 600;
+  letter-spacing: 0.1em;
+  text-transform: uppercase;
+}
+
+.seat-row[hidden] {
+  display: none;
+}
+
+.seat-row > span {
+  grid-column: 1 / -1;
+  justify-self: start;
+}
+
+.seat-row b,
+.seat-cp__row b {
+  min-width: 1.8ch;
+  color: var(--text);
+  font-family: var(--font-num);
+  font-size: 1.1rem;
+  text-align: center;
+}
+
+.seat .mini-counter__btn {
+  width: 2.25rem;
+  height: 2.25rem;
+}
+
+/* With the cards, points come from scoring them, as on the board */
+#app.uses-secondary-cards .seat-score .mini-counter__btn {
+  visibility: hidden;
+}
+
+.seat-cp__row {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 0.75rem;
+}
+
+.seat-cp__row b {
+  font-size: 2rem;
+}
+
+.seat-abilities .abilities {
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: center;
+  gap: 0.5rem;
+}
+
+.seat-actions {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 0.5rem;
+}
+
+.seat-actions button {
+  min-height: 3rem;
+}
+
+.seat-actions button[hidden] {
+  display: none;
+}
+
+#seat-end {
+  grid-column: 1 / -1;
+  min-height: 3.4rem;
+  font-size: 1rem;
+  background: var(--me);
+  color: var(--bg);
+}
+
+.seat-count {
+  display: inline-block;
+  min-width: 1.6em;
+  margin-left: 0.3rem;
+  padding: 0.05rem 0.35rem;
+  border-radius: 999px;
+  background: var(--me);
+  color: var(--bg);
+  font-family: var(--font-num);
+  font-size: 0.75rem;
+}
+
+.seat-foot {
+  display: flex;
+  justify-content: center;
+}
+
+.seat-foot button[hidden] {
+  display: none;
+}
+
+/* ---------- Online dialog ---------- */
+
+.online-seat {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 1rem;
+  margin-top: 1.25rem;
+}
+
+.online-seat__label {
+  color: var(--muted);
+  font-size: 0.75rem;
+  font-weight: 600;
+  letter-spacing: 0.12em;
+  text-transform: uppercase;
+}
+
+.online-seat .segmented__option.is-p1[aria-pressed="true"] {
+  background: var(--p1);
+  color: var(--bg);
+}
+
+.online-seat .segmented__option.is-p2[aria-pressed="true"] {
+  background: var(--p2);
+  color: var(--bg);
+}
+
+.online-create {
+  width: 100%;
+  min-height: 2.8rem;
+  margin-top: 1rem;
+}
+
+.overlay-inner p.online-or {
+  margin-top: 1.1rem;
+  font-size: 0.8rem;
+  text-align: center;
+}
+
+.online-join {
+  display: flex;
+  gap: 0.5rem;
+  margin-top: 0.5rem;
+}
+
+.online-join input {
+  flex: 1;
+  min-width: 0;
+  padding: 0.5rem 0.75rem;
+  border: 1px solid var(--line-strong);
+  border-radius: 4px;
+  background: var(--bg);
+  color: var(--text);
+  font-family: var(--font-num);
+  font-size: 1.1rem;
+  letter-spacing: 0.3em;
+  text-transform: uppercase;
+}
+
+.online-room {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  text-align: center;
+}
+
+.online-room[hidden],
+.online-start[hidden] {
+  display: none;
+}
+
+.overlay-inner p.online-code {
+  margin-top: 1rem;
+  color: var(--text);
+  font-family: var(--font-num);
+  font-size: 2.4rem;
+  font-weight: 700;
+  letter-spacing: 0.3em;
+}
+
+.online-qr {
+  width: 11rem;
+  margin-top: 0.75rem;
+  padding: 0.4rem;
+  border-radius: 6px;
+  background: #fff;
+}
+
+.online-qr:empty {
+  display: none;
+}
+
+.online-qr svg {
+  display: block;
+  width: 100%;
+  height: auto;
+}
+
+.overlay-inner p.online-status {
+  color: var(--text);
+  font-weight: 600;
+}
+
+.online-room button {
+  margin-top: 1rem;
+}
+
+.overlay-inner p.online-error {
+  color: var(--danger);
+}
+
+.online-error[hidden],
+#online-leave[hidden],
+#online-share[hidden] {
+  display: none;
+}

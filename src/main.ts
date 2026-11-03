@@ -3,6 +3,8 @@ import { getLang, setLang, t, type Lang, type StringKey } from "./i18n";
 import { SECONDARY_BY_ID, type SecondaryCard, type Text } from "./secondaries";
 import { FACTION_BY_ID, FACTIONS, SPACE_MARINES, SPACE_MARINES_NAME, type FactionGroup } from "./factions";
 import { applyUpdateIfIdle, setupPwa } from "./pwa";
+import type { Room, RoomEvents } from "./room";
+import { merge } from "./sync";
 import {
   DEFAULT_TIME_SEC,
   MAX_GAME_TURN,
@@ -149,6 +151,7 @@ const ICON_SLIDERS = svgIcon(
 );
 const ICON_CHECK = svgIcon('<path d="M5 12.5l4.5 4.5L19 7.5" />');
 const ICON_CHEVRON = svgIcon('<path d="M7 10l5 5 5-5" />');
+const ICON_ONLINE = svgIcon('<rect x="2.5" y="5" width="7" height="14" rx="1.5" /><rect x="14.5" y="5" width="7" height="14" rx="1.5" /><path d="M9.5 12h5" />');
 const ICON_RESET = svgIcon('<path d="M4 12a8 8 0 1 0 2.4-5.7M4 4v4h4" />');
 const ICON_ROWS = svgIcon('<rect x="2" y="2" width="24" height="7" rx="1" /><rect x="2" y="11" width="24" height="7" rx="1" />', "0 0 28 20");
 const ICON_COLUMNS = svgIcon('<rect x="2" y="2" width="11" height="16" rx="1" /><rect x="15" y="2" width="11" height="16" rx="1" />', "0 0 28 20");
@@ -267,6 +270,7 @@ app.innerHTML = `
       </label>
     </div>
     <div class="toolbar__group toolbar__group--end">
+      <button type="button" class="btn-online" id="btn-online">${ICON_ONLINE}<span data-i18n="online"></span></button>
       <div class="popover-anchor">
         <button type="button" class="btn-icon" id="btn-settings" aria-expanded="false" aria-controls="settings-panel" data-i18n-aria="display" data-i18n-title="display">${ICON_SLIDERS}</button>
         <div class="popover popover--end settings__panel" id="settings-panel" hidden>
@@ -368,6 +372,62 @@ app.innerHTML = `
     </div>
     ${panelHtml(2)}
   </div>
+  <section class="seat" id="seat" aria-live="polite">
+    <header class="seat-bar">
+      <button type="button" class="seat-room" id="seat-room"><span class="seat-room__dot" aria-hidden="true"></span><span id="seat-code"></span></button>
+      <span class="seat-bar__round" id="seat-round"></span>
+    </header>
+    <div class="seat-opp" id="seat-opp">
+      <span class="seat-opp__name" id="seat-opp-name"></span>
+      <span class="seat-opp__score"><span id="seat-opp-score">0</span> <small data-i18n="vpUnit"></small></span>
+      <span class="seat-opp__time" id="seat-opp-time"></span>
+    </div>
+    <button type="button" class="seat-clock" id="seat-clock">
+      <span class="seat-clock__who" id="seat-who"></span>
+      <span class="time seat-clock__time" id="seat-time"></span>
+      <span class="seat-clock__hint" id="seat-hint"></span>
+    </button>
+    <div class="seat-stats">
+      <div class="seat-card seat-score">
+        <div class="seat-card__head"><span data-i18n="score"></span><b id="seat-score">0</b></div>
+        <span class="seat-card__sub" id="seat-turn"></span>
+        ${SCORE_KINDS.map(
+          ({ kind, label }) => `
+        <div class="seat-row">
+          <span data-i18n="${label}"></span>
+          <button type="button" class="mini-counter__btn" id="seat-${kind}-minus" aria-label="−">−</button>
+          <b id="seat-${kind}">0</b>
+          <button type="button" class="mini-counter__btn" id="seat-${kind}-plus" aria-label="+">+</button>
+        </div>`,
+        ).join("")}
+        <div class="seat-row" id="seat-bonus-row" hidden>
+          <span data-i18n="endBonus"></span>
+          <button type="button" class="mini-counter__btn" id="seat-bonus-minus" aria-label="−">−</button>
+          <b id="seat-bonus">0</b>
+          <button type="button" class="mini-counter__btn" id="seat-bonus-plus" aria-label="+">+</button>
+        </div>
+      </div>
+      <div class="seat-card seat-cp">
+        <div class="seat-card__head"><span data-i18n="commandPoints"></span></div>
+        <div class="seat-cp__row">
+          <button type="button" class="mini-counter__btn" id="seat-cp-minus" aria-label="−">−</button>
+          <b id="seat-cp">1</b>
+          <button type="button" class="mini-counter__btn" id="seat-cp-plus" aria-label="+">+</button>
+        </div>
+        <button type="button" class="abilities-btn" id="seat-abilities-btn" data-i18n="abilities"></button>
+        <div class="seat-abilities" id="seat-abilities"></div>
+      </div>
+    </div>
+    <nav class="seat-actions">
+      <button type="button" class="btn-secondary" id="seat-hand"><span data-i18n="secondaryHand"></span> <span class="seat-count" id="seat-hand-count">0</span></button>
+      <button type="button" class="btn-secondary" id="seat-mission" data-i18n="primaryCard"></button>
+      <button type="button" class="btn-secondary" id="seat-pause"></button>
+      <button type="button" class="btn-primary" id="seat-end" data-i18n="seatEndTurn"></button>
+    </nav>
+    <div class="seat-foot">
+      <button type="button" class="btn-ghost strip-reset" id="seat-reset">${ICON_RESET}<span data-i18n="reset"></span></button>
+    </div>
+  </section>
   <div class="overlay overlay--turn-confirm" id="turn-confirm-overlay" role="dialog" aria-modal="true" aria-labelledby="turn-confirm-title" aria-hidden="true">
     <div class="overlay-inner">
       <h2 id="turn-confirm-title"></h2>
@@ -448,6 +508,39 @@ app.innerHTML = `
       <ul class="ability-list" id="ability-list"></ul>
       <div class="overlay-actions">
         <button type="button" class="btn-primary" id="btn-abilities-close"><span data-i18n="done"></span> <kbd data-i18n="keyEsc"></kbd></button>
+      </div>
+    </div>
+  </div>
+  <div class="overlay overlay--online" id="online-overlay" role="dialog" aria-modal="true" aria-labelledby="online-title" aria-hidden="true">
+    <div class="overlay-inner">
+      <h2 id="online-title" data-i18n="onlineTitle"></h2>
+      <div class="online-start" id="online-start">
+        <p class="overlay-msg" data-i18n="onlineIntro"></p>
+        <div class="online-seat">
+          <span class="online-seat__label" data-i18n="onlinePlayAs"></span>
+          <div class="segmented" id="online-seat" role="group" data-i18n-aria="onlinePlayAs">
+            <button type="button" class="segmented__option is-p1" data-value="1" data-i18n="player" data-v-n="1"></button>
+            <button type="button" class="segmented__option is-p2" data-value="2" data-i18n="player" data-v-n="2"></button>
+          </div>
+        </div>
+        <button type="button" class="btn-primary online-create" id="online-create" data-i18n="onlineCreate"></button>
+        <p class="online-or" data-i18n="onlineOr"></p>
+        <div class="online-join">
+          <input id="online-code" type="text" maxlength="5" autocomplete="off" autocapitalize="characters" spellcheck="false" data-i18n-placeholder="onlineCode" />
+          <button type="button" class="btn-secondary" id="online-join" data-i18n="onlineJoin"></button>
+        </div>
+      </div>
+      <div class="online-room" id="online-room" hidden>
+        <p class="online-code" id="online-room-code"></p>
+        <div class="online-qr" id="online-qr"></div>
+        <p class="overlay-msg" id="online-scan"></p>
+        <p class="online-status" id="online-status"></p>
+        <button type="button" class="btn-secondary" id="online-share" data-i18n="onlineShare"></button>
+      </div>
+      <p class="online-error" id="online-error" role="alert" hidden></p>
+      <div class="overlay-actions">
+        <button type="button" class="btn-ghost" id="online-leave" data-i18n="onlineLeave" hidden></button>
+        <button type="button" class="btn-primary" id="online-close"><span data-i18n="done"></span> <kbd data-i18n="keyEsc"></kbd></button>
       </div>
     </div>
   </div>
@@ -547,9 +640,21 @@ const resultTitle = app.querySelector<HTMLElement>("#result-title")!;
 const resultMsg = app.querySelector<HTMLElement>("#result-msg")!;
 const resultTable = app.querySelector<HTMLTableElement>("#result-table")!;
 const btnResultDismiss = app.querySelector<HTMLButtonElement>("#btn-result-dismiss")!;
+const btnOnline = app.querySelector<HTMLButtonElement>("#btn-online")!;
+const seatClock = app.querySelector<HTMLButtonElement>("#seat-clock")!;
+const seatTime = app.querySelector<HTMLElement>("#seat-time")!;
+const seatOppTime = app.querySelector<HTMLElement>("#seat-opp-time")!;
+const seatAbilities = app.querySelector<HTMLElement>("#seat-abilities")!;
+const onlineOverlay = app.querySelector<HTMLElement>("#online-overlay")!;
+const onlineSeatPicker = app.querySelector<HTMLElement>("#online-seat")!;
+const onlineCodeInput = app.querySelector<HTMLInputElement>("#online-code")!;
+const onlineError = app.querySelector<HTMLElement>("#online-error")!;
 
 /** Everything both players share: see game.ts. The rest of this file is the screen */
 let game: GameState = newGame();
+
+/** Online, this phone is one player's: its seat, and the room once connected */
+let online: { seat: Player; room: Room | null; connected: boolean; seats: Record<Player, boolean> } | null = null;
 
 /** A clock runs */
 const isRunning = (): boolean => game.phase === "running";
@@ -740,9 +845,14 @@ function turnSound(name: "start" | "turn" | "round"): void {
 }
 
 function startPhotoBreak(): void {
-  playSound("photo");
   game.photoBreak = true;
   stopClock(game.clock);
+  showPhotoBreak();
+}
+
+/** The photo break on screen: also when it was started on the other phone */
+function showPhotoBreak(): void {
+  playSound("photo");
   stopLoop();
   app.classList.add("is-photo-break");
   photoMsg.textContent = t("photoMsg", { n: game.turnPlayer });
@@ -754,13 +864,15 @@ function startPhotoBreak(): void {
 function endPhotoBreak(): void {
   if (!game.photoBreak) return;
   game.photoBreak = false;
+  if (isRunning()) runClock(game.clock);
+  hidePhotoBreak();
+}
+
+function hidePhotoBreak(): void {
   app.classList.remove("is-photo-break");
   photoOverlay.classList.remove("is-visible");
   photoOverlay.setAttribute("aria-hidden", "true");
-  if (isRunning()) {
-    runClock(game.clock);
-    startLoop();
-  }
+  if (isRunning() && game.clock.since !== null) startLoop();
   if (pendingDraw) {
     openCards(pendingDraw.player, "draw", pendingDraw.drawn);
     pendingDraw = null;
@@ -1090,6 +1202,14 @@ function store(key: string, value: string): void {
   }
 }
 
+function forget(key: string): void {
+  try {
+    localStorage.removeItem(key);
+  } catch {
+    /* private mode */
+  }
+}
+
 function stored(key: string): string | null {
   try {
     return localStorage.getItem(key);
@@ -1128,12 +1248,17 @@ function loadSound(): void {
 
 let soundToastTimer = 0;
 
-function toggleMute(): void {
-  setMuted(!isMuted());
-  soundToast.textContent = t(isMuted() ? "soundMuted" : "soundOn");
+/** A short line at the bottom of the screen */
+function showToast(text: string): void {
+  soundToast.textContent = text;
   soundToast.classList.add("is-visible");
   window.clearTimeout(soundToastTimer);
   soundToastTimer = window.setTimeout(() => soundToast.classList.remove("is-visible"), 1400);
+}
+
+function toggleMute(): void {
+  setMuted(!isMuted());
+  showToast(t(isMuted() ? "soundMuted" : "soundOn"));
 }
 
 function loadUiSize(): void {
@@ -1187,6 +1312,8 @@ function applyLang(value: string): void {
   renderCards();
   renderDispositions();
   syncFullscreenLabel();
+  renderSeat();
+  renderOnlineDialog();
 }
 
 function loadLang(): void {
@@ -1258,6 +1385,7 @@ function renderTime(el: HTMLElement, totalSeconds: number): void {
 function applyTimesToDisplay(): void {
   renderTime(t1, timeLeft(1));
   renderTime(t2, timeLeft(2));
+  renderSeatTimes();
 }
 
 function setActivePanels(): void {
@@ -1277,6 +1405,7 @@ function setActivePanels(): void {
   idlePanel.classList.add("is-idle");
   panel1.classList.toggle("is-turn", game.turnPlayer === 1);
   panel2.classList.toggle("is-turn", game.turnPlayer === 2);
+  renderSeat();
 }
 
 function setInputsEnabled(on: boolean): void {
@@ -1311,6 +1440,7 @@ function updateButtons(): void {
   app.classList.toggle("is-paused", game.phase === "paused");
   app.classList.toggle("is-game-over", isOver());
   renderKeyHint();
+  renderSeat();
 }
 
 async function tryAcquireWakeLock(): Promise<void> {
@@ -1524,6 +1654,7 @@ function renderMiniCounters(): void {
   renderHandButtons();
   updateVisibleScoreTooltip();
   updateVisibleCpTooltip();
+  renderSeat();
 }
 
 const scoreTooltipEl = document.createElement("div");
@@ -1874,7 +2005,9 @@ function spendCpCoin(player: Player, coin: HTMLButtonElement): void {
     completed = true;
     window.clearTimeout(fallbackTimer);
     face.removeEventListener("animationend", onEnd);
-    ability.spent = true;
+    // The state may have come back from the other phone during the flip: look the unit up again
+    const current = game.abilities[player].find(({ id }) => id === ability.id);
+    if (current) current.spent = true;
     renderAbilities(player);
   }
 
@@ -2050,7 +2183,14 @@ function drawSecondaries(player: Player, count: number): string[] {
 function startTurnSecondaries(player: Player): void {
   if (!secondaryCardsOn()) return;
   const drawn = drawSecondaries(player, 2);
+  game.lastDraw = { player, ids: drawn, n: game.lastDraw.n + 1 };
   renderHandButtons();
+  showDraw(player, drawn);
+}
+
+/** The draw comes up on the drawing player's phone, whichever phone ended the turn */
+function showDraw(player: Player, drawn: string[]): void {
+  if (online && online.seat !== player) return;
   if (drawn.length === 0) {
     // Nothing left to draw: the Command phase scores still come up
     if (!game.photoBreak && primaryScoresInCommand(player)) openCards(player, "command");
@@ -2089,11 +2229,13 @@ function renderHandButtons(): void {
     button.querySelector(".score-box__hand-count")!.textContent = String(count);
     button.setAttribute("aria-label", t("handAria", { n: count }));
   }
+  renderSeat();
 }
 
 /** The cards of the player whose clock runs or, while paused, whose turn it is */
 function cardKeyPlayer(): Player | null {
   if (!secondaryCardsOn()) return null;
+  if (online) return inGame(game) ? online.seat : null;
   if (isRunning()) return game.clock.active;
   return isStopped(game) ? game.turnPlayer : null;
 }
@@ -2204,11 +2346,18 @@ function primaryScoresAtTurnEnd(owner: Player): boolean {
 const turnEndCount = (owner: Player): number =>
   turnEndSecondaries(owner).length + (primaryScoresAtTurnEnd(owner) ? 1 : 0);
 
+/** Enter, or the End turn button: the round goes on, or the battle ends after the last turn */
+function requestTurnEnd(): void {
+  if (game.turnPlayer === 1) requestEndTurn("p1-to-p2");
+  else requestEndTurn(game.round >= MAX_GAME_TURN ? "finish-game" : "next-round");
+}
+
 /** With the cards, ending a turn first shows what scores now; with nothing to score, the plain confirmation */
 function requestEndTurn(kind: TurnConfirmKind): void {
   endTurnKind = kind;
-  const opponent: Player = game.turnPlayer === 1 ? 2 : 1;
-  endTurnSides = secondaryCardsOn() ? [game.turnPlayer, opponent].filter((side) => turnEndCount(side) > 0) : [];
+  // Online, each phone scores its own cards: the opponent's are on the opponent's phone
+  const sides = online ? [online.seat] : [game.turnPlayer, other(game.turnPlayer)];
+  endTurnSides = secondaryCardsOn() ? sides.filter((side) => turnEndCount(side) > 0) : [];
   if (endTurnSides.length === 0) {
     endTurnKind = null;
     openTurnConfirmModal(kind);
@@ -3195,6 +3344,7 @@ function handleSpaceLikeInput(): void {
     return;
   }
 
+  if (online && game.clock.active !== online.seat) return;
   const now = performance.now();
   if (lastSpaceTime > 0 && now - lastSpaceTime < DOUBLE_SPACE_MS) {
     setActiveClock(game.clock, activeBeforeSpaceSequence);
@@ -3210,6 +3360,13 @@ window.addEventListener("keydown", (e) => {
   if (e.code === MUTE_KEY_CODE && !e.repeat && !e.metaKey && !e.ctrlKey && !e.altKey && !isTypingTarget(e.target)) {
     e.preventDefault();
     toggleMute();
+    return;
+  }
+  if (onlineOverlay.classList.contains("is-visible")) {
+    if (e.key === "Escape") {
+      e.preventDefault();
+      closeOnlineDialog();
+    }
     return;
   }
   // The abilities panel is a form: keys keep their usual meaning there
@@ -3325,8 +3482,9 @@ window.addEventListener("keydown", (e) => {
       return;
     }
     e.preventDefault();
-    if (game.turnPlayer === 1) requestEndTurn("p1-to-p2");
-    else requestEndTurn(game.round >= MAX_GAME_TURN ? "finish-game" : "next-round");
+    // Online, only the player whose turn it is ends it
+    if (online && game.turnPlayer !== online.seat) return;
+    requestTurnEnd();
     return;
   }
   if (e.code !== "Space") return;
@@ -3442,6 +3600,494 @@ document.addEventListener("pointerdown", (e) => {
   if (!(e.target as HTMLElement).closest(".popover-anchor")) closePopovers();
 });
 
+/* ---------- Online: one game on two phones ---------- */
+
+/** The state as last agreed with the server, and its revision: each write adds one */
+type Synced = { rev: number; json: string };
+let synced: Synced = { rev: 0, json: "" };
+/** Newest state seen from the server, kept while a write of ours is on its way */
+let latestRemote: Synced | null = null;
+let pushing = false;
+
+const ONLINE_STORAGE_KEY = "warhammerClock.online";
+/** As in room.ts, which loads only once a game goes online */
+const ONLINE_CODE_LENGTH = 5;
+
+const packState = ({ rev, json }: Synced): string => `${rev}|${json}`;
+
+function unpackState(stored: string): Synced {
+  const bar = stored.indexOf("|");
+  return { rev: Number(stored.slice(0, bar)) || 0, json: stored.slice(bar + 1) };
+}
+
+/** Sends this phone's changes. What the other phone changed meanwhile is kept, field by field */
+async function pushState(): Promise<void> {
+  const room = online?.room;
+  if (!room || pushing) return;
+  const local = JSON.stringify(game);
+  if (local === synced.json) return;
+  const base = synced;
+  pushing = true;
+  let sent = false;
+  try {
+    const stored = await room.transact((remote) => {
+      const current = remote === null ? base : unpackState(remote);
+      return packState({ rev: current.rev + 1, json: merge(current.json, base.json, local) });
+    });
+    if (online?.room !== room) return;
+    synced = unpackState(stored);
+    sent = true;
+    // Changes made here while the write was on its way go on top of what the server kept
+    const now = JSON.stringify(game);
+    const next = merge(synced.json, local, now);
+    if (next !== now) applyState(next);
+  } catch {
+    // Offline or refused: the next tick tries again
+  } finally {
+    pushing = false;
+  }
+  if (!sent) return;
+  if (latestRemote && latestRemote.rev > synced.rev) receiveState(latestRemote);
+  else if (JSON.stringify(game) !== synced.json) void pushState();
+}
+
+function receiveState(remote: Synced): void {
+  if (!latestRemote || remote.rev > latestRemote.rev) latestRemote = remote;
+  if (pushing || remote.rev <= synced.rev) return;
+  const joining = synced.rev === 0;
+  const local = JSON.stringify(game);
+  // Joining takes the room's game as it is; later, this phone's own changes are kept on top
+  const next = joining ? remote.json : merge(remote.json, synced.json, local);
+  synced = remote;
+  if (next !== local) applyState(next, joining);
+  if (next !== remote.json) void pushState();
+}
+
+function applyState(json: string, joining = false): void {
+  const prev = game;
+  // A field a newer version of the app adds is kept from this phone's state
+  game = { ...game, ...(JSON.parse(json) as GameState) };
+  renderState(prev, joining);
+}
+
+/** The part of the state a player's open cards show */
+const cardsData = (state: GameState, player: Player): string =>
+  JSON.stringify([state.secondaries[player], state.primaryScored[player], state.scoreByTurn[player], state.turnPlayer, state.round]);
+
+/**
+ * Puts the screen in line with a state that came from the other phone: what this phone does on
+ * its own after an action of its own (sounds, overlays, the loop) follows from what changed
+ */
+function renderState(prev: GameState, joining: boolean): void {
+  photoBreaksToggle.checked = game.options.photoBreaks;
+  secondaryCardsToggle.checked = game.options.cards;
+  const wasInGame = inGame(prev);
+  if (game.phase === "setup" && wasInGame) resetScreen();
+  if (!wasInGame && inGame(game)) {
+    closePopovers();
+    closeDispositions();
+    hideTurnConfirmModal();
+    hideResultOverlay();
+    if (!joining) turnSound("start");
+    setBattleMusic(true);
+  }
+  if (game.phase === "over" && prev.phase !== "over") showGameOverScreen();
+  if (!joining && isRunning() && prev.phase === "running") {
+    if (prev.turnPlayer !== game.turnPlayer || prev.round !== game.round) turnSound(prev.round !== game.round ? "round" : "turn");
+    else if (prev.clock.active !== game.clock.active) playSound("switch");
+  }
+
+  if (isRunning() && game.clock.since !== null) {
+    startLoop();
+    void tryAcquireWakeLock();
+  } else {
+    stopLoop();
+    if (!isRunning()) void releaseWakeLock();
+  }
+  if (!isRunning()) syncInputsFromState();
+  if (game.phase === "setup") syncPresetSelectFromState();
+  setInputsEnabled(!isRunning());
+  if (game.photoBreak && !prev.photoBreak) showPhotoBreak();
+  else if (!game.photoBreak && prev.photoBreak) hidePhotoBreak();
+  if (!joining && game.lastDraw.n !== prev.lastDraw.n) {
+    const { player, ids } = game.lastDraw;
+    if (game.photoBreak) {
+      if (online?.seat === player) pendingDraw = { player, drawn: ids };
+    } else showDraw(player, ids);
+  }
+
+  applyTimesToDisplay();
+  setActivePanels();
+  updateButtons();
+  renderTurnDots();
+  renderMiniCounters();
+  renderAbilities(1);
+  renderAbilities(2);
+  renderDispositions();
+  if (abilitiesPlayer !== null) renderAbilityList();
+  if (cardsPlayer !== null && cardsMode !== "primary" && cardsData(prev, cardsPlayer) !== cardsData(game, cardsPlayer)) renderCards();
+  renderSeat();
+}
+
+/** The other phone reset the game */
+function resetScreen(): void {
+  setBattleMusic(false);
+  lastSpaceTime = 0;
+  void releaseWakeLock();
+  stopLoop();
+  hideTurnConfirmModal();
+  hideResultOverlay();
+  pendingDraw = null;
+  afterPutAway = null;
+  hidePhotoBreak();
+  closeCards(false);
+  closeAbilities();
+}
+
+/** The game ended on the other phone: the same result shows here */
+function showGameOverScreen(): void {
+  lastSpaceTime = 0;
+  void releaseWakeLock();
+  stopLoop();
+  hideTurnConfirmModal();
+  setBattleMusic(false);
+  playSound("victory");
+  const flagged = ([1, 2] as const).find((player) => timeLeft(player) <= 0);
+  if (flagged) {
+    const winner = other(flagged);
+    showResultOverlay(t("wins", { n: winner }), t("ranOutOfTime", { n: flagged }), winner);
+    (flagged === 1 ? panel1 : panel2).classList.add("is-flag");
+    return;
+  }
+  const [total1, total2] = [scoreOf(1), scoreOf(2)];
+  if (total1 > total2) showResultOverlay(t("wins", { n: 1 }), t("wonOnPoints"), 1);
+  else if (total2 > total1) showResultOverlay(t("wins", { n: 2 }), t("wonOnPoints"), 2);
+  else showResultOverlay(t("draw"), t("tiedOnPoints"), null);
+}
+
+/** Creates a room with this game (no code), or joins one; this phone takes `seat` */
+async function connectRoom(seat: Player, code?: string): Promise<void> {
+  const { createRoom, joinRoom } = await import("./room");
+  leaveRoom();
+  online = { seat, room: null, connected: true, seats: { 1: false, 2: false } };
+  const events: RoomEvents = {
+    onState: (stored) => receiveState(unpackState(stored)),
+    onConnection: (connected) => {
+      if (!online) return;
+      online.connected = connected;
+      renderSeat();
+    },
+    onSeats: (seats) => {
+      if (!online) return;
+      online.seats = seats;
+      renderSeat();
+      renderOnlineDialog();
+    },
+  };
+  try {
+    if (code) {
+      synced = { rev: 0, json: "" };
+      online.room = await joinRoom(code, seat, events);
+    } else {
+      synced = { rev: 1, json: JSON.stringify(game) };
+      online.room = await createRoom(seat, packState(synced), events);
+    }
+  } catch (error) {
+    leaveRoom();
+    throw error;
+  }
+  store(ONLINE_STORAGE_KEY, JSON.stringify({ code: online.room.code, seat }));
+  document.documentElement.dataset.seat = String(seat);
+  renderSeat();
+}
+
+/** Back to one screen for both players, with the game as it stands */
+function leaveRoom(): void {
+  online?.room?.leave();
+  online = null;
+  synced = { rev: 0, json: "" };
+  latestRemote = null;
+  forget(ONLINE_STORAGE_KEY);
+  delete document.documentElement.dataset.seat;
+  renderSeat();
+}
+
+// Each tap or key may have changed the game: it is sent right after, and a timer catches the rest
+for (const type of ["pointerdown", "click", "keydown", "input", "change"]) {
+  window.addEventListener(
+    type,
+    () => {
+      if (online) window.setTimeout(() => void pushState(), 0);
+    },
+    true,
+  );
+}
+window.setInterval(() => void pushState(), 500);
+
+/* ---------- Online: this phone's player ---------- */
+
+const seatText = (id: string, text: string): void => {
+  app.querySelector<HTMLElement>(`#${id}`)!.textContent = text;
+};
+
+/** Where each player's CP units sit on the board, to put them back after an online game */
+const abilitiesHome: Record<Player, HTMLElement> = { 1: abilitiesEl[1].parentElement!, 2: abilitiesEl[2].parentElement! };
+
+/** The two clocks, every frame: this phone's large, the opponent's small */
+function renderSeatTimes(): void {
+  if (!online) return;
+  renderTime(seatTime, timeLeft(online.seat));
+  seatOppTime.textContent = formatTime(timeLeft(other(online.seat)));
+}
+
+function renderSeat(): void {
+  for (const player of [1, 2] as const) {
+    const home = online?.seat === player ? seatAbilities : abilitiesHome[player];
+    if (abilitiesEl[player].parentElement !== home) home.append(abilitiesEl[player]);
+  }
+  if (!online) return;
+  const me = online.seat;
+  const them = other(me);
+  const running = isRunning();
+  const mine = running && game.clock.active === me;
+  const room = app.querySelector<HTMLElement>("#seat-room")!;
+  room.classList.toggle("is-offline", !online.connected);
+  room.title = online.connected ? "" : t("onlineOffline");
+  seatText("seat-code", online.room?.code ?? t("onlineConnecting"));
+  seatText("seat-round", inGame(game) ? `${t("round")} ${game.round}` : "");
+  seatText("seat-opp-name", t("player", { n: them }));
+  seatText("seat-opp-score", String(scoreOf(them)));
+  app.querySelector("#seat-opp")!.classList.toggle("is-running", running && game.clock.active === them);
+  const turn = inGame(game) ? ` · ${t(game.turnPlayer === me ? "seatYourTurn" : "seatTheirTurn")}` : "";
+  seatText("seat-who", `${t("player", { n: me })}${turn}`);
+  const hint = !inGame(game)
+    ? t("seatSetup")
+    : isOver()
+      ? t("gameOver")
+      : !running
+        ? t("paused")
+        : t(mine ? "seatTapToPass" : "seatTheirClock");
+  seatText("seat-hint", hint);
+  seatClock.classList.toggle("is-running", mine);
+  seatClock.setAttribute("aria-disabled", String(!mine));
+  renderSeatTimes();
+
+  const turnIdx = scoringTurnIdx(me);
+  seatText("seat-score", String(scoreOf(me)));
+  seatText("seat-turn", inGame(game) ? t("turnN", { n: turnIdx + 1 }) : "");
+  for (const { kind } of SCORE_KINDS) {
+    const points = game.scoreByTurn[me][kind][turnIdx];
+    seatText(`seat-${kind}`, String(points));
+    app.querySelector<HTMLButtonElement>(`#seat-${kind}-plus`)!.disabled = !inGame(game) || points >= MAX_POINTS_PER_TURN;
+    app.querySelector<HTMLButtonElement>(`#seat-${kind}-minus`)!.disabled = !inGame(game) || points === 0;
+  }
+  app.querySelector<HTMLElement>("#seat-bonus-row")!.hidden = !inGame(game) || turnIdx !== MAX_GAME_TURN - 1;
+  seatText("seat-bonus", String(game.endBonus[me]));
+  seatText("seat-cp", String(game.cp[me]));
+  seatText("seat-hand-count", String(game.secondaries[me].hand.length));
+  const playing = inGame(game) && !isOver();
+  app.querySelector<HTMLElement>("#seat-hand")!.hidden = !secondaryCardsOn() || !inGame(game);
+  app.querySelector<HTMLElement>("#seat-mission")!.hidden = !secondaryCardsOn() || !inGame(game) || !primaryCard(me);
+  const pauseBtn = app.querySelector<HTMLButtonElement>("#seat-pause")!;
+  pauseBtn.hidden = !playing;
+  pauseBtn.textContent = t(running ? "seatPause" : "seatResume");
+  app.querySelector<HTMLElement>("#seat-end")!.hidden = !running || game.turnPlayer !== me;
+  app.querySelector<HTMLElement>("#seat-reset")!.hidden = !inGame(game);
+}
+
+/** A tap on this phone's own running clock passes it to the opponent */
+seatClock.addEventListener("click", () => {
+  if (!online || !isRunning() || game.clock.active !== online.seat) return;
+  switchTurn();
+  renderSeat();
+});
+
+const seatActions: [string, (me: Player) => void][] = [
+  ...SCORE_KINDS.flatMap(({ kind }): [string, (me: Player) => void][] => [
+    [`seat-${kind}-minus`, (me) => adjustScore(me, kind, -1)],
+    [`seat-${kind}-plus`, (me) => adjustScore(me, kind, 1)],
+  ]),
+  ["seat-bonus-minus", (me) => adjustEndBonus(me, -1)],
+  ["seat-bonus-plus", (me) => adjustEndBonus(me, 1)],
+  ["seat-cp-minus", (me) => adjustCp(me, -1)],
+  ["seat-cp-plus", (me) => adjustCp(me, 1)],
+  ["seat-abilities-btn", (me) => openAbilities(me)],
+  ["seat-hand", (me) => openCards(me, "hand")],
+  ["seat-mission", (me) => openCards(me, "mission")],
+  [
+    "seat-pause",
+    () => {
+      if (isRunning()) pause();
+      else if (game.phase === "paused") resume();
+    },
+  ],
+  [
+    "seat-end",
+    (me) => {
+      if (isRunning() && game.turnPlayer === me) requestTurnEnd();
+    },
+  ],
+  [
+    "seat-reset",
+    () => {
+      if (inGame(game)) openTurnConfirmModal("reset");
+    },
+  ],
+  ["seat-room", () => openOnlineDialog()],
+];
+for (const [id, action] of seatActions) {
+  app.querySelector<HTMLButtonElement>(`#${id}`)!.addEventListener("click", () => {
+    if (!online) return;
+    action(online.seat);
+    renderSeat();
+  });
+}
+
+/* ---------- Online: the dialog to create or join a game ---------- */
+
+/** The seat picked in the dialog, before going online */
+let pickedSeat: Player = 1;
+let shownQrCode = "";
+
+const shareLink = (code: string, seat: Player): string =>
+  `${location.origin}${location.pathname}?room=${code}&seat=${seat}`;
+
+function showOnlineError(text: string | null): void {
+  onlineError.hidden = text === null;
+  onlineError.textContent = text ?? "";
+}
+
+function renderOnlineDialog(): void {
+  const room = online?.room ?? null;
+  app.querySelector<HTMLElement>("#online-start")!.hidden = !!online;
+  app.querySelector<HTMLElement>("#online-room")!.hidden = !online;
+  app.querySelector<HTMLElement>("#online-leave")!.hidden = !online;
+  setSegmentedValue(onlineSeatPicker, String(pickedSeat));
+  if (!online) return;
+  const them = other(online.seat);
+  seatText("online-room-code", room?.code ?? t("onlineConnecting"));
+  seatText("online-scan", room ? t("onlineScan", { n: them }) : "");
+  seatText("online-status", room ? t(online.seats[them] ? "onlineReady" : "onlineWaiting", { n: them }) : "");
+  app.querySelector<HTMLElement>("#online-share")!.hidden = !room;
+  if (room && shownQrCode !== room.code) {
+    shownQrCode = room.code;
+    void import("qrcode-generator").then(({ default: qrcode }) => {
+      const qr = qrcode(0, "M");
+      qr.addData(shareLink(room.code, them));
+      qr.make();
+      app.querySelector<HTMLElement>("#online-qr")!.innerHTML = qr.createSvgTag({ cellSize: 4, margin: 2, scalable: true });
+    });
+  }
+}
+
+function openOnlineDialog(code = ""): void {
+  closePopovers();
+  if (code) onlineCodeInput.value = code;
+  showOnlineError(null);
+  renderOnlineDialog();
+  onlineOverlay.classList.add("is-visible");
+  onlineOverlay.setAttribute("aria-hidden", "false");
+}
+
+function closeOnlineDialog(): void {
+  onlineOverlay.classList.remove("is-visible");
+  onlineOverlay.setAttribute("aria-hidden", "true");
+  (document.activeElement as HTMLElement | null)?.blur();
+}
+
+function roomErrorText(error: unknown): string {
+  return t(error instanceof Error && error.message === "not-found" ? "onlineNotFound" : "onlineUnavailable");
+}
+
+async function goOnline(seat: Player, code?: string): Promise<void> {
+  showOnlineError(null);
+  try {
+    await connectRoom(seat, code);
+    renderOnlineDialog();
+    // Joining: straight to the game. Creating: the code stays up for the opponent
+    if (code) closeOnlineDialog();
+  } catch (error) {
+    showOnlineError(roomErrorText(error));
+    renderOnlineDialog();
+  }
+}
+
+onSegmentedPick(onlineSeatPicker, (value) => {
+  pickedSeat = value === "2" ? 2 : 1;
+  setSegmentedValue(onlineSeatPicker, value);
+});
+btnOnline.addEventListener("click", () => openOnlineDialog());
+app.querySelector("#online-create")!.addEventListener("click", () => void goOnline(pickedSeat));
+app.querySelector("#online-join")!.addEventListener("click", () => {
+  const code = onlineCodeInput.value.trim().toUpperCase();
+  if (code.length !== ONLINE_CODE_LENGTH) {
+    showOnlineError(t("onlineNotFound"));
+    return;
+  }
+  void goOnline(pickedSeat, code);
+});
+onlineCodeInput.addEventListener("keydown", (e) => {
+  e.stopPropagation();
+  if (e.key === "Enter") app.querySelector<HTMLButtonElement>("#online-join")!.click();
+});
+app.querySelector("#online-share")!.addEventListener("click", () => {
+  const code = online?.room?.code;
+  if (!online || !code) return;
+  const url = shareLink(code, other(online.seat));
+  if (navigator.share) {
+    void navigator.share({ title: t("onlineTitle"), url }).catch(() => undefined);
+    return;
+  }
+  void navigator.clipboard?.writeText(url).then(() => showToast(t("onlineCopied")));
+});
+app.querySelector("#online-leave")!.addEventListener("click", () => {
+  leaveRoom();
+  renderOnlineDialog();
+  closeOnlineDialog();
+  renderAll();
+});
+app.querySelector("#online-close")!.addEventListener("click", closeOnlineDialog);
+
+/** Back in the game this phone was in, or the one a shared link points to */
+function resumeOnline(): void {
+  const params = new URLSearchParams(location.search);
+  const linkCode = params.get("room")?.trim().toUpperCase() ?? "";
+  const linkSeat = Number(params.get("seat"));
+  if (linkCode) history.replaceState(null, "", location.pathname);
+  let target: { code: string; seat: Player } | null = null;
+  if (linkCode && (linkSeat === 1 || linkSeat === 2)) target = { code: linkCode, seat: linkSeat };
+  else if (linkCode) {
+    openOnlineDialog(linkCode);
+    return;
+  } else {
+    try {
+      const saved = JSON.parse(stored(ONLINE_STORAGE_KEY) ?? "null") as { code?: string; seat?: number } | null;
+      if (saved?.code && (saved.seat === 1 || saved.seat === 2)) target = { code: saved.code, seat: saved.seat };
+    } catch {
+      /* nothing saved */
+    }
+  }
+  if (!target) return;
+  pickedSeat = target.seat;
+  const { code, seat } = target;
+  connectRoom(seat, code).catch((error: unknown) => {
+    openOnlineDialog(code);
+    showOnlineError(roomErrorText(error));
+  });
+}
+
+/** Everything on screen, from the state */
+function renderAll(): void {
+  applyTimesToDisplay();
+  setActivePanels();
+  updateButtons();
+  renderTurnDots();
+  renderMiniCounters();
+  renderAbilities(1);
+  renderAbilities(2);
+  renderSeat();
+}
+
 btnStart.addEventListener("click", () => {
   if (inGame(game)) return;
   if (secondaryCardsOn()) openDispositions();
@@ -3491,3 +4137,4 @@ window.addEventListener("pageshow", (e) => {
 
 // Paused or over still counts as a game: its board stays until a reset
 setupPwa(() => inGame(game));
+resumeOnline();
