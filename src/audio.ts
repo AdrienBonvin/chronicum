@@ -6,6 +6,8 @@
  * The music tracks are files, loaded only once picked.
  */
 
+import { keepOffline } from "./pwa";
+
 export type SoundName =
   | "start"
   | "switch"
@@ -522,6 +524,8 @@ function refreshMusic(): void {
 /** The track picked in the menu: heard once the battle is on */
 export function setMusic(track: MusicTrack): void {
   musicTrack = track;
+  // Picked ahead of the battle: on the device by the time it starts, network or not
+  if (track !== "off") keepOffline(MUSIC_SRC[track]);
   refreshMusic();
 }
 
