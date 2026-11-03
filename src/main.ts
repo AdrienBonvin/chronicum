@@ -1,8 +1,34 @@
 import "./style.css";
 import { getLang, setLang, t, type Lang, type StringKey } from "./i18n";
-import { SECONDARY_BY_ID, SECONDARY_CARDS, type SecondaryCard, type Text } from "./secondaries";
+import { SECONDARY_BY_ID, type SecondaryCard, type Text } from "./secondaries";
 import { FACTION_BY_ID, FACTIONS, SPACE_MARINES, SPACE_MARINES_NAME, type FactionGroup } from "./factions";
 import { applyUpdateIfIdle, setupPwa } from "./pwa";
+import {
+  DEFAULT_TIME_SEC,
+  MAX_GAME_TURN,
+  MAX_PLAYER_TURNS,
+  MAX_POINTS_PER_TURN,
+  clampCp,
+  emptyCpHistory,
+  emptyTurnScores,
+  inGame,
+  isStopped,
+  newGame,
+  newSecondaryPile,
+  other,
+  playerTurnSlot,
+  runClock,
+  scoreOf as scoreOfGame,
+  scoringTurnIdx as scoringTurnIdxOf,
+  secondsLeft,
+  setActiveClock,
+  stopClock,
+  type Ability,
+  type AbilityKind,
+  type GameState,
+  type Player,
+  type ScoreKind,
+} from "./game";
 import {
   isMuted,
   playSound,
@@ -16,14 +42,13 @@ import {
 } from "./audio";
 import {
   DISPOSITIONS,
+  PRIMARY_BY_ID,
   primaryFor,
   type Disposition,
   type PrimaryCard,
   type PrimaryItem,
   type PrimarySection,
 } from "./primaries";
-
-type Player = 1 | 2;
 
 const PRESETS = [
   { label: "1h30", sec: 5400 },
@@ -34,12 +59,6 @@ const PRESETS = [
 ] as const;
 
 const CUSTOM_PRESET_VALUE = "custom";
-const DEFAULT_TIME_SEC = 7200;
-
-type ScoreKind = "primary" | "secondary";
-
-/** Mission rule: at most 15 primary and 15 secondary points per player turn */
-const MAX_POINTS_PER_TURN = 15;
 
 /** Open the hand (S) and the primary (P) of the player whose clock runs; physical keys, the same on AZERTY */
 const HAND_KEY = "S";
@@ -54,22 +73,10 @@ const SCORE_KINDS: { kind: ScoreKind; label: StringKey; ariaMinus: StringKey; ar
   { kind: "secondary", label: "secondary", ariaMinus: "ariaSecondaryMinus", ariaPlus: "ariaSecondaryPlus" },
 ];
 
-/** CP effects given by a unit or a character */
-type AbilityKind = "discount" | "round-cp" | "turn-cp";
-
 const ABILITY_KINDS: Record<AbilityKind, { title: StringKey; hint: StringKey; short: StringKey }> = {
   discount: { title: "discountTitle", hint: "discountHint", short: "discountShort" },
   "round-cp": { title: "roundCpTitle", hint: "roundCpHint", short: "roundCpShort" },
   "turn-cp": { title: "turnCpTitle", hint: "turnCpHint", short: "turnCpShort" },
-};
-
-type Ability = {
-  id: number;
-  kind: AbilityKind;
-  /** Its character is gone; a reset brings it back for the next game */
-  lost: boolean;
-  /** Discount only: already used this battle round */
-  spent: boolean;
 };
 
 /** Key kept from the former "Counters" setting so saved choices survive the rename */
@@ -541,24 +548,23 @@ const resultMsg = app.querySelector<HTMLElement>("#result-msg")!;
 const resultTable = app.querySelector<HTMLTableElement>("#result-table")!;
 const btnResultDismiss = app.querySelector<HTMLButtonElement>("#btn-result-dismiss")!;
 
-let seconds1 = DEFAULT_TIME_SEC;
-let seconds2 = DEFAULT_TIME_SEC;
-let active: Player = 1;
-/** Whose *player turn* it is (battle round). Only Enter / next battle round changes this; Space only switches the chess clock (`active`). */
-let turnPlayer: Player = 1;
-let running = false;
-/** True after Pause mid-match; Space resumes without resetting times from inputs */
-let paused = false;
-/** The match ended (scores compared or a clock ran out); only Reset starts a new one */
-let gameOver = false;
-/** Wall-clock ms (`Date.now()`): advances across sleep/lock unlike `performance.now()` in some browsers */
-let lastTickWallMs = 0;
-let raf = 0;
-/** First rAF after startLoop: align clock, don’t subtract (avoids a visible second jump) */
-let alignFirstTick = false;
+/** Everything both players share: see game.ts. The rest of this file is the screen */
+let game: GameState = newGame();
 
-/** Cap single catch-up step (clock skew / bugs); real lock gaps can be minutes */
-const WALL_CLOCK_MAX_CATCHUP_SEC = 3600;
+/** A clock runs */
+const isRunning = (): boolean => game.phase === "running";
+/** The result is known; only Reset starts a new game */
+const isOver = (): boolean => game.phase === "over";
+
+/** Seconds left on a player's clock, now */
+const timeLeft = (player: Player): number => secondsLeft(game.clock, player);
+
+const primaryCard = (player: Player): PrimaryCard | null => {
+  const id = game.primaries[player];
+  return id === null ? null : PRIMARY_BY_ID.get(id)!;
+};
+
+let raf = 0;
 
 let wakeLock: WakeLockSentinel | null = null;
 
@@ -568,62 +574,9 @@ let lastSpaceTime = 0;
 let activeBeforeSpaceSequence: Player = 1;
 const DOUBLE_SPACE_MS = 380;
 
-const MAX_GAME_TURN = 5;
+const scoreOf = (player: Player, kind?: ScoreKind): number => scoreOfGame(game, player, kind);
+const scoringTurnIdx = (player: Player): number => scoringTurnIdxOf(game, player);
 
-/** Current battle round (1–5). Each round has P1’s turn then P2’s; advancing the round puts P1 on the clock. */
-let currentGameTurn = 1;
-
-/** Clocks frozen while players photograph the table between two player turns */
-let photoBreak = false;
-let cp1 = 1;
-let cp2 = 1;
-/** Points per own player turn (turn 1–5 of that player); totals are always derived from these. */
-let scoreByTurn: Record<Player, Record<ScoreKind, number[]>> = { 1: emptyTurnScores(), 2: emptyTurnScores() };
-
-function emptyTurnScores(): Record<ScoreKind, number[]> {
-  return {
-    primary: Array<number>(MAX_GAME_TURN).fill(0),
-    secondary: Array<number>(MAX_GAME_TURN).fill(0),
-  };
-}
-
-function sum(values: number[]): number {
-  return values.reduce((total, n) => total + n, 0);
-}
-
-/** End-of-game mission bonus: primary points that don't count toward the per-turn cap */
-let endBonus: Record<Player, number> = { 1: 0, 2: 0 };
-
-function scoreOf(player: Player, kind?: ScoreKind): number {
-  const turns = scoreByTurn[player];
-  const primary = sum(turns.primary) + endBonus[player];
-  if (kind === "primary") return primary;
-  if (kind === "secondary") return sum(turns.secondary);
-  return primary + sum(turns.secondary);
-}
-
-/**
- * Points count for the scorer's latest own turn: an action started in Player 2's turn 2
- * that completes during Player 1's turn 3 still scores for Player 2's turn 2.
- */
-function scoringTurnIdx(player: Player): number {
-  const ownTurn = player === 1 || turnPlayer === 2 ? currentGameTurn : currentGameTurn - 1;
-  return Math.max(0, Math.min(MAX_GAME_TURN - 1, ownTurn - 1));
-}
-
-/** Manual CP added vs removed (± only) per player-turn slot (5 rounds × 2 players = 10). Not the automatic +1/turn. */
-const MAX_PLAYER_TURNS = MAX_GAME_TURN * 2;
-let cpHistoryAdded1 = Array<number>(MAX_PLAYER_TURNS).fill(0);
-let cpHistoryRemoved1 = Array<number>(MAX_PLAYER_TURNS).fill(0);
-let cpHistoryAdded2 = Array<number>(MAX_PLAYER_TURNS).fill(0);
-let cpHistoryRemoved2 = Array<number>(MAX_PLAYER_TURNS).fill(0);
-
-const MAX_PANEL_CP = 30;
-
-let abilities: Record<Player, Ability[]> = { 1: [], 2: [] };
-let nextAbilityId = 1;
-/** On top of the Command phase CP, a player gains at most 1 CP per battle round (11th edition). */
-let bonusCpGained: Record<Player, boolean> = { 1: false, 2: false };
 /** Whose abilities panel is open */
 let abilitiesPlayer: Player | null = null;
 /** Unit just struck or restored on the board, until the mouse leaves it */
@@ -652,7 +605,7 @@ function openTurnConfirmModal(kind: TurnConfirmKind): void {
   turnConfirmKind = kind;
   if (kind === "start-game") {
     turnConfirmTitle.textContent = t("startTitle");
-    turnConfirmMsg.textContent = photoBreaksToggle.checked ? `${t("startMsg")} ${t("photoBreaksOn")}` : t("startMsg");
+    turnConfirmMsg.textContent = game.options.photoBreaks ? `${t("startMsg")} ${t("photoBreaksOn")}` : t("startMsg");
   } else if (kind === "p1-to-p2") {
     turnConfirmTitle.textContent = t("endTurnTitle");
     turnConfirmMsg.textContent = t("endTurnMsg");
@@ -663,11 +616,11 @@ function openTurnConfirmModal(kind: TurnConfirmKind): void {
     turnConfirmTitle.textContent = t("resetTitle");
     turnConfirmMsg.textContent = t("resetMsg");
   } else if (kind === "unscore") {
-    const scored = pendingUnscore && secondaries[pendingUnscore.player].scored.find(({ id }) => id === pendingUnscore?.id);
+    const scored = pendingUnscore && game.secondaries[pendingUnscore.player].scored.find(({ id }) => id === pendingUnscore?.id);
     turnConfirmTitle.textContent = t("unscoreTitle", { card: scored ? SECONDARY_BY_ID.get(scored.id)!.name : "" });
     turnConfirmMsg.textContent = t("unscoreMsg", { vp: scored?.vp ?? 0, unit: t("vpUnit"), n: (scored?.turn ?? 0) + 1 });
   } else {
-    turnConfirmTitle.textContent = t("nextRoundTitle", { n: currentGameTurn + 1 });
+    turnConfirmTitle.textContent = t("nextRoundTitle", { n: game.round + 1 });
     turnConfirmMsg.textContent = t("nextRoundMsg");
   }
   turnConfirmOverlay.classList.add("is-visible");
@@ -681,7 +634,7 @@ function renderResultTable(): void {
   const roundRows = Array.from(
     { length: MAX_GAME_TURN },
     (_, i) =>
-      `<tr><th scope="row">${t("turnN", { n: i + 1 })}</th>${cells(scoreByTurn[1].primary[i], scoreByTurn[1].secondary[i])}${cells(scoreByTurn[2].primary[i], scoreByTurn[2].secondary[i])}</tr>`,
+      `<tr><th scope="row">${t("turnN", { n: i + 1 })}</th>${cells(game.scoreByTurn[1].primary[i], game.scoreByTurn[1].secondary[i])}${cells(game.scoreByTurn[2].primary[i], game.scoreByTurn[2].secondary[i])}</tr>`,
   ).join("");
   resultTable.innerHTML = `
     <thead>
@@ -696,8 +649,8 @@ function renderResultTable(): void {
       </tr>
     </thead>
     <tbody>${roundRows}${
-      endBonus[1] || endBonus[2]
-        ? `<tr class="result-table__bonus"><th scope="row">${t("endBonus")}</th><td class="is-group">${endBonus[1]}</td><td>–</td><td class="is-group">${endBonus[2]}</td><td>–</td></tr>`
+      game.endBonus[1] || game.endBonus[2]
+        ? `<tr class="result-table__bonus"><th scope="row">${t("endBonus")}</th><td class="is-group">${game.endBonus[1]}</td><td>–</td><td class="is-group">${game.endBonus[2]}</td><td>–</td></tr>`
         : ""
     }</tbody>
     <tfoot>
@@ -718,9 +671,8 @@ function showResultOverlay(heading: string, message: string, winner: Player | nu
 }
 
 function finishGameByScore(): void {
-  running = false;
-  paused = true;
-  gameOver = true;
+  game.phase = "over";
+  stopClock(game.clock);
   lastSpaceTime = 0;
   stopLoop();
   syncInputsFromState();
@@ -755,15 +707,12 @@ function applyConfirmed(kind: TurnConfirmKind): void {
   }
   if (kind === "p1-to-p2") {
     turnSound("turn");
-    turnPlayer = 2;
+    game.turnPlayer = 2;
     gainCpBothPlayers();
     applyAbilityCp(2, ["turn-cp"]);
-    if (active !== 2) {
-      active = 2;
-      if (running) lastTickWallMs = Date.now();
-    }
+    setActiveClock(game.clock, 2);
     setActivePanels();
-    if (photoBreaksToggle.checked) startPhotoBreak();
+    if (game.options.photoBreaks) startPhotoBreak();
     startTurnSecondaries(2);
     return;
   }
@@ -777,7 +726,7 @@ function applyConfirmed(kind: TurnConfirmKind): void {
   }
   advanceGameTurn();
   turnSound("round");
-  if (photoBreaksToggle.checked) startPhotoBreak();
+  if (game.options.photoBreaks) startPhotoBreak();
   startTurnSecondaries(1);
 }
 
@@ -792,22 +741,26 @@ function turnSound(name: "start" | "turn" | "round"): void {
 
 function startPhotoBreak(): void {
   playSound("photo");
-  photoBreak = true;
+  game.photoBreak = true;
+  stopClock(game.clock);
   stopLoop();
   app.classList.add("is-photo-break");
-  photoMsg.textContent = t("photoMsg", { n: turnPlayer });
+  photoMsg.textContent = t("photoMsg", { n: game.turnPlayer });
   photoOverlay.classList.add("is-visible");
   photoOverlay.setAttribute("aria-hidden", "false");
   btnPhotoResume.focus();
 }
 
 function endPhotoBreak(): void {
-  if (!photoBreak) return;
-  photoBreak = false;
+  if (!game.photoBreak) return;
+  game.photoBreak = false;
   app.classList.remove("is-photo-break");
   photoOverlay.classList.remove("is-visible");
   photoOverlay.setAttribute("aria-hidden", "true");
-  if (running) startLoop();
+  if (isRunning()) {
+    runClock(game.clock);
+    startLoop();
+  }
   if (pendingDraw) {
     openCards(pendingDraw.player, "draw", pendingDraw.drawn);
     pendingDraw = null;
@@ -854,8 +807,8 @@ function formatDuration(totalSeconds: number): string {
 }
 
 function renderTimeValue(): void {
-  timeValue.textContent =
-    seconds1 === seconds2 ? formatDuration(seconds1) : `${formatDuration(seconds1)} · ${formatDuration(seconds2)}`;
+  const [a, b] = [timeLeft(1), timeLeft(2)];
+  timeValue.textContent = a === b ? formatDuration(a) : `${formatDuration(a)} · ${formatDuration(b)}`;
 }
 
 /** Setup bar menus: closed by a click outside or Escape */
@@ -1274,11 +1227,11 @@ function updateManualInputsVisibility(): void {
 }
 
 function syncPresetSelectFromState(): void {
-  if (seconds1 !== seconds2) {
+  if (timeLeft(1) !== timeLeft(2)) {
     setTimePreset(CUSTOM_PRESET_VALUE);
     return;
   }
-  const match = PRESETS.find((p) => p.sec === seconds1);
+  const match = PRESETS.find((p) => p.sec === timeLeft(1));
   setTimePreset(match ? String(match.sec) : CUSTOM_PRESET_VALUE);
 }
 
@@ -1286,15 +1239,14 @@ function applyPresetSeconds(totalSeconds: number): void {
   const min = Math.round(totalSeconds / 60);
   m1.value = String(min);
   m2.value = String(min);
-  seconds1 = totalSeconds;
-  seconds2 = totalSeconds;
+  game.clock.left = { 1: totalSeconds, 2: totalSeconds };
   applyTimesToDisplay();
   syncPresetSelectFromState();
 }
 
 function syncInputsFromState(): void {
-  m1.value = String(Math.round(seconds1 / 60));
-  m2.value = String(Math.round(seconds2 / 60));
+  m1.value = String(Math.round(timeLeft(1) / 60));
+  m2.value = String(Math.round(timeLeft(2) / 60));
 }
 
 /** The hour digit is dimmed under an hour, like an unlit segment. */
@@ -1304,27 +1256,27 @@ function renderTime(el: HTMLElement, totalSeconds: number): void {
 }
 
 function applyTimesToDisplay(): void {
-  renderTime(t1, seconds1);
-  renderTime(t2, seconds2);
+  renderTime(t1, timeLeft(1));
+  renderTime(t2, timeLeft(2));
 }
 
 function setActivePanels(): void {
-  if (!running) {
+  if (!isRunning()) {
     panel1.classList.remove("is-active", "is-idle");
     panel2.classList.remove("is-active", "is-idle");
     // Keep showing whose player turn it is while the clocks are paused
-    panel1.classList.toggle("is-turn", paused && !gameOver && turnPlayer === 1);
-    panel2.classList.toggle("is-turn", paused && !gameOver && turnPlayer === 2);
+    panel1.classList.toggle("is-turn", game.phase === "paused" && game.turnPlayer === 1);
+    panel2.classList.toggle("is-turn", game.phase === "paused" && game.turnPlayer === 2);
     return;
   }
-  const activePanel = active === 1 ? panel1 : panel2;
-  const idlePanel = active === 1 ? panel2 : panel1;
+  const activePanel = game.clock.active === 1 ? panel1 : panel2;
+  const idlePanel = game.clock.active === 1 ? panel2 : panel1;
   activePanel.classList.add("is-active");
   activePanel.classList.remove("is-idle");
   idlePanel.classList.remove("is-active");
   idlePanel.classList.add("is-idle");
-  panel1.classList.toggle("is-turn", turnPlayer === 1);
-  panel2.classList.toggle("is-turn", turnPlayer === 2);
+  panel1.classList.toggle("is-turn", game.turnPlayer === 1);
+  panel2.classList.toggle("is-turn", game.turnPlayer === 2);
 }
 
 function setInputsEnabled(on: boolean): void {
@@ -1339,14 +1291,14 @@ function renderKeyHint(): void {
   const enter = `<kbd>${t("keyEnter")}</kbd>`;
   const space = `<kbd>${t("keySpace")}</kbd>`;
   const sep = '<span class="key-hint__sep"></span>';
-  if (running) {
+  if (isRunning()) {
     const hand = secondaryCardsOn()
       ? ` ${sep} <kbd>${HAND_KEY}</kbd> ${t("hintHand")} <kbd>${PRIMARY_KEY}</kbd> ${t("hintPrimary")}`
       : "";
     keyHint.innerHTML = `${enter} ${t("hintEndTurn")} ${sep} ${space} ${t("hintSwitch")} ${sep} ${space}${space} ${t("hintPause")}${hand}`;
-  } else if (gameOver) {
+  } else if (isOver()) {
     keyHint.innerHTML = `<span class="key-hint__status">${t("gameOver")}</span> ${t("hintPlayAgain")}`;
-  } else if (paused) {
+  } else if (isStopped(game)) {
     keyHint.innerHTML = `<span class="key-hint__status">${t("paused")}</span> ${space} ${t("hintResume")}`;
   } else {
     keyHint.innerHTML = `${enter} ${t("hintStart")}`;
@@ -1355,9 +1307,9 @@ function renderKeyHint(): void {
 
 function updateButtons(): void {
   /* Start / pause are keyboard-driven only (Enter / Space / double-space). */
-  app.classList.toggle("match-started", running || paused);
-  app.classList.toggle("is-paused", paused && !running && !gameOver);
-  app.classList.toggle("is-game-over", gameOver);
+  app.classList.toggle("match-started", inGame(game));
+  app.classList.toggle("is-paused", game.phase === "paused");
+  app.classList.toggle("is-game-over", isOver());
   renderKeyHint();
 }
 
@@ -1382,92 +1334,65 @@ async function releaseWakeLock(): Promise<void> {
   wakeLock = null;
 }
 
-/** Returns true if the match ended (time ran out). */
 function warnIfLow(before: number, after: number): void {
   if (TIME_WARNINGS_SEC.some((limit) => before > limit && after <= limit)) playSound("warning");
 }
 
-function subtractActivePlayerTime(elapsedSec: number): boolean {
-  if (elapsedSec <= 0) return false;
-  if (active === 1) {
-    warnIfLow(seconds1, seconds1 - elapsedSec);
-    seconds1 -= elapsedSec;
-    if (seconds1 <= 0) {
-      seconds1 = 0;
-      endGame(2);
-      return true;
-    }
-  } else {
-    warnIfLow(seconds2, seconds2 - elapsedSec);
-    seconds2 -= elapsedSec;
-    if (seconds2 <= 0) {
-      seconds2 = 0;
-      endGame(1);
-      return true;
-    }
-  }
-  return false;
+/** Time left on each clock at the previous frame, to ring the warnings as it goes under them */
+let lastSeenLeft: Record<Player, number> = { 1: 0, 2: 0 };
+
+/** Rings the warnings and ends the game when the running clock is out. Returns true if it ended */
+function checkClock(): boolean {
+  const player = game.clock.active;
+  const left = timeLeft(player);
+  warnIfLow(lastSeenLeft[player], left);
+  lastSeenLeft[player] = left;
+  if (left > 0) return false;
+  stopClock(game.clock);
+  game.clock.left[player] = 0;
+  endGame(other(player));
+  return true;
 }
 
 /**
- * After screen lock / sleep, rAF may not run. Apply wall-clock elapsed time so the
- * timer matches real time when the tab is active again.
+ * After screen lock / sleep, rAF may not run. The time left comes from the wall clock,
+ * so one check puts the screen right when the tab is active again.
  */
-function applyWallClockCatchUp(): void {
-  if (!running || alignFirstTick || photoBreak) return;
-  const wallNow = Date.now();
-  const rawElapsed = (wallNow - lastTickWallMs) / 1000;
-  if (rawElapsed <= 0) return;
-  lastTickWallMs = wallNow;
-  const elapsed = Math.min(rawElapsed, WALL_CLOCK_MAX_CATCHUP_SEC);
-  if (subtractActivePlayerTime(elapsed)) return;
+function refreshClock(): void {
+  if (!isRunning() || game.clock.since === null) return;
+  if (checkClock()) return;
   applyTimesToDisplay();
 }
 
-function tick(_now: number): void {
-  if (!running) return;
-  const wallNow = Date.now();
-  if (alignFirstTick) {
-    lastTickWallMs = wallNow;
-    alignFirstTick = false;
-    raf = requestAnimationFrame(tick);
-    return;
-  }
-  const rawElapsed = (wallNow - lastTickWallMs) / 1000;
-  lastTickWallMs = wallNow;
-  const elapsed = Math.min(Math.max(rawElapsed, 0), WALL_CLOCK_MAX_CATCHUP_SEC);
-
-  if (subtractActivePlayerTime(elapsed)) return;
-
+function tick(): void {
+  if (!isRunning() || game.clock.since === null) return;
+  if (checkClock()) return;
   applyTimesToDisplay();
   raf = requestAnimationFrame(tick);
 }
 
+/** Draws the running clock every frame; the time itself comes from game.clock */
 function startLoop(): void {
   cancelAnimationFrame(raf);
-  lastTickWallMs = Date.now();
-  alignFirstTick = true;
+  lastSeenLeft = { 1: timeLeft(1), 2: timeLeft(2) };
   raf = requestAnimationFrame(tick);
 }
 
 function stopLoop(): void {
   cancelAnimationFrame(raf);
   raf = 0;
-  alignFirstTick = false;
 }
 
 function switchTurn(): void {
-  if (!running) return;
+  if (!isRunning()) return;
   playSound("switch");
-  active = active === 1 ? 2 : 1;
+  setActiveClock(game.clock, other(game.clock.active));
   setActivePanels();
-  lastTickWallMs = Date.now();
 }
 
 function endGame(winner: Player): void {
-  running = false;
-  paused = true;
-  gameOver = true;
+  game.phase = "over";
+  stopClock(game.clock);
   lastSpaceTime = 0;
   void releaseWakeLock();
   stopLoop();
@@ -1478,34 +1403,33 @@ function endGame(winner: Player): void {
   updateButtons();
   applyTimesToDisplay();
   syncPresetSelectFromState();
-  const loser: Player = winner === 1 ? 2 : 1;
+  const loser = other(winner);
   setBattleMusic(false);
   playSound("victory");
   showResultOverlay(t("wins", { n: winner }), t("ranOutOfTime", { n: loser }), winner);
-  panel1.classList.toggle("is-flag", seconds1 <= 0);
-  panel2.classList.toggle("is-flag", seconds2 <= 0);
+  panel1.classList.toggle("is-flag", timeLeft(1) <= 0);
+  panel2.classList.toggle("is-flag", timeLeft(2) <= 0);
+}
+
+/** The clocks as set in the bar, stopped, Player 1's first */
+function clockFromInputs(): GameState["clock"] {
+  const { a, b } = readMinutes();
+  return { left: { 1: a * 60, 2: b * 60 }, active: 1, since: null };
 }
 
 function start(): void {
   closePopovers();
   hideTurnConfirmModal();
   hideResultOverlay();
-  paused = false;
-  gameOver = false;
-  const { a, b } = readMinutes();
-  seconds1 = a * 60;
-  seconds2 = b * 60;
-  if (seconds1 <= 0 || seconds2 <= 0) return;
-  active = 1;
-  turnPlayer = 1;
+  game.phase = "setup";
+  game.clock = clockFromInputs();
+  if (timeLeft(1) <= 0 || timeLeft(2) <= 0) return;
+  game.turnPlayer = 1;
   lastSpaceTime = 0;
-  running = true;
-  cp1 = 1;
-  cp2 = 1;
-  cpHistoryAdded1 = Array<number>(MAX_PLAYER_TURNS).fill(0);
-  cpHistoryRemoved1 = Array<number>(MAX_PLAYER_TURNS).fill(0);
-  cpHistoryAdded2 = Array<number>(MAX_PLAYER_TURNS).fill(0);
-  cpHistoryRemoved2 = Array<number>(MAX_PLAYER_TURNS).fill(0);
+  game.phase = "running";
+  runClock(game.clock);
+  game.cp = { 1: 1, 2: 1 };
+  game.cpHistory = { 1: emptyCpHistory(), 2: emptyCpHistory() };
   renderMiniCounters();
   startRoundAbilities();
   setInputsEnabled(false);
@@ -1516,14 +1440,14 @@ function start(): void {
   startLoop();
   turnSound("start");
   setBattleMusic(true);
-  secondaries = { 1: newSecondaryPile(), 2: newSecondaryPile() };
-  newCardUsed = { 1: false, 2: false };
+  game.secondaries = { 1: newSecondaryPile(), 2: newSecondaryPile() };
+  game.newCardUsed = { 1: false, 2: false };
   startTurnSecondaries(1);
 }
 
 function pause(): void {
-  running = false;
-  paused = true;
+  game.phase = "paused";
+  stopClock(game.clock);
   lastSpaceTime = 0;
   void releaseWakeLock();
   stopLoop();
@@ -1535,20 +1459,15 @@ function pause(): void {
 
 function reset(): void {
   setBattleMusic(false);
-  running = false;
-  paused = false;
-  gameOver = false;
+  game.phase = "setup";
   lastSpaceTime = 0;
   void releaseWakeLock();
   stopLoop();
   hideTurnConfirmModal();
   hideResultOverlay();
-  currentGameTurn = 1;
-  const { a, b } = readMinutes();
-  seconds1 = a * 60;
-  seconds2 = b * 60;
-  active = 1;
-  turnPlayer = 1;
+  game.round = 1;
+  game.clock = clockFromInputs();
+  game.turnPlayer = 1;
   panel1.classList.remove("is-flag");
   panel2.classList.remove("is-flag");
   setInputsEnabled(true);
@@ -1558,26 +1477,22 @@ function reset(): void {
   updateButtons();
   renderTurnDots();
   endPhotoBreak();
-  scoreByTurn = { 1: emptyTurnScores(), 2: emptyTurnScores() };
-  endBonus = { 1: 0, 2: 0 };
-  cp1 = 1;
-  cp2 = 1;
-  cpHistoryAdded1 = Array<number>(MAX_PLAYER_TURNS).fill(0);
-  cpHistoryRemoved1 = Array<number>(MAX_PLAYER_TURNS).fill(0);
-  cpHistoryAdded2 = Array<number>(MAX_PLAYER_TURNS).fill(0);
-  cpHistoryRemoved2 = Array<number>(MAX_PLAYER_TURNS).fill(0);
+  game.scoreByTurn = { 1: emptyTurnScores(), 2: emptyTurnScores() };
+  game.endBonus = { 1: 0, 2: 0 };
+  game.cp = { 1: 1, 2: 1 };
+  game.cpHistory = { 1: emptyCpHistory(), 2: emptyCpHistory() };
   pendingDraw = null;
   afterPutAway = null;
   closeCards(false);
-  primaryCards = { 1: null, 2: null };
-  primaryScored = { 1: new Map(), 2: new Map() };
-  secondaries = { 1: newSecondaryPile(), 2: newSecondaryPile() };
-  newCardUsed = { 1: false, 2: false };
+  game.primaries = { 1: null, 2: null };
+  game.primaryScored = { 1: {}, 2: {} };
+  game.secondaries = { 1: newSecondaryPile(), 2: newSecondaryPile() };
+  game.newCardUsed = { 1: false, 2: false };
   renderMiniCounters();
   closeAbilities();
   for (const player of [1, 2] as const) {
-    bonusCpGained[player] = false;
-    for (const ability of abilities[player]) {
+    game.bonusCpGained[player] = false;
+    for (const ability of game.abilities[player]) {
       ability.lost = false;
       ability.spent = false;
     }
@@ -1594,18 +1509,18 @@ function renderMiniCounters(): void {
     scoreTotalEl[player].textContent = String(scoreOf(player));
     app.querySelector<HTMLElement>(`#p${player}-score-turn`)!.textContent = t("turnN", { n: turnIdx + 1 });
     for (const { kind } of SCORE_KINDS) {
-      const points = scoreByTurn[player][kind][turnIdx];
+      const points = game.scoreByTurn[player][kind][turnIdx];
       app.querySelector<HTMLElement>(`#p${player}-${kind}-val`)!.textContent = String(points);
       const plus = app.querySelector<HTMLButtonElement>(`#p${player}-${kind}-plus`)!;
       plus.disabled = points >= MAX_POINTS_PER_TURN;
       plus.title = plus.disabled ? t("maxPerTurn", { max: MAX_POINTS_PER_TURN }) : "";
     }
     app.querySelector<HTMLElement>(`#p${player}-bonus-row`)!.hidden =
-      !(running || paused) || turnIdx !== MAX_GAME_TURN - 1;
-    app.querySelector<HTMLElement>(`#p${player}-bonus-val`)!.textContent = String(endBonus[player]);
+      !inGame(game) || turnIdx !== MAX_GAME_TURN - 1;
+    app.querySelector<HTMLElement>(`#p${player}-bonus-val`)!.textContent = String(game.endBonus[player]);
   }
-  p1CpVal.textContent = String(cp1);
-  p2CpVal.textContent = String(cp2);
+  p1CpVal.textContent = String(game.cp[1]);
+  p2CpVal.textContent = String(game.cp[2]);
   renderHandButtons();
   updateVisibleScoreTooltip();
   updateVisibleCpTooltip();
@@ -1652,7 +1567,7 @@ function bindScoreTooltip(target: HTMLElement): void {
 }
 
 function renderScoreTooltipContent(player: Player): void {
-  const { primary, secondary } = scoreByTurn[player];
+  const { primary, secondary } = game.scoreByTurn[player];
   scoreTooltipEl.innerHTML = "";
   const legend = document.createElement("div");
   legend.className = "score-tooltip__legend";
@@ -1682,14 +1597,14 @@ function renderScoreTooltipContent(player: Player): void {
     }
     scoreTooltipEl.appendChild(row);
   }
-  if (endBonus[player] > 0) {
+  if (game.endBonus[player] > 0) {
     const row = document.createElement("div");
     row.className = "score-tooltip__row";
     const label = document.createElement("span");
     label.textContent = t("endBonus");
     const value = document.createElement("span");
     value.className = "score-tooltip__value";
-    value.textContent = t("bonusPri", { n: endBonus[player] });
+    value.textContent = t("bonusPri", { n: game.endBonus[player] });
     row.append(label, value);
     scoreTooltipEl.appendChild(row);
   }
@@ -1747,14 +1662,13 @@ function formatCpHistoryAddedRemoved(added: number, removed: number): string {
 }
 
 function renderCpTooltipContent(player: Player): void {
-  const addedHist = player === 1 ? cpHistoryAdded1 : cpHistoryAdded2;
-  const removedHist = player === 1 ? cpHistoryRemoved1 : cpHistoryRemoved2;
+  const { added: addedHist, removed: removedHist } = game.cpHistory[player];
   cpTooltipEl.innerHTML = "";
   const legend = document.createElement("div");
   legend.className = "score-tooltip__legend";
   legend.textContent = t("cpLegend");
   cpTooltipEl.appendChild(legend);
-  const matchActive = running || paused;
+  const matchActive = inGame(game);
   const curSlot = matchActive ? currentPlayerTurnSlot() : -1;
   for (let i = 0; i < MAX_PLAYER_TURNS; i++) {
     const row = document.createElement("div");
@@ -1792,12 +1706,11 @@ function updateVisibleCpTooltip(): void {
 }
 
 function activeAbilities(player: Player, kind: AbilityKind): Ability[] {
-  return abilities[player].filter((ability) => ability.kind === kind && !ability.lost);
+  return game.abilities[player].filter((ability) => ability.kind === kind && !ability.lost);
 }
 
 function gainCp(player: Player): void {
-  if (player === 1) cp1 = clampPanelCp(cp1 + 1);
-  else cp2 = clampPanelCp(cp2 + 1);
+  game.cp[player] = clampCp(game.cp[player] + 1);
   renderMiniCounters();
 }
 
@@ -1805,11 +1718,11 @@ function gainCp(player: Player): void {
 function applyAbilityCp(player: Player, kinds: ("round-cp" | "turn-cp")[]): void {
   const [source] = kinds.flatMap((kind) => activeAbilities(player, kind));
   if (!source) return;
-  if (bonusCpGained[player]) {
+  if (game.bonusCpGained[player]) {
     showCpToast(player, t("cpCapReached"), false);
     return;
   }
-  bonusCpGained[player] = true;
+  game.bonusCpGained[player] = true;
   gainCp(player);
   playSound("cp");
   showCpToast(player, t("cpGained"), true);
@@ -1819,8 +1732,8 @@ function applyAbilityCp(player: Player, kinds: ("round-cp" | "turn-cp")[]): void
 /** Start of a battle round: discounts come back, the CP cap resets, then CP abilities trigger. */
 function startRoundAbilities(): void {
   for (const player of [1, 2] as const) {
-    bonusCpGained[player] = false;
-    for (const ability of abilities[player]) ability.spent = false;
+    game.bonusCpGained[player] = false;
+    for (const ability of game.abilities[player]) ability.spent = false;
   }
   // A new round is also the start of Player 1's turn
   applyAbilityCp(1, ["round-cp", "turn-cp"]);
@@ -1915,7 +1828,7 @@ function renderAbilities(player: Player): void {
   const chips = document.createElement("div");
   chips.className = "abilities__chips";
   // Lost units stay on the board, struck through, so a misclick is one click away from undo
-  for (const ability of abilities[player]) {
+  for (const ability of game.abilities[player]) {
     if (ability.kind === "discount") {
       coins.appendChild(cpCoinEl(ability));
     } else {
@@ -1939,8 +1852,8 @@ let restoredCoinId: number | null = null;
 
 /** A click on a spent coin brings it back: a misclick is one click away from undo */
 function spendCpCoin(player: Player, coin: HTMLButtonElement): void {
-  if (!running && !paused) return;
-  const ability = abilities[player].find(({ id }) => String(id) === coin.dataset.abilityId);
+  if (!inGame(game)) return;
+  const ability = game.abilities[player].find(({ id }) => String(id) === coin.dataset.abilityId);
   if (!ability || ability.lost || coin.classList.contains("is-animating")) return;
   if (ability.spent) {
     playSound("coinRestore");
@@ -2005,7 +1918,7 @@ type AbilitySlot = "discount" | "cp";
 const isCpKind = (kind: AbilityKind): boolean => kind !== "discount";
 
 function abilityInSlot(player: Player, slot: AbilitySlot): Ability | undefined {
-  return abilities[player].find((ability) => (slot === "discount" ? !isCpKind(ability.kind) : isCpKind(ability.kind)));
+  return game.abilities[player].find((ability) => (slot === "discount" ? !isCpKind(ability.kind) : isCpKind(ability.kind)));
 }
 
 /** The timing choice slides in only when +1 CP was just turned on, not on every redraw */
@@ -2063,9 +1976,9 @@ function renderAbilityList(): void {
 function toggleAbilitySlot(player: Player, slot: AbilitySlot): void {
   const existing = abilityInSlot(player, slot);
   if (existing) {
-    abilities[player] = abilities[player].filter((ability) => ability !== existing);
+    game.abilities[player] = game.abilities[player].filter((ability) => ability !== existing);
   } else {
-    abilities[player].push({ id: nextAbilityId++, kind: slot === "discount" ? "discount" : "turn-cp", lost: false, spent: false });
+    game.abilities[player].push({ id: game.nextAbilityId++, kind: slot === "discount" ? "discount" : "turn-cp", lost: false, spent: false });
     revealCpTiming = slot === "cp";
   }
   renderAbilityList();
@@ -2082,7 +1995,7 @@ function setCpTiming(player: Player, kind: AbilityKind): void {
 }
 
 function toggleAbilityLost(player: Player, id: number): void {
-  const ability = abilities[player].find((candidate) => candidate.id === id);
+  const ability = game.abilities[player].find((candidate) => candidate.id === id);
   if (!ability) return;
   ability.lost = !ability.lost;
   settlingAbilityId = id;
@@ -2093,27 +2006,6 @@ function toggleAbilityLost(player: Player, id: number): void {
 }
 
 /* ---------- Secondary mission cards (tactical) ---------- */
-
-/** A scored card keeps what it gave and when, so a misclick can be undone */
-type ScoredSecondary = { id: string; vp: number; turn: number };
-type SecondaryPile = { deck: string[]; hand: string[]; discard: string[]; scored: ScoredSecondary[] };
-
-function shuffled<T>(items: T[]): T[] {
-  const result = [...items];
-  for (let i = result.length - 1; i > 0; i--) {
-    const j = Math.floor(Math.random() * (i + 1));
-    [result[i], result[j]] = [result[j], result[i]];
-  }
-  return result;
-}
-
-function newSecondaryPile(): SecondaryPile {
-  return { deck: shuffled(SECONDARY_CARDS.map(({ id }) => id)), hand: [], discard: [], scored: [] };
-}
-
-let secondaries: Record<Player, SecondaryPile> = { 1: newSecondaryPile(), 2: newSecondaryPile() };
-/** Swapping a card for a new one (−1 CP) is allowed once per battle */
-let newCardUsed: Record<Player, boolean> = { 1: false, 2: false };
 
 const WHEN_KEYS = { yours: "whenYours", any: "whenAny", opponent: "whenOpponent" } as const;
 
@@ -2144,11 +2036,11 @@ let putAwayTimer: number | null = null;
 let afterPutAway: (() => void) | null = null;
 
 function secondaryCardsOn(): boolean {
-  return secondaryCardsToggle.checked;
+  return game.options.cards;
 }
 
 function drawSecondaries(player: Player, count: number): string[] {
-  const pile = secondaries[player];
+  const pile = game.secondaries[player];
   const drawn = pile.deck.splice(0, count);
   pile.hand.push(...drawn);
   return drawn;
@@ -2161,15 +2053,15 @@ function startTurnSecondaries(player: Player): void {
   renderHandButtons();
   if (drawn.length === 0) {
     // Nothing left to draw: the Command phase scores still come up
-    if (!photoBreak && primaryScoresInCommand(player)) openCards(player, "command");
+    if (!game.photoBreak && primaryScoresInCommand(player)) openCards(player, "command");
     return;
   }
-  if (photoBreak) pendingDraw = { player, drawn };
+  if (game.photoBreak) pendingDraw = { player, drawn };
   else openCards(player, "draw", drawn);
 }
 
 function moveSecondary(player: Player, id: string, to: "discard" | "deck"): void {
-  const pile = secondaries[player];
+  const pile = game.secondaries[player];
   pile.hand = pile.hand.filter((cardId) => cardId !== id);
   if (to === "discard") pile.discard.push(id);
   // Shuffled back: anywhere in the deck
@@ -2178,7 +2070,7 @@ function moveSecondary(player: Player, id: string, to: "discard" | "deck"): void
 
 /** Card points go to the secondary score of the player's turn, within the 15 per turn */
 function addSecondaryPoints(player: Player, vp: number): number {
-  const turns = scoreByTurn[player].secondary;
+  const turns = game.scoreByTurn[player].secondary;
   const turnIdx = scoringTurnIdx(player);
   const added = Math.max(0, Math.min(vp, MAX_POINTS_PER_TURN - turns[turnIdx]));
   turns[turnIdx] += added;
@@ -2191,9 +2083,9 @@ function renderHandButtons(): void {
   app.classList.toggle("uses-secondary-cards", secondaryCardsOn());
   for (const player of [1, 2] as const) {
     const button = handButtonEl[player];
-    const count = secondaries[player].hand.length;
-    cardButtonsEl[player].hidden = !secondaryCardsOn() || !(running || paused);
-    primaryButtonEl[player].hidden = !primaryCards[player];
+    const count = game.secondaries[player].hand.length;
+    cardButtonsEl[player].hidden = !secondaryCardsOn() || !inGame(game);
+    primaryButtonEl[player].hidden = !primaryCard(player);
     button.querySelector(".score-box__hand-count")!.textContent = String(count);
     button.setAttribute("aria-label", t("handAria", { n: count }));
   }
@@ -2202,8 +2094,8 @@ function renderHandButtons(): void {
 /** The cards of the player whose clock runs or, while paused, whose turn it is */
 function cardKeyPlayer(): Player | null {
   if (!secondaryCardsOn()) return null;
-  if (running) return active;
-  return paused ? turnPlayer : null;
+  if (isRunning()) return game.clock.active;
+  return isStopped(game) ? game.turnPlayer : null;
 }
 
 /** S opens the hand, P the primary */
@@ -2234,7 +2126,7 @@ function openCards(player: Player, mode: typeof cardsMode, drawn: string[] = [])
   if (mode === "draw") renderCards(drawn);
   else if (mode === "primary") renderCards([primaryCardId(1), primaryCardId(2)]);
   else {
-    const pile = secondaries[player];
+    const pile = game.secondaries[player];
     renderCards([primaryCardId(player), ...pile.hand, ...pile.scored.map(({ id }) => id)]);
   }
   // Every card that comes on screen is heard: the primaries clash, the others swish in
@@ -2285,11 +2177,11 @@ function scoresAtTurnEnd(owner: Player, when: SecondaryCard["when"] | PrimarySec
   if (when === undefined || when === "any") return true;
   if (when === "end") return endTurnKind === "finish-game";
   if (when === "command") return false;
-  return when === (owner === turnPlayer ? "yours" : "opponent");
+  return when === (owner === game.turnPlayer ? "yours" : "opponent");
 }
 
 function turnEndSecondaries(owner: Player): string[] {
-  return secondaries[owner].hand.filter((id) => scoresAtTurnEnd(owner, SECONDARY_BY_ID.get(id)!.when));
+  return game.secondaries[owner].hand.filter((id) => scoresAtTurnEnd(owner, SECONDARY_BY_ID.get(id)!.when));
 }
 
 /** Which primary lines score in the view: at a turn end or in the Command phase, only that moment's */
@@ -2300,12 +2192,12 @@ function scoresInView(owner: Player, when: PrimarySection["when"]): boolean {
 }
 
 function primaryScoresInCommand(owner: Player): boolean {
-  const card = primaryCards[owner];
+  const card = primaryCard(owner);
   return !!card && card.sections.some((section) => section.when === "command" && sectionOpen(owner, section));
 }
 
 function primaryScoresAtTurnEnd(owner: Player): boolean {
-  const card = primaryCards[owner];
+  const card = primaryCard(owner);
   return !!card && card.sections.some((section) => sectionOpen(owner, section) && scoresAtTurnEnd(owner, section.when));
 }
 
@@ -2315,8 +2207,8 @@ const turnEndCount = (owner: Player): number =>
 /** With the cards, ending a turn first shows what scores now; with nothing to score, the plain confirmation */
 function requestEndTurn(kind: TurnConfirmKind): void {
   endTurnKind = kind;
-  const opponent: Player = turnPlayer === 1 ? 2 : 1;
-  endTurnSides = secondaryCardsOn() ? [turnPlayer, opponent].filter((side) => turnEndCount(side) > 0) : [];
+  const opponent: Player = game.turnPlayer === 1 ? 2 : 1;
+  endTurnSides = secondaryCardsOn() ? [game.turnPlayer, opponent].filter((side) => turnEndCount(side) > 0) : [];
   if (endTurnSides.length === 0) {
     endTurnKind = null;
     openTurnConfirmModal(kind);
@@ -2339,7 +2231,7 @@ function cardsTabs(): CardsTab[] {
     }));
   }
   if ((cardsMode === "hand" || cardsMode === "scored") && cardsPlayer !== null) {
-    const pile = secondaries[cardsPlayer];
+    const pile = game.secondaries[cardsPlayer];
     return [
       { value: "hand", label: t("secondaryHand"), count: pile.hand.length, side: cardsPlayer, on: cardsMode === "hand" },
       { value: "scored", label: t("scoredTab"), count: pile.scored.length, side: cardsPlayer, on: cardsMode === "scored" },
@@ -2374,7 +2266,7 @@ function renderCardsSwitch(): void {
 
 /** Scored cards are a rare detour, to undo a misclick: a quiet link, only once something is scored */
 function renderScoredLink(): void {
-  const scored = cardsPlayer === null ? 0 : secondaries[cardsPlayer].scored.length;
+  const scored = cardsPlayer === null ? 0 : game.secondaries[cardsPlayer].scored.length;
   cardsSwitch.hidden = cardsMode === "hand" && scored === 0;
   if (cardsSwitch.hidden) return;
   const link = document.createElement("button");
@@ -2395,7 +2287,7 @@ function showCardsTab(value: string): void {
 function renderCards(dealIds: string[] = []): void {
   if (cardsPlayer === null) return;
   const player = cardsPlayer;
-  const pile = secondaries[player];
+  const pile = game.secondaries[player];
   const closeLabel: StringKey =
     cardsMode === "primary" ? "startGame" : cardsMode !== "end-turn" ? "continue" : endTurnKind === "finish-game" ? "endBattleBtn" : "endTurnBtn";
   btnCardsClose.querySelector("span")!.textContent = t(closeLabel);
@@ -2427,8 +2319,8 @@ function renderCards(dealIds: string[] = []): void {
           ? turnEndSecondaries(player)
           : [];
   if (cardsMode === "end-turn") {
-    cardsTitle.textContent = t("endTurnScoringTitle", { n: turnPlayer });
-    cardsSub.textContent = player === turnPlayer ? t("endTurnScoringSub") : t("endTurnOpponentSub", { n: player });
+    cardsTitle.textContent = t("endTurnScoringTitle", { n: game.turnPlayer });
+    cardsSub.textContent = player === game.turnPlayer ? t("endTurnScoringSub") : t("endTurnOpponentSub", { n: player });
   } else if (cardsMode === "command") {
     cardsTitle.textContent = t("commandTitle", { n: player });
     cardsSub.textContent = t("commandSub");
@@ -2446,7 +2338,7 @@ function renderCards(dealIds: string[] = []): void {
   // The primary card stays apart from the hand: on its own, or at a turn end when it scores
   const withPrimary =
     cardsMode === "mission" || cardsMode === "command" || (cardsMode === "end-turn" && primaryScoresAtTurnEnd(player));
-  const primary = withPrimary && primaryCards[player] ? [primaryCardEl(player, 0, dealIds.includes(primaryCardId(player)), true)] : [];
+  const primary = withPrimary && primaryCard(player) ? [primaryCardEl(player, 0, dealIds.includes(primaryCardId(player)), true)] : [];
   const cards = [
     ...primary,
     ...ids.map((id, index) => secondaryCardEl(player, id, index + primary.length, dealIds.includes(id))),
@@ -2563,7 +2455,7 @@ function secondaryCardEl(player: Player, id: string, index: number, deal: boolea
   el.querySelector(".sec-card__options")!.replaceChildren(...options);
 
   const actions: HTMLElement[] = [];
-  if (cardsMode === "draw" && data.redraw && drawnIds.includes(id) && secondaries[player].deck.length > 0) {
+  if (cardsMode === "draw" && data.redraw && drawnIds.includes(id) && game.secondaries[player].deck.length > 0) {
     const redraw = document.createElement("button");
     redraw.type = "button";
     redraw.className = "sec-action sec-action--redraw";
@@ -2573,7 +2465,7 @@ function secondaryCardEl(player: Player, id: string, index: number, deal: boolea
     redraw.querySelector("small")!.textContent = t("redrawIf", { cond: data.redraw.condition[lang] });
     actions.push(redraw);
   }
-  const scored = cardsMode === "scored" ? secondaries[player].scored.find((entry) => entry.id === id) : undefined;
+  const scored = cardsMode === "scored" ? game.secondaries[player].scored.find((entry) => entry.id === id) : undefined;
   if (scored) {
     const stamp = document.createElement("span");
     stamp.className = "sec-card__stamp";
@@ -2590,7 +2482,7 @@ function secondaryCardEl(player: Player, id: string, index: number, deal: boolea
     swapCard.type = "button";
     swapCard.className = "sec-action sec-action--discard";
     swapCard.dataset.action = "swap";
-    swapCard.textContent = newCardUsed[player] ? t("swapUsed") : t("swapCp");
+    swapCard.textContent = game.newCardUsed[player] ? t("swapUsed") : t("swapCp");
     swapCard.disabled = !canSwapSecondary(player);
     actions.push(swapCard);
   }
@@ -2666,7 +2558,7 @@ function scoreSecondary(player: Player, id: string, vp: number, cardEl: HTMLElem
   const turn = scoringTurnIdx(player);
   const added = addSecondaryPoints(player, vp);
   moveSecondary(player, id, "discard");
-  secondaries[player].scored.push({ id, vp: added, turn });
+  game.secondaries[player].scored.push({ id, vp: added, turn });
   playSound("score");
   playCardExit(cardEl, "is-scored", `+${added}`);
 }
@@ -2675,20 +2567,20 @@ function scoreSecondary(player: Player, id: string, vp: number, cardEl: HTMLElem
 let pendingUnscore: { player: Player; id: string } | null = null;
 
 function askUnscore(player: Player, id: string): void {
-  if (gameOver) return;
+  if (isOver()) return;
   pendingUnscore = { player, id };
   openTurnConfirmModal("unscore");
 }
 
 /** A score clicked by mistake: its points leave the turn they went to, the card goes back to the hand */
 function restoreSecondary(player: Player, id: string): void {
-  const pile = secondaries[player];
+  const pile = game.secondaries[player];
   const scored = pile.scored.find((entry) => entry.id === id);
   if (!scored) return;
   pile.scored = pile.scored.filter((entry) => entry !== scored);
   pile.discard = pile.discard.filter((cardId) => cardId !== id);
   pile.hand.push(id);
-  const turns = scoreByTurn[player].secondary;
+  const turns = game.scoreByTurn[player].secondary;
   turns[scored.turn] = Math.max(0, turns[scored.turn] - scored.vp);
   playSound("undo");
   renderMiniCounters();
@@ -2701,14 +2593,14 @@ function restoreSecondary(player: Player, id: string): void {
 }
 
 function canSwapSecondary(player: Player): boolean {
-  return !newCardUsed[player] && (player === 1 ? cp1 : cp2) >= 1 && secondaries[player].deck.length > 0;
+  return !game.newCardUsed[player] && game.cp[player] >= 1 && game.secondaries[player].deck.length > 0;
 }
 
 /** −1 CP, once per battle: the card is discarded and a new one is dealt in its place */
 function swapSecondary(player: Player, id: string, cardEl: HTMLElement): void {
   if (!canSwapSecondary(player)) return;
   adjustCp(player, -1);
-  newCardUsed[player] = true;
+  game.newCardUsed[player] = true;
   const [replacement] = drawSecondaries(player, 1);
   moveSecondary(player, id, "discard");
   drawnIds = drawnIds.map((cardId) => (cardId === id ? replacement : cardId));
@@ -2734,11 +2626,6 @@ function redrawSecondary(player: Player, id: string, cardEl: HTMLElement): void 
 
 /* ---------- Force dispositions and primary missions ---------- */
 
-let dispositions: Record<Player, Disposition | null> = { 1: null, 2: null };
-let primaryCards: Record<Player, PrimaryCard | null> = { 1: null, 2: null };
-/** Points scored by each primary line and turn: one score per line per turn, a second click undoes it */
-let primaryScored: Record<Player, Map<string, number>> = { 1: new Map(), 2: new Map() };
-
 /** With the cards on, the game starts by choosing force dispositions */
 function requestStart(): void {
   if (secondaryCardsOn()) openDispositions();
@@ -2763,20 +2650,20 @@ function renderDispositions(): void {
     const player = Number(group.dataset.player) as Player;
     group.querySelectorAll<HTMLButtonElement>(".dispo-option").forEach((option) => {
       const data = DISPOSITIONS.find(({ id }) => id === option.dataset.value)!;
-      option.setAttribute("aria-pressed", String(dispositions[player] === data.id));
+      option.setAttribute("aria-pressed", String(game.dispositions[player] === data.id));
       option.querySelector(".dispo-option__hint")!.textContent = data.hint[lang];
     });
   });
-  btnDispoOk.disabled = !dispositions[1] || !dispositions[2];
+  btnDispoOk.disabled = !game.dispositions[1] || !game.dispositions[2];
 }
 
 /** Both dispositions known: each player gets the card of their deck facing the other's */
 function revealPrimaries(): void {
-  const mine = dispositions[1];
-  const theirs = dispositions[2];
+  const mine = game.dispositions[1];
+  const theirs = game.dispositions[2];
   if (!mine || !theirs) return;
-  primaryCards = { 1: primaryFor(mine, theirs), 2: primaryFor(theirs, mine) };
-  primaryScored = { 1: new Map(), 2: new Map() };
+  game.primaries = { 1: primaryFor(mine, theirs).id, 2: primaryFor(theirs, mine).id };
+  game.primaryScored = { 1: {}, 2: {} };
   closeDispositions();
   // The battle music rises with the VS
   setBattleMusic(true);
@@ -2790,7 +2677,7 @@ function sectionTurnKey(player: Player, section: PrimarySection): string {
 /** Whether a primary section scores now, from the player's own battle round */
 function sectionOpen(player: Player, section: PrimarySection): boolean {
   const turnIdx = scoringTurnIdx(player);
-  if (section.rounds === "end") return gameOver || turnIdx === MAX_GAME_TURN - 1;
+  if (section.rounds === "end") return isOver() || turnIdx === MAX_GAME_TURN - 1;
   const round = turnIdx + 1;
   return round >= section.rounds[0] && round <= section.rounds[1];
 }
@@ -2824,7 +2711,7 @@ function stepperHtml(field: "count" | "bonus", value: number): string {
 }
 
 function primaryCardEl(player: Player, index: number, deal: boolean, scorable: boolean): HTMLElement {
-  const data = primaryCards[player]!;
+  const data = primaryCard(player)!;
   const lang = getLang();
   const unit = t("vpUnit");
   const el = document.createElement("article");
@@ -2851,7 +2738,7 @@ function primaryCardEl(player: Player, index: number, deal: boolean, scorable: b
   note.textContent = data.note ? data.note[lang] : "";
   note.hidden = !data.note;
 
-  const scored = primaryScored[player];
+  const scored = game.primaryScored[player];
   const sections = data.sections.map((section, s) => {
     const turnKey = sectionTurnKey(player, section);
     // At a turn end, only what scores at that moment: a Command phase line waits for the next turn
@@ -2877,7 +2764,7 @@ function primaryCardEl(player: Player, index: number, deal: boolean, scorable: b
     }
     section.items.forEach((item, i) => {
       const key = `${turnKey}|${s}|${i}`;
-      const done = scored.get(key);
+      const done = scored[key];
       const blocked = !open;
       if ("vp" in item || done !== undefined) {
         // A fixed score, or any line already scored this turn (click again to undo)
@@ -2947,19 +2834,19 @@ function primaryCardEl(player: Player, index: number, deal: boolean, scorable: b
 
 /** Primary points: the turn's primary score (15 max) or, at the end of the battle, the end bonus */
 function togglePrimaryScore(player: Player, s: number, i: number, vp: number): void {
-  const card = primaryCards[player];
+  const card = primaryCard(player);
   if (!card) return;
   const section = card.sections[s];
   const turnKey = sectionTurnKey(player, section);
   const key = `${turnKey}|${s}|${i}`;
-  const scored = primaryScored[player];
-  const done = scored.get(key);
+  const scored = game.primaryScored[player];
+  const done = scored[key];
   // The points of a line leave the turn, or the end bonus, they went to
   const takeBack = (lineKey: string, points: number): void => {
-    scored.delete(lineKey);
-    if (turnKey === "end") endBonus[player] = Math.max(0, endBonus[player] - points);
+    delete scored[lineKey];
+    if (turnKey === "end") game.endBonus[player] = Math.max(0, game.endBonus[player] - points);
     else {
-      const turns = scoreByTurn[player].primary;
+      const turns = game.scoreByTurn[player].primary;
       turns[Number(turnKey)] = Math.max(0, turns[Number(turnKey)] - points);
     }
   };
@@ -2972,19 +2859,19 @@ function togglePrimaryScore(player: Player, s: number, i: number, vp: number): v
     if (section.pickOne) {
       section.items.forEach((_, other) => {
         const otherKey = `${turnKey}|${s}|${other}`;
-        const points = scored.get(otherKey);
+        const points = scored[otherKey];
         if (points !== undefined) takeBack(otherKey, points);
       });
     }
     let added = vp;
-    if (turnKey === "end") endBonus[player] += vp;
+    if (turnKey === "end") game.endBonus[player] += vp;
     else {
-      const turns = scoreByTurn[player].primary;
+      const turns = game.scoreByTurn[player].primary;
       const turnIdx = Number(turnKey);
       added = Math.max(0, Math.min(vp, MAX_POINTS_PER_TURN - turns[turnIdx]));
       turns[turnIdx] += added;
     }
-    scored.set(key, added);
+    scored[key] = added;
     playSound("score");
   }
   renderMiniCounters();
@@ -2992,7 +2879,7 @@ function togglePrimaryScore(player: Player, s: number, i: number, vp: number): v
 }
 
 function adjustScore(player: Player, kind: ScoreKind, delta: 1 | -1): void {
-  const turns = scoreByTurn[player][kind];
+  const turns = game.scoreByTurn[player][kind];
   const turnIdx = scoringTurnIdx(player);
   if (delta > 0) {
     if (turns[turnIdx] >= MAX_POINTS_PER_TURN) return;
@@ -3005,42 +2892,25 @@ function adjustScore(player: Player, kind: ScoreKind, delta: 1 | -1): void {
   renderMiniCounters();
 }
 
-function clampPanelCp(n: number): number {
-  return Math.max(0, Math.min(MAX_PANEL_CP, n));
-}
-
-function playerTurnSlotIndex(round: number, player: Player): number {
-  return (round - 1) * 2 + (player - 1);
-}
-
 function currentPlayerTurnSlot(): number {
-  return playerTurnSlotIndex(currentGameTurn, turnPlayer);
+  return playerTurnSlot(game.round, game.turnPlayer);
 }
 
 function recordCpManualAdjust(player: Player, slot: number, applied: number): void {
   if (applied === 0 || slot < 0 || slot >= MAX_PLAYER_TURNS) return;
-  if (applied > 0) {
-    if (player === 1) cpHistoryAdded1[slot] += applied;
-    else cpHistoryAdded2[slot] += applied;
-  } else {
-    const r = -applied;
-    if (player === 1) cpHistoryRemoved1[slot] += r;
-    else cpHistoryRemoved2[slot] += r;
-  }
+  const history = game.cpHistory[player];
+  if (applied > 0) history.added[slot] += applied;
+  else history.removed[slot] += -applied;
 }
 
 function adjustCp(player: Player, delta: number): void {
   if (delta === 0) return;
-  const current = player === 1 ? cp1 : cp2;
-  const next = clampPanelCp(current + delta);
+  const current = game.cp[player];
+  const next = clampCp(current + delta);
   const applied = next - current;
   if (applied === 0) return;
-  if (player === 1) cp1 = next;
-  else cp2 = next;
-  if (running || paused) {
-    const slot = currentPlayerTurnSlot();
-    recordCpManualAdjust(player, slot, applied);
-  }
+  game.cp[player] = next;
+  if (inGame(game)) recordCpManualAdjust(player, currentPlayerTurnSlot(), applied);
   renderMiniCounters();
 }
 
@@ -3049,13 +2919,13 @@ function adjustCp(player: Player, delta: number): void {
  * Not recorded in manual CP history (tooltip: added/removed per turn only).
  */
 function gainCpBothPlayers(): void {
-  cp1 = clampPanelCp(cp1 + 1);
-  cp2 = clampPanelCp(cp2 + 1);
+  game.cp[1] = clampCp(game.cp[1] + 1);
+  game.cp[2] = clampCp(game.cp[2] + 1);
   renderMiniCounters();
 }
 
 function adjustEndBonus(player: Player, delta: 1 | -1): void {
-  endBonus[player] = Math.max(0, endBonus[player] + delta);
+  game.endBonus[player] = Math.max(0, game.endBonus[player] + delta);
   renderMiniCounters();
 }
 
@@ -3136,7 +3006,7 @@ dispoOverlay.addEventListener("click", (e) => {
   const option = (e.target as HTMLElement).closest<HTMLButtonElement>(".dispo-option");
   if (!option) return;
   const player = Number(option.closest<HTMLElement>(".dispo-options")!.dataset.player) as Player;
-  dispositions[player] = option.dataset.value as Disposition;
+  game.dispositions[player] = option.dataset.value as Disposition;
   renderDispositions();
 });
 btnDispoOk.addEventListener("click", revealPrimaries);
@@ -3145,6 +3015,7 @@ window.addEventListener("resize", () => {
   if (cardsPlayer !== null) layoutCardsRow();
 });
 secondaryCardsToggle.addEventListener("change", () => {
+  game.options.cards = secondaryCardsToggle.checked;
   secondaryCardsToggle.blur();
   renderHandButtons();
 });
@@ -3159,7 +3030,7 @@ cardsRow.addEventListener("click", (e) => {
   const cardEl = button?.closest<HTMLElement>(".sec-card");
   if (button && cardEl?.dataset.primaryPlayer && ["mission", "command", "end-turn"].includes(cardsMode)) {
     const owner = Number(cardEl.dataset.primaryPlayer) as Player;
-    const card = primaryCards[owner];
+    const card = primaryCard(owner);
     const s = Number(button.dataset.section ?? button.closest<HTMLElement>(".sec-option--repeat")?.dataset.section);
     const row = button.closest<HTMLElement>(".sec-option--repeat");
     const i = Number(button.dataset.item ?? row?.dataset.item);
@@ -3229,26 +3100,25 @@ function renderTurnDots(): void {
     dot.setAttribute("role", "img");
     dot.setAttribute(
       "aria-label",
-      t(i === currentGameTurn ? "dotCurrent" : i < currentGameTurn ? "dotDone" : "dotNext", { n: i }),
+      t(i === game.round ? "dotCurrent" : i < game.round ? "dotDone" : "dotNext", { n: i }),
     );
-    if (i < currentGameTurn) dot.classList.add("turn-dot--past");
-    else if (i === currentGameTurn) dot.classList.add("turn-dot--current");
+    if (i < game.round) dot.classList.add("turn-dot--past");
+    else if (i === game.round) dot.classList.add("turn-dot--current");
     else dot.classList.add("turn-dot--future");
     turnDots.appendChild(dot);
   }
 }
 
 function advanceGameTurn(): void {
-  if (currentGameTurn >= MAX_GAME_TURN) return;
-  currentGameTurn += 1;
+  if (game.round >= MAX_GAME_TURN) return;
+  game.round += 1;
   renderMiniCounters();
-  active = 1;
-  turnPlayer = 1;
+  setActiveClock(game.clock, 1);
+  game.turnPlayer = 1;
   gainCpBothPlayers();
   startRoundAbilities();
   lastSpaceTime = 0;
   activeBeforeSpaceSequence = 1;
-  if (running) lastTickWallMs = Date.now();
   setActivePanels();
   renderTurnDots();
 }
@@ -3262,12 +3132,12 @@ function toggleFullscreen(): void {
 }
 
 function resume(): void {
-  if (running) return;
+  if (isRunning()) return;
   hideResultOverlay();
-  if (seconds1 <= 0 || seconds2 <= 0) return;
+  if (timeLeft(1) <= 0 || timeLeft(2) <= 0) return;
   lastSpaceTime = 0;
-  paused = false;
-  running = true;
+  game.phase = "running";
+  if (!game.photoBreak) runClock(game.clock);
   setInputsEnabled(false);
   setActivePanels();
   applyTimesToDisplay();
@@ -3277,7 +3147,7 @@ function resume(): void {
 }
 
 btnReset.addEventListener("click", () => {
-  if (running || paused) openTurnConfirmModal("reset");
+  if (inGame(game)) openTurnConfirmModal("reset");
   else reset();
 });
 btnFullscreen.addEventListener("click", toggleFullscreen);
@@ -3286,7 +3156,10 @@ btnTurnConfirmCancel.addEventListener("click", hideTurnConfirmModal);
 btnResultDismiss.addEventListener("click", hideResultOverlay);
 btnPhotoResume.addEventListener("click", endPhotoBreak);
 // A focused checkbox would swallow Enter / Space, the game shortcuts
-photoBreaksToggle.addEventListener("change", () => photoBreaksToggle.blur());
+photoBreaksToggle.addEventListener("change", () => {
+  game.options.photoBreaks = photoBreaksToggle.checked;
+  photoBreaksToggle.blur();
+});
 bindScoreTooltip(scoreTotalEl[1]);
 bindScoreTooltip(scoreTotalEl[2]);
 bindCpTooltip(p1CpVal);
@@ -3315,20 +3188,20 @@ function isButtonTarget(el: EventTarget | null): boolean {
 
 /** Space bar and taps on the timer area (same behavior) */
 function handleSpaceLikeInput(): void {
-  if (!running) {
-    if (gameOver) return;
-    if (paused) resume();
+  if (!isRunning()) {
+    if (isOver()) return;
+    if (isStopped(game)) resume();
     else return;
     return;
   }
 
   const now = performance.now();
   if (lastSpaceTime > 0 && now - lastSpaceTime < DOUBLE_SPACE_MS) {
-    active = activeBeforeSpaceSequence;
+    setActiveClock(game.clock, activeBeforeSpaceSequence);
     pause();
     return;
   }
-  activeBeforeSpaceSequence = active;
+  activeBeforeSpaceSequence = game.clock.active;
   lastSpaceTime = now;
   switchTurn();
 }
@@ -3437,23 +3310,23 @@ window.addEventListener("keydown", (e) => {
     }
   }
   const keyPlayer = keyMode && !isTypingTarget(e.target) && !anyModalOpen() ? cardKeyPlayer() : null;
-  if (keyMode && keyPlayer && (keyMode === "hand" || primaryCards[keyPlayer])) {
+  if (keyMode && keyPlayer && (keyMode === "hand" || primaryCard(keyPlayer))) {
     e.preventDefault();
     openCards(keyPlayer, keyMode);
     return;
   }
   if (e.code === "Enter" && !e.repeat) {
     if (shouldIgnoreSpaceLike(e.target)) return;
-    if (!running) {
+    if (!isRunning()) {
       e.preventDefault();
-      if (gameOver) return;
-      if (paused) handleSpaceLikeInput();
+      if (isOver()) return;
+      if (isStopped(game)) handleSpaceLikeInput();
       else requestStart();
       return;
     }
     e.preventDefault();
-    if (turnPlayer === 1) requestEndTurn("p1-to-p2");
-    else requestEndTurn(currentGameTurn >= MAX_GAME_TURN ? "finish-game" : "next-round");
+    if (game.turnPlayer === 1) requestEndTurn("p1-to-p2");
+    else requestEndTurn(game.round >= MAX_GAME_TURN ? "finish-game" : "next-round");
     return;
   }
   if (e.code !== "Space") return;
@@ -3489,7 +3362,7 @@ board.addEventListener("pointerdown", (e) => {
 });
 
 onSegmentedPick(timePresets, (value) => {
-  if (running) return;
+  if (isRunning()) return;
   if (value === CUSTOM_PRESET_VALUE) {
     setTimePreset(value);
     m1.focus();
@@ -3509,10 +3382,10 @@ timePicker.addEventListener("mouseenter", () => {
 
 [m1, m2].forEach((input) => {
   input.addEventListener("input", () => {
-    if (running) return;
+    if (isRunning()) return;
+    // Also while paused: the time left can be corrected mid-game
     const { a, b } = readMinutes();
-    seconds1 = a * 60;
-    seconds2 = b * 60;
+    game.clock.left = { 1: a * 60, 2: b * 60 };
     applyTimesToDisplay();
     renderTimeValue();
   });
@@ -3570,7 +3443,7 @@ document.addEventListener("pointerdown", (e) => {
 });
 
 btnStart.addEventListener("click", () => {
-  if (running || paused) return;
+  if (inGame(game)) return;
   if (secondaryCardsOn()) openDispositions();
   else start();
 });
@@ -3607,14 +3480,14 @@ syncFullscreenLabel();
 
 document.addEventListener("visibilitychange", () => {
   if (document.visibilityState === "visible") {
-    applyWallClockCatchUp();
-    if (running) void tryAcquireWakeLock();
+    refreshClock();
+    if (isRunning()) void tryAcquireWakeLock();
   }
 });
 
 window.addEventListener("pageshow", (e) => {
-  if (e.persisted) applyWallClockCatchUp();
+  if (e.persisted) refreshClock();
 });
 
 // Paused or over still counts as a game: its board stays until a reset
-setupPwa(() => running || paused);
+setupPwa(() => inGame(game));
