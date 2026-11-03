@@ -2470,9 +2470,7 @@ kbd {
   background: rgba(4, 6, 9, 0.5);
   backdrop-filter: none;
   -webkit-backdrop-filter: none;
-  transition:
-    opacity 0.2s ease,
-    background-color 0.3s ease;
+  transition: opacity 0.2s ease;
 }
 
 .cards-stage {
@@ -3292,10 +3290,8 @@ button.sec-option:hover:not(:disabled) {
   }
 }
 
-/* Closing: the deal played backwards, the last card first, as if the cards were put away */
-.overlay.overlay--cards.is-closing {
-  background-color: transparent;
-}
+/* Closing: the deal played backwards, the last card first, as if the cards were put away.
+   The backdrop stays dark meanwhile: a view opened right after keeps it, without a flicker */
 
 /* While they are put away, clicks already reach the board */
 .overlay.overlay--cards.is-closing,

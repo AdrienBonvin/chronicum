@@ -2935,9 +2935,10 @@ function continueCards(): void {
 }
 
 btnCardsClose.addEventListener("click", continueCards);
-// The board behind is out of reach; a click beside the cards goes back to it, as Escape does
+// The board behind is out of reach; a click beside the cards goes back to it, as Escape does.
+// Not the second click of a double-click: that one would close what the first click opened
 cardsOverlay.addEventListener("click", (e) => {
-  if (cardsPlayer === null || (e.target as HTMLElement).closest(".sec-card, button, a")) return;
+  if (cardsPlayer === null || e.detail > 1 || (e.target as HTMLElement).closest(".sec-card, button, a")) return;
   closeCards();
 });
 dispoOverlay.addEventListener("click", (e) => {
