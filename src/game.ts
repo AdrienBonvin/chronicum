@@ -82,6 +82,8 @@ export type GameState = {
   primaryScored: Record<Player, Record<string, number>>;
   /** The latest draw at the start of a turn: the drawing player's phone shows it, whoever made it */
   lastDraw: { player: Player; ids: string[]; n: number };
+  /** The latest +1 CP from a unit, or the cap that stopped it: the player's own phone says it */
+  cpNotice: Record<Player, { gained: boolean; n: number }>;
 };
 
 export const other = (player: Player): Player => (player === 1 ? 2 : 1);
@@ -131,6 +133,7 @@ export function newGame(seconds: number = DEFAULT_TIME_SEC): GameState {
     primaries: { 1: null, 2: null },
     primaryScored: { 1: {}, 2: {} },
     lastDraw: { player: 1, ids: [], n: 0 },
+    cpNotice: { 1: { gained: false, n: 0 }, 2: { gained: false, n: 0 } },
   };
 }
 

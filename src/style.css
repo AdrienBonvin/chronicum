@@ -4450,6 +4450,21 @@ button.sec-option:hover:not(:disabled) {
   visibility: hidden;
 }
 
+/* The +1 CP news shows over the card, as it does over the CP box on the board */
+.seat-cp {
+  position: relative;
+}
+
+.seat-cp .cp-toast {
+  top: auto;
+  bottom: calc(100% + 0.4rem);
+  transform: translateY(0.4rem);
+}
+
+.seat-cp .cp-toast.is-visible {
+  transform: none;
+}
+
 .seat-cp__row {
   display: flex;
   align-items: center;
