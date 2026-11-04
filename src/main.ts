@@ -1586,19 +1586,31 @@ function reset(): void {
 
 function renderMiniCounters(): void {
   for (const player of [1, 2] as const) {
-    // The total covers the whole game; primary and secondary show the player's current turn only
+    // Primary and secondary add up the whole game, as the total does; the turn line shows what this turn brought
     const turnIdx = scoringTurnIdx(player);
+    const turns = scoreByTurn[player];
     scoreTotalEl[player].textContent = String(scoreOf(player));
-    app.querySelector<HTMLElement>(`#p${player}-score-turn`)!.textContent = t("turnN", { n: turnIdx + 1 });
+    app.querySelector<HTMLElement>(`#p${player}-score-turn`)!.textContent = t("turnPoints", {
+      n: turnIdx + 1,
+      p: turns.primary[turnIdx],
+      s: turns.secondary[turnIdx],
+    });
     for (const { kind } of SCORE_KINDS) {
-      const points = scoreByTurn[player][kind][turnIdx];
-      app.querySelector<HTMLElement>(`#p${player}-${kind}-val`)!.textContent = String(points);
+      const thisTurn = turns[kind][turnIdx];
+      app.querySelector<HTMLElement>(`#p${player}-${kind}-val`)!.textContent = String(sum(turns[kind]));
+      // The −/+ still act on this turn only, within its 15 points
+      app.querySelector<HTMLButtonElement>(`#p${player}-${kind}-minus`)!.disabled = thisTurn === 0;
       const plus = app.querySelector<HTMLButtonElement>(`#p${player}-${kind}-plus`)!;
-      plus.disabled = points >= MAX_POINTS_PER_TURN;
+      plus.disabled = thisTurn >= MAX_POINTS_PER_TURN;
       plus.title = plus.disabled ? t("maxPerTurn", { max: MAX_POINTS_PER_TURN }) : "";
     }
+    // Primary + secondary + bonus always make the total: once scored, the bonus stays in view
+    const playing = running || paused;
     app.querySelector<HTMLElement>(`#p${player}-bonus-row`)!.hidden =
-      !(running || paused) || turnIdx !== MAX_GAME_TURN - 1;
+      endBonus[player] === 0 && (!playing || turnIdx !== MAX_GAME_TURN - 1);
+    // Outside a game the bonus is only read, as before
+    app.querySelector<HTMLButtonElement>(`#p${player}-bonus-minus`)!.disabled = !playing || endBonus[player] === 0;
+    app.querySelector<HTMLButtonElement>(`#p${player}-bonus-plus`)!.disabled = !playing;
     app.querySelector<HTMLElement>(`#p${player}-bonus-val`)!.textContent = String(endBonus[player]);
   }
   p1CpVal.textContent = String(cp1);
