@@ -157,6 +157,7 @@ function scoreCounterHtml(player: Player, corner: "tl" | "bl"): string {
           <button type="button" class="mini-counter__btn" id="p${player}-${kind}-minus" data-i18n-aria="${ariaMinus}" data-v-n="${player}">−</button>
           <span class="mini-counter__val" id="p${player}-${kind}-val">0</span>
           <button type="button" class="mini-counter__btn" id="p${player}-${kind}-plus" data-i18n-aria="${ariaPlus}" data-v-n="${player}">+</button>
+          ${capGaugeHtml(`p${player}-${kind}-cap`)}
         </div>`,
   ).join("");
   return `
@@ -165,7 +166,7 @@ function scoreCounterHtml(player: Player, corner: "tl" | "bl"): string {
           <span class="mini-counter__label" data-i18n="score"></span>
           <span class="score-box__total" id="p${player}-score-total">0</span>
         </div>
-        <span class="score-box__turn" id="p${player}-score-turn"></span>${rows}
+        ${rows}
         <div class="score-box__row score-box__row--bonus" id="p${player}-bonus-row" hidden data-i18n-title="endBonusTitle" data-v-max="${MAX_POINTS_PER_TURN}">
           <span class="score-box__kind" data-i18n="endBonus"></span>
           <button type="button" class="mini-counter__btn" id="p${player}-bonus-minus" data-i18n-aria="ariaBonusMinus" data-v-n="${player}">−</button>
@@ -184,7 +185,56 @@ function scoreCounterHtml(player: Player, corner: "tl" | "bl"): string {
             <kbd>${HAND_KEY}</kbd>
           </button>
         </div>
+        <button type="button" class="score-box__alert" id="p${player}-turn-end-alert" data-i18n-aria="turnEndAlertAria" data-v-n="${player}" hidden></button>
       </div>`;
+}
+
+/** This turn's points against the 15 allowed: a bar that warns near the cap and locks at it */
+function capGaugeHtml(id = ""): string {
+  return `<span class="cap-gauge"${id ? ` id="${id}"` : ""}><span class="cap-gauge__bar"><span class="cap-gauge__fill"></span></span><span class="cap-gauge__text"></span></span>`;
+}
+
+/** Near the cap: 3 points or fewer left */
+const CAP_NEAR = MAX_POINTS_PER_TURN - 3;
+
+function setCapGauge(gauge: HTMLElement, points: number, turnIdx: number, suffix: boolean): void {
+  gauge.style.setProperty("--fill", String(Math.min(1, points / MAX_POINTS_PER_TURN)));
+  gauge.classList.toggle("is-near", points >= CAP_NEAR && points < MAX_POINTS_PER_TURN);
+  gauge.classList.toggle("is-full", points >= MAX_POINTS_PER_TURN);
+  gauge.querySelector(".cap-gauge__text")!.textContent = suffix
+    ? t("capThisTurn", { n: points, max: MAX_POINTS_PER_TURN })
+    : `${points}/${MAX_POINTS_PER_TURN}`;
+  gauge.title = t("capTitle", { t: turnIdx + 1, n: points, max: MAX_POINTS_PER_TURN });
+}
+
+/** Points left under the 15 of this turn; the end-of-battle bonus has no cap */
+function roomThisTurn(player: Player, kind: ScoreKind): number {
+  return MAX_POINTS_PER_TURN - scoreByTurn[player][kind][scoringTurnIdx(player)];
+}
+
+/** Points shown on a scoring button: when the cap cuts them, the full value struck out above what counts */
+function vpHtml(vp: number, room: number): string {
+  const unit = t("vpUnit");
+  if (vp <= room) return `${vp}<small>${unit}</small>`;
+  return `<s>${vp}</s>${Math.max(0, room)}<small>${unit}</small>`;
+}
+
+/** "Score 6 VP", or "Score <s>6</s> 3 VP" when the cap cuts it */
+function goHtml(total: number, room: number): string {
+  const counted = Math.max(0, Math.min(total, room));
+  const struck = total > counted ? `<s>${total}</s> ` : "";
+  return `${t("scoreIt")} ${struck}${counted} ${t("vpUnit")}`;
+}
+
+function setGoButton(go: HTMLElement, total: number, room: number): void {
+  go.innerHTML = goHtml(total, room);
+  markCapped(go, total, room);
+}
+
+function markCapped(el: HTMLElement, vp: number, room: number): void {
+  const capped = vp > room;
+  el.classList.toggle("is-capped", capped);
+  el.title = capped ? t("cappedTitle", { max: MAX_POINTS_PER_TURN, n: Math.max(0, room), unit: t("vpUnit") }) : "";
 }
 
 function cpCornerHtml(player: Player, corner: "tr" | "br"): string {
@@ -399,8 +449,13 @@ app.innerHTML = `
   <div class="sound-toast" id="sound-toast" role="status"></div>
   <div class="overlay overlay--cards" id="cards-overlay" role="dialog" aria-modal="true" aria-labelledby="cards-title" aria-hidden="true">
     <div class="cards-stage">
+      <p class="cards-kicker" id="cards-kicker"></p>
       <h2 class="cards-title" id="cards-title"></h2>
       <p class="cards-sub" id="cards-sub"></p>
+      <div class="cards-caps" id="cards-caps" hidden>
+        <span class="cards-caps__label" data-i18n="thisTurn"></span>
+        ${SCORE_KINDS.map(({ kind, label }) => `<span class="cards-caps__item" data-kind="${kind}"><span data-i18n="${label}"></span>${capGaugeHtml()}</span>`).join("")}
+      </div>
       <div class="cards-row" id="cards-row"></div>
       <div class="overlay-actions cards-actions">
         <div class="cards-switch" id="cards-switch" role="group" data-i18n-aria="switchSideAria" hidden></div>
@@ -511,6 +566,8 @@ const cardButtonsEl: Record<Player, HTMLElement> = {
   2: app.querySelector<HTMLElement>("#p2-card-btns")!,
 };
 const cardsSwitch = app.querySelector<HTMLElement>("#cards-switch")!;
+const cardsKicker = app.querySelector<HTMLElement>("#cards-kicker")!;
+const cardsCaps = app.querySelector<HTMLElement>("#cards-caps")!;
 const cardsOverlay = app.querySelector<HTMLElement>("#cards-overlay")!;
 const cardsTitle = app.querySelector<HTMLElement>("#cards-title")!;
 const cardsSub = app.querySelector<HTMLElement>("#cards-sub")!;
@@ -519,6 +576,10 @@ const btnCardsClose = app.querySelector<HTMLButtonElement>("#btn-cards-close")!;
 const dispoOverlay = app.querySelector<HTMLElement>("#dispo-overlay")!;
 const btnDispoOk = app.querySelector<HTMLButtonElement>("#btn-dispo-ok")!;
 const btnDispoCancel = app.querySelector<HTMLButtonElement>("#btn-dispo-cancel")!;
+const turnEndAlertEl: Record<Player, HTMLButtonElement> = {
+  1: app.querySelector<HTMLButtonElement>("#p1-turn-end-alert")!,
+  2: app.querySelector<HTMLButtonElement>("#p2-turn-end-alert")!,
+};
 const scoreTotalEl: Record<Player, HTMLElement> = {
   1: app.querySelector<HTMLElement>("#p1-score-total")!,
   2: app.querySelector<HTMLElement>("#p2-score-total")!,
@@ -1586,18 +1647,14 @@ function reset(): void {
 
 function renderMiniCounters(): void {
   for (const player of [1, 2] as const) {
-    // Primary and secondary add up the whole game, as the total does; the turn line shows what this turn brought
+    // Primary and secondary add up the whole game, as the total does; the gauges show this turn against its 15
     const turnIdx = scoringTurnIdx(player);
     const turns = scoreByTurn[player];
     scoreTotalEl[player].textContent = String(scoreOf(player));
-    app.querySelector<HTMLElement>(`#p${player}-score-turn`)!.textContent = t("turnPoints", {
-      n: turnIdx + 1,
-      p: turns.primary[turnIdx],
-      s: turns.secondary[turnIdx],
-    });
     for (const { kind } of SCORE_KINDS) {
       const thisTurn = turns[kind][turnIdx];
       app.querySelector<HTMLElement>(`#p${player}-${kind}-val`)!.textContent = String(sum(turns[kind]));
+      setCapGauge(app.querySelector<HTMLElement>(`#p${player}-${kind}-cap`)!, thisTurn, turnIdx, true);
       // The −/+ still act on this turn only, within its 15 points
       app.querySelector<HTMLButtonElement>(`#p${player}-${kind}-minus`)!.disabled = thisTurn === 0;
       const plus = app.querySelector<HTMLButtonElement>(`#p${player}-${kind}-plus`)!;
@@ -1616,6 +1673,7 @@ function renderMiniCounters(): void {
   p1CpVal.textContent = String(cp1);
   p2CpVal.textContent = String(cp2);
   renderHandButtons();
+  if (cardsPlayer !== null) renderCardsCaps(cardsPlayer);
   updateVisibleScoreTooltip();
   updateVisibleCpTooltip();
 }
@@ -2205,6 +2263,11 @@ function renderHandButtons(): void {
     primaryButtonEl[player].hidden = !primaryCards[player];
     button.querySelector(".score-box__hand-count")!.textContent = String(count);
     button.setAttribute("aria-label", t("handAria", { n: count }));
+    // The opponent sees during the turn what they can score when it ends, not only on the end-of-turn screen
+    const alert = turnEndAlertEl[player];
+    const due = secondaryCardsOn() && (running || paused) && !gameOver && player !== turnPlayer ? turnEndCount(player) : 0;
+    alert.hidden = due === 0;
+    alert.textContent = t("turnEndAlert", { n: due });
   }
 }
 
@@ -2273,6 +2336,7 @@ function closeCards(putAway = true): void {
     playSound("putAway", count);
     putAwayTimer = window.setTimeout(hideCards, PUT_AWAY_MS + (count - 1) * PUT_AWAY_STAGGER_MS);
   }
+  renderHandButtons();
   if (commandNext !== null) openCards(commandNext, "command");
 }
 
@@ -2400,15 +2464,59 @@ function showCardsTab(value: string): void {
   else openCards(cardsPlayer, value === "scored" ? "scored" : "hand");
 }
 
+/** At a turn end, the player who scores after the one shown, if any: each side gets its own step */
+function nextEndTurnSide(): Player | null {
+  if (cardsMode !== "end-turn" || cardsPlayer === null) return null;
+  const index = endTurnSides.indexOf(cardsPlayer);
+  return index >= 0 && index < endTurnSides.length - 1 ? endTurnSides[index + 1] : null;
+}
+
+/**
+ * Where the screen sits in the game, in the color of the player whose turn it is: the end of a turn
+ * (and its step), or a new turn. The opponent's end-of-turn cards then read as part of the turn
+ * that ends, not as the draw of the turn that comes
+ */
+function renderCardsKicker(player: Player): void {
+  let text = "";
+  let side: Player = turnPlayer;
+  if (cardsMode === "end-turn") {
+    text = t("endTurnKicker", { n: turnPlayer });
+    if (endTurnSides.length > 1) {
+      text += ` · ${t("stepOf", { a: endTurnSides.indexOf(player) + 1, b: endTurnSides.length })}`;
+    }
+  } else if (cardsMode === "draw" || cardsMode === "command") {
+    side = player;
+    text = t("turnStartKicker", { n: player, r: currentGameTurn });
+  }
+  cardsKicker.textContent = text;
+  cardsKicker.hidden = text === "";
+  cardsKicker.classList.toggle("is-p1", side === 1);
+  cardsKicker.classList.toggle("is-p2", side === 2);
+}
+
+/** Where the cards score, this turn's points of their owner against the 15 allowed */
+function renderCardsCaps(player: Player): void {
+  cardsCaps.hidden = !["hand", "end-turn", "command", "mission"].includes(cardsMode);
+  if (cardsCaps.hidden) return;
+  const turnIdx = scoringTurnIdx(player);
+  for (const { kind } of SCORE_KINDS) {
+    const gauge = cardsCaps.querySelector<HTMLElement>(`[data-kind="${kind}"] .cap-gauge`)!;
+    setCapGauge(gauge, scoreByTurn[player][kind][turnIdx], turnIdx, false);
+  }
+}
+
 /** `dealIds` fly in from the deck; the others are already on the table */
 function renderCards(dealIds: string[] = []): void {
   if (cardsPlayer === null) return;
   const player = cardsPlayer;
   const pile = secondaries[player];
+  const nextSide = nextEndTurnSide();
   const closeLabel: StringKey =
     cardsMode === "primary" ? "startGame" : cardsMode !== "end-turn" ? "continue" : endTurnKind === "finish-game" ? "endBattleBtn" : "endTurnBtn";
-  btnCardsClose.querySelector("span")!.textContent = t(closeLabel);
+  btnCardsClose.querySelector("span")!.textContent = nextSide !== null ? t("nextSideBtn", { n: nextSide }) : t(closeLabel);
   renderCardsSwitch();
+  renderCardsKicker(player);
+  renderCardsCaps(player);
   if (cardsMode === "primary") {
     cardsTitle.textContent = t("primaryTitle");
     cardsSub.textContent = "";
@@ -2436,8 +2544,13 @@ function renderCards(dealIds: string[] = []): void {
           ? turnEndSecondaries(player)
           : [];
   if (cardsMode === "end-turn") {
-    cardsTitle.textContent = t("endTurnScoringTitle", { n: turnPlayer });
-    cardsSub.textContent = player === turnPlayer ? t("endTurnScoringSub") : t("endTurnOpponentSub", { n: player });
+    cardsTitle.textContent = t("endTurnScoringTitle", { n: player });
+    cardsSub.textContent =
+      player !== turnPlayer
+        ? t("endTurnOpponentSub", { n: turnPlayer })
+        : nextSide !== null
+          ? t("endTurnScoringSubNext", { n: nextSide })
+          : t("endTurnScoringSub");
   } else if (cardsMode === "command") {
     cardsTitle.textContent = t("commandTitle", { n: player });
     cardsSub.textContent = t("commandSub");
@@ -2528,13 +2641,17 @@ function secondaryCardEl(player: Player, id: string, index: number, deal: boolea
     </div>`;
   el.querySelector(".sec-card__kicker")!.textContent = t("secondaryKicker");
   el.querySelector(".sec-card__name")!.textContent = data.name;
-  el.querySelector(".sec-card__when")!.textContent = data.when ? t(WHEN_KEYS[data.when]) : "";
+  const when = el.querySelector<HTMLElement>(".sec-card__when")!;
+  when.textContent = data.when ? t(WHEN_KEYS[data.when]) : "";
+  // At a turn end, why the card scores now
+  when.classList.toggle("is-now", cardsMode === "end-turn");
   const note = el.querySelector<HTMLElement>(".sec-card__note")!;
   note.textContent = data.note ? data.note[lang] : "";
   note.hidden = !data.note;
 
   const unit = t("vpUnit");
   const scorable = cardsMode === "hand" || cardsMode === "end-turn";
+  const room = scorable ? roomThisTurn(player, "secondary") : Infinity;
   const options = data.options.map((option) => {
     if ("vp" in option) {
       const button = document.createElement("button");
@@ -2543,7 +2660,8 @@ function secondaryCardEl(player: Player, id: string, index: number, deal: boolea
       button.disabled = !scorable;
       button.dataset.action = "score";
       button.dataset.vp = String(option.vp);
-      button.innerHTML = `<span class="sec-option__vp">${option.vp}<small>${unit}</small></span><span class="sec-option__label"></span>`;
+      button.innerHTML = `<span class="sec-option__vp">${vpHtml(option.vp, room)}</span><span class="sec-option__label"></span>`;
+      markCapped(button, option.vp, room);
       button.querySelector(".sec-option__label")!.textContent = option.label[lang];
       return button;
     }
@@ -2565,7 +2683,7 @@ function secondaryCardEl(player: Player, id: string, index: number, deal: boolea
         <button type="button" class="sec-option__go" data-action="score-repeat"></button>
       </span>`;
     block.querySelector(".sec-option__label")!.textContent = `${option.label[lang]} · ${t("maxVp", { n: option.max })}`;
-    block.querySelector(".sec-option__go")!.textContent = `${t("scoreIt")} ${repeatTotal(block)} ${unit}`;
+    setGoButton(block.querySelector<HTMLElement>(".sec-option__go")!, repeatTotal(block), room);
     block.querySelector<HTMLElement>(".sec-option__repeat")!.hidden = !scorable;
     return block;
   });
@@ -2863,6 +2981,7 @@ function primaryCardEl(player: Player, index: number, deal: boolean, scorable: b
   const scored = primaryScored[player];
   const sections = data.sections.map((section, s) => {
     const turnKey = sectionTurnKey(player, section);
+    const room = scorable && section.rounds !== "end" ? roomThisTurn(player, "primary") : Infinity;
     // At a turn end, only what scores at that moment: a Command phase line waits for the next turn
     const scoresNow = sectionOpen(player, section) && scoresInView(player, section.when);
     const open = scorable && scoresNow;
@@ -2901,7 +3020,9 @@ function primaryCardEl(player: Player, index: number, deal: boolean, scorable: b
         button.setAttribute("aria-pressed", String(done !== undefined));
         if (done !== undefined) button.title = t("scoredUndo");
         const shown = done ?? ("vp" in item ? item.vp : 0);
-        button.innerHTML = `<span class="sec-option__vp">${done !== undefined ? "✓" : ""}${shown}<small>${unit}</small></span><span class="sec-option__label"></span>`;
+        const vp = done !== undefined ? `✓${shown}<small>${unit}</small>` : vpHtml(shown, open ? room : Infinity);
+        button.innerHTML = `<span class="sec-option__vp">${vp}</span><span class="sec-option__label"></span>`;
+        if (done === undefined && open) markCapped(button, shown, room);
         button.querySelector(".sec-option__label")!.textContent = item.label[lang];
         block.appendChild(button);
         return;
@@ -2933,7 +3054,7 @@ function primaryCardEl(player: Player, index: number, deal: boolean, scorable: b
       const go = row.querySelector<HTMLButtonElement>(".sec-option__go")!;
       go.dataset.section = String(s);
       go.dataset.item = String(i);
-      go.textContent = `${t("scoreIt")} ${itemTotal(item, row)} ${unit}`;
+      setGoButton(go, itemTotal(item, row), open ? room : Infinity);
       row.querySelectorAll<HTMLButtonElement>("button").forEach((button) => {
         button.disabled = blocked;
       });
@@ -3116,6 +3237,7 @@ btnAbilitiesClose.addEventListener("click", closeAbilities);
 
 for (const player of [1, 2] as const) {
   handButtonEl[player].addEventListener("click", () => openCards(player, "hand"));
+  turnEndAlertEl[player].addEventListener("click", () => openCards(player, "hand"));
   primaryButtonEl[player].addEventListener("click", () => openCards(player, "mission"));
 }
 cardsSwitch.addEventListener("click", (e) => {
@@ -3125,6 +3247,12 @@ cardsSwitch.addEventListener("click", (e) => {
 /** Continue: after the primaries reveal, the game starts */
 function continueCards(): void {
   if (cardsPlayer === null) return;
+  // The end of a turn goes through each side that scores before it ends: the opponent's cards can't be skipped
+  const nextSide = nextEndTurnSide();
+  if (nextSide !== null) {
+    openCards(nextSide, "end-turn");
+    return;
+  }
   const startsGame = cardsMode === "primary";
   const turnEnd = cardsMode === "end-turn" ? endTurnKind : null;
   closeCards();
@@ -3185,7 +3313,8 @@ cardsRow.addEventListener("click", (e) => {
       row.querySelectorAll<HTMLElement>("[data-value]").forEach((span) => {
         span.textContent = row.dataset[span.dataset.value === "bonus" ? "bonus" : "count"] ?? "0";
       });
-      row.querySelector(".sec-option__go")!.textContent = `${t("scoreIt")} ${itemTotal(item, row)} ${t("vpUnit")}`;
+      const room = card.sections[s].rounds === "end" ? Infinity : roomThisTurn(owner, "primary");
+      setGoButton(row.querySelector<HTMLElement>(".sec-option__go")!, itemTotal(item, row), room);
       return;
     }
     if (button.dataset.action === "pri-score") togglePrimaryScore(owner, s, i, row ? itemTotal(item, row) : "vp" in item ? item.vp : 0);
@@ -3210,7 +3339,7 @@ cardsRow.addEventListener("click", (e) => {
       const count = Math.max(1, Math.min(maxCount, Number(option.dataset.count) + delta));
       option.dataset.count = String(count);
       option.querySelector(".sec-option__count")!.textContent = String(count);
-      option.querySelector(".sec-option__go")!.textContent = `${t("scoreIt")} ${repeatTotal(option)} ${t("vpUnit")}`;
+      setGoButton(option.querySelector<HTMLElement>(".sec-option__go")!, repeatTotal(option), roomThisTurn(player, "secondary"));
       break;
     }
     case "score-repeat":
