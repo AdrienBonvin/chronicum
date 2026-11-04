@@ -7,7 +7,8 @@
     "dev": "vite",
     "build": "tsc && vite build",
     "preview": "vite preview",
-    "deploy": "npm run build && firebase deploy --only hosting,database"
+    "deploy": "npm run build && firebase deploy --only hosting,database",
+    "deploy:test": "npm run build && firebase deploy --only database && firebase hosting:channel:deploy online-test --expires 7d"
   },
   "devDependencies": {
     "typescript": "~5.7.2",
