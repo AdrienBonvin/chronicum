@@ -1850,14 +1850,24 @@ function applyAbilityCp(player: Player, kinds: ("round-cp" | "turn-cp")[]): void
   const [source] = kinds.flatMap((kind) => activeAbilities(player, kind));
   if (!source) return;
   if (game.bonusCpGained[player]) {
-    showCpToast(player, t("cpCapReached"), false);
+    noticeCp(player, false);
     return;
   }
   game.bonusCpGained[player] = true;
   gainCp(player);
-  playSound("cp");
-  showCpToast(player, t("cpGained"), true);
+  noticeCp(player, true);
   renderAbilities(player);
+}
+
+/** Online, the CP news goes to the player's own phone, whichever phone ended the turn */
+function noticeCp(player: Player, gained: boolean): void {
+  game.cpNotice[player] = { gained, n: game.cpNotice[player].n + 1 };
+  if (!online || online.seat === player) sayCp(player, gained);
+}
+
+function sayCp(player: Player, gained: boolean): void {
+  if (gained) playSound("cp");
+  showCpToast(player, t(gained ? "cpGained" : "cpCapReached"), gained);
 }
 
 /** Start of a battle round: discounts come back, the CP cap resets, then CP abilities trigger. */
@@ -3623,7 +3633,8 @@ function unpackState(stored: string): Synced {
 /** Sends this phone's changes. What the other phone changed meanwhile is kept, field by field */
 async function pushState(): Promise<void> {
   const room = online?.room;
-  if (!room || pushing) return;
+  // Joining: nothing is sent before the room's game has come in
+  if (!room || pushing || synced.rev === 0) return;
   const local = JSON.stringify(game);
   if (local === synced.json) return;
   const base = synced;
@@ -3646,9 +3657,9 @@ async function pushState(): Promise<void> {
   } finally {
     pushing = false;
   }
-  if (!sent) return;
+  // What came from the other phone during the write is applied now, sent or not
   if (latestRemote && latestRemote.rev > synced.rev) receiveState(latestRemote);
-  else if (JSON.stringify(game) !== synced.json) void pushState();
+  else if (sent && JSON.stringify(game) !== synced.json) void pushState();
 }
 
 function receiveState(remote: Synced): void {
@@ -3709,6 +3720,8 @@ function renderState(prev: GameState, joining: boolean): void {
   setInputsEnabled(!isRunning());
   if (game.photoBreak && !prev.photoBreak) showPhotoBreak();
   else if (!game.photoBreak && prev.photoBreak) hidePhotoBreak();
+  const seat = online?.seat;
+  if (!joining && seat && game.cpNotice[seat].n !== prev.cpNotice[seat].n) sayCp(seat, game.cpNotice[seat].gained);
   if (!joining && game.lastDraw.n !== prev.lastDraw.n) {
     const { player, ids } = game.lastDraw;
     if (game.photoBreak) {
@@ -3830,8 +3843,10 @@ const seatText = (id: string, text: string): void => {
   app.querySelector<HTMLElement>(`#${id}`)!.textContent = text;
 };
 
-/** Where each player's CP units sit on the board, to put them back after an online game */
+/** Where each player's CP units and CP toast sit on the board, to put them back after an online game */
 const abilitiesHome: Record<Player, HTMLElement> = { 1: abilitiesEl[1].parentElement!, 2: abilitiesEl[2].parentElement! };
+const cpToastHome: Record<Player, HTMLElement> = { 1: cpToastEl[1].parentElement!, 2: cpToastEl[2].parentElement! };
+const seatCpCard = app.querySelector<HTMLElement>(".seat-cp")!;
 
 /** The two clocks, every frame: this phone's large, the opponent's small */
 function renderSeatTimes(): void {
@@ -3842,8 +3857,11 @@ function renderSeatTimes(): void {
 
 function renderSeat(): void {
   for (const player of [1, 2] as const) {
-    const home = online?.seat === player ? seatAbilities : abilitiesHome[player];
+    const inSeat = online?.seat === player;
+    const home = inSeat ? seatAbilities : abilitiesHome[player];
     if (abilitiesEl[player].parentElement !== home) home.append(abilitiesEl[player]);
+    const toastHome = inSeat ? seatCpCard : cpToastHome[player];
+    if (cpToastEl[player].parentElement !== toastHome) toastHome.append(cpToastEl[player]);
   }
   if (!online) return;
   const me = online.seat;
