@@ -381,6 +381,7 @@ app.innerHTML = `
       <span class="seat-opp__name" id="seat-opp-name"></span>
       <span class="seat-opp__score"><span id="seat-opp-score">0</span> <small data-i18n="vpUnit"></small></span>
       <span class="seat-opp__time" id="seat-opp-time"></span>
+      <button type="button" class="seat-opp__primary" id="seat-opp-primary" data-i18n-aria="oppPrimary" data-i18n-title="oppPrimary">${ICON_TARGET}</button>
     </div>
     <button type="button" class="seat-clock" id="seat-clock">
       <span class="seat-clock__who" id="seat-who"></span>
@@ -479,7 +480,7 @@ app.innerHTML = `
   <div class="overlay overlay--dispo" id="dispo-overlay" role="dialog" aria-modal="true" aria-labelledby="dispo-title" aria-hidden="true">
     <div class="overlay-inner">
       <h2 id="dispo-title" data-i18n="dispoTitle"></h2>
-      <p class="overlay-msg" data-i18n="dispoIntro"></p>
+      <p class="overlay-msg" id="dispo-intro"></p>
       <div class="dispo-grid">
         ${([1, 2] as const)
           .map(
@@ -496,9 +497,10 @@ app.innerHTML = `
           )
           .join("")}
       </div>
+      <p class="overlay-msg dispo-status" id="dispo-status" hidden></p>
       <div class="overlay-actions">
         <button type="button" class="btn-secondary" id="btn-dispo-cancel"><span data-i18n="cancel"></span> <kbd data-i18n="keyEsc"></kbd></button>
-        <button type="button" class="btn-primary" id="btn-dispo-ok" disabled><span data-i18n="revealPrimaries"></span> <kbd data-i18n="keyEnter"></kbd></button>
+        <button type="button" class="btn-primary" id="btn-dispo-ok" disabled><span></span> <kbd data-i18n="keyEnter"></kbd></button>
       </div>
     </div>
   </div>
@@ -620,6 +622,8 @@ const btnCardsClose = app.querySelector<HTMLButtonElement>("#btn-cards-close")!;
 const dispoOverlay = app.querySelector<HTMLElement>("#dispo-overlay")!;
 const btnDispoOk = app.querySelector<HTMLButtonElement>("#btn-dispo-ok")!;
 const btnDispoCancel = app.querySelector<HTMLButtonElement>("#btn-dispo-cancel")!;
+const dispoIntro = app.querySelector<HTMLElement>("#dispo-intro")!;
+const dispoStatus = app.querySelector<HTMLElement>("#dispo-status")!;
 const scoreTotalEl: Record<Player, HTMLElement> = {
   1: app.querySelector<HTMLElement>("#p1-score-total")!,
   2: app.querySelector<HTMLElement>("#p2-score-total")!,
@@ -1557,6 +1561,7 @@ function start(): void {
   game.turnPlayer = 1;
   lastSpaceTime = 0;
   game.phase = "running";
+  game.choosing = false;
   runClock(game.clock);
   game.cp = { 1: 1, 2: 1 };
   game.cpHistory = { 1: emptyCpHistory(), 2: emptyCpHistory() };
@@ -1614,6 +1619,7 @@ function reset(): void {
   pendingDraw = null;
   afterPutAway = null;
   closeCards(false);
+  game.choosing = false;
   game.primaries = { 1: null, 2: null };
   game.primaryScored = { 1: {}, 2: {} };
   game.secondaries = { 1: newSecondaryPile(), 2: newSecondaryPile() };
@@ -2404,6 +2410,16 @@ function renderCardsSwitch(): void {
     renderScoredLink();
     return;
   }
+  if (cardsMode === "mission" && online && cardsPlayer !== null) {
+    const link = document.createElement("button");
+    link.type = "button";
+    link.className = "cards-switch__link";
+    link.dataset.tab = String(other(cardsPlayer));
+    link.textContent = t(cardsPlayer === online.seat ? "oppPrimary" : "myPrimary");
+    cardsSwitch.hidden = !primaryCard(other(cardsPlayer));
+    cardsSwitch.replaceChildren(link);
+    return;
+  }
   const tabs = cardsTabs();
   cardsSwitch.hidden = tabs.length === 0;
   if (cardsSwitch.hidden) return;
@@ -2438,7 +2454,7 @@ function renderScoredLink(): void {
 
 function showCardsTab(value: string): void {
   if (cardsPlayer === null) return;
-  if (cardsMode === "end-turn") openCards(Number(value) as Player, "end-turn");
+  if (cardsMode === "end-turn" || cardsMode === "mission") openCards(Number(value) as Player, cardsMode);
   else openCards(cardsPlayer, value === "scored" ? "scored" : "hand");
 }
 
@@ -2447,9 +2463,19 @@ function renderCards(dealIds: string[] = []): void {
   if (cardsPlayer === null) return;
   const player = cardsPlayer;
   const pile = game.secondaries[player];
-  const closeLabel: StringKey =
-    cardsMode === "primary" ? "startGame" : cardsMode !== "end-turn" ? "continue" : endTurnKind === "finish-game" ? "endBattleBtn" : "endTurnBtn";
+  // Online, Player 1 starts the game from the VS: their clock is the one that runs
+  const waitsForP1 = cardsMode === "primary" && !!online && online.seat !== 1;
+  const closeLabel: StringKey = waitsForP1
+    ? "vsWaitP1"
+    : cardsMode === "primary"
+      ? "startGame"
+      : cardsMode !== "end-turn"
+        ? "continue"
+        : endTurnKind === "finish-game"
+          ? "endBattleBtn"
+          : "endTurnBtn";
   btnCardsClose.querySelector("span")!.textContent = t(closeLabel);
+  btnCardsClose.disabled = waitsForP1;
   renderCardsSwitch();
   if (cardsMode === "primary") {
     cardsTitle.textContent = t("primaryTitle");
@@ -2459,14 +2485,22 @@ function renderCards(dealIds: string[] = []): void {
     versus.className = "versus";
     versus.setAttribute("aria-hidden", "true");
     versus.innerHTML = "<span class=\"versus__line\"></span><span class=\"versus__text\">VS</span>";
-    const [first, second] = ([1, 2] as const).map((owner, index) =>
-      primaryCardEl(owner, index, dealIds.includes(primaryCardId(owner)), false),
-    );
+    // On a phone the cards stack around the VS: online, the opponent's on top and short, this
+    // phone's player's in full below; on one phone for both players, both short
+    const stacked = !!online || window.matchMedia("(max-width: 640px)").matches;
+    const owners: Player[] = online ? [other(online.seat), online.seat] : [1, 2];
+    const [first, second] = owners.map((owner, index) => {
+      const card = primaryCardEl(owner, index, dealIds.includes(primaryCardId(owner)), false);
+      card.classList.toggle("is-compact", stacked && owner !== online?.seat);
+      return card;
+    });
+    cardsRow.classList.toggle("is-stacked", stacked);
     cardsRow.classList.toggle("is-clashing", dealIds.length > 0);
     cardsRow.replaceChildren(first, versus, second);
     layoutCardsRow();
     return;
   }
+  cardsRow.classList.remove("is-stacked");
   const ids =
     cardsMode === "draw"
       ? drawnIds.filter((id) => pile.hand.includes(id))
@@ -2497,7 +2531,9 @@ function renderCards(dealIds: string[] = []): void {
   // The primary card stays apart from the hand: on its own, or at a turn end when it scores
   const withPrimary =
     cardsMode === "mission" || cardsMode === "command" || (cardsMode === "end-turn" && primaryScoresAtTurnEnd(player));
-  const primary = withPrimary && primaryCard(player) ? [primaryCardEl(player, 0, dealIds.includes(primaryCardId(player)), true)] : [];
+  // Online, the opponent's primary can be read here, not scored
+  const ownCard = !online || player === online.seat;
+  const primary = withPrimary && primaryCard(player) ? [primaryCardEl(player, 0, dealIds.includes(primaryCardId(player)), ownCard)] : [];
   const cards = [
     ...primary,
     ...ids.map((id, index) => secondaryCardEl(player, id, index + primary.length, dealIds.includes(id))),
@@ -2787,9 +2823,23 @@ function redrawSecondary(player: Player, id: string, cardEl: HTMLElement): void 
 
 /** With the cards on, the game starts by choosing force dispositions */
 function requestStart(): void {
-  if (secondaryCardsOn()) openDispositions();
+  if (secondaryCardsOn()) chooseDispositions();
   else openTurnConfirmModal("start-game");
 }
+
+/** Online, the choice opens on both phones, empty: each player picks theirs, in secret */
+function chooseDispositions(): void {
+  if (online) {
+    game.choosing = true;
+    game.dispositions = { 1: null, 2: null };
+    game.primaries = { 1: null, 2: null };
+    dispoPick = null;
+  }
+  openDispositions();
+}
+
+/** Online, the disposition this phone's player is about to lock in */
+let dispoPick: Disposition | null = null;
 
 function openDispositions(): void {
   renderDispositions();
@@ -2805,15 +2855,64 @@ function closeDispositions(): void {
 
 function renderDispositions(): void {
   const lang = getLang();
+  const seat = online?.seat;
+  const locked = !!seat && !!game.dispositions[seat];
+  // Online, only this phone's column shows: the opponent's choice stays hidden until the reveal
+  const shown = (player: Player): Disposition | null =>
+    !seat ? game.dispositions[player] : player !== seat ? null : locked ? game.dispositions[seat] : dispoPick;
   dispoOverlay.querySelectorAll<HTMLElement>(".dispo-options").forEach((group) => {
     const player = Number(group.dataset.player) as Player;
     group.querySelectorAll<HTMLButtonElement>(".dispo-option").forEach((option) => {
       const data = DISPOSITIONS.find(({ id }) => id === option.dataset.value)!;
-      option.setAttribute("aria-pressed", String(game.dispositions[player] === data.id));
+      option.setAttribute("aria-pressed", String(shown(player) === data.id));
+      option.disabled = locked;
       option.querySelector(".dispo-option__hint")!.textContent = data.hint[lang];
     });
   });
-  btnDispoOk.disabled = !game.dispositions[1] || !game.dispositions[2];
+  dispoIntro.textContent = t(seat ? "dispoYourIntro" : "dispoIntro");
+  btnDispoOk.querySelector("span")!.textContent = t(seat ? "dispoLock" : "revealPrimaries");
+  btnDispoOk.disabled = seat ? locked || !dispoPick : !game.dispositions[1] || !game.dispositions[2];
+  dispoStatus.hidden = !seat;
+  if (seat) {
+    const them = other(seat);
+    dispoStatus.textContent = t(game.dispositions[them] ? "dispoChosen" : "onlineWaiting", { n: them });
+  }
+}
+
+/** Reveal, or online, lock in this phone's choice: the reveal comes once both are in */
+function confirmDispositions(): void {
+  if (!online) {
+    revealPrimaries();
+    return;
+  }
+  if (!dispoPick || game.dispositions[online.seat]) return;
+  game.dispositions[online.seat] = dispoPick;
+  if (!maybeReveal()) renderDispositions();
+}
+
+function cancelDispositions(): void {
+  if (online) {
+    game.choosing = false;
+    game.dispositions[online.seat] = null;
+  }
+  closeDispositions();
+}
+
+/** Online, both choices in: the phone that sees it first deals the primaries, both show the VS */
+function maybeReveal(): boolean {
+  const [first, second] = [game.dispositions[1], game.dispositions[2]];
+  if (!online || !game.choosing || !first || !second) return false;
+  game.choosing = false;
+  game.primaries = { 1: primaryFor(first, second).id, 2: primaryFor(second, first).id };
+  game.primaryScored = { 1: {}, 2: {} };
+  showReveal();
+  return true;
+}
+
+function showReveal(): void {
+  closeDispositions();
+  setBattleMusic(true);
+  openCards(online?.seat ?? 1, "primary");
 }
 
 /** Both dispositions known: each player gets the card of their deck facing the other's */
@@ -3144,7 +3243,7 @@ cardsSwitch.addEventListener("click", (e) => {
 });
 /** Continue: after the primaries reveal, the game starts */
 function continueCards(): void {
-  if (cardsPlayer === null) return;
+  if (cardsPlayer === null || btnCardsClose.disabled) return;
   const startsGame = cardsMode === "primary";
   const turnEnd = cardsMode === "end-turn" ? endTurnKind : null;
   closeCards();
@@ -3163,13 +3262,15 @@ cardsOverlay.addEventListener("click", (e) => {
 });
 dispoOverlay.addEventListener("click", (e) => {
   const option = (e.target as HTMLElement).closest<HTMLButtonElement>(".dispo-option");
-  if (!option) return;
+  if (!option || option.disabled) return;
   const player = Number(option.closest<HTMLElement>(".dispo-options")!.dataset.player) as Player;
-  game.dispositions[player] = option.dataset.value as Disposition;
+  if (online) {
+    if (player === online.seat) dispoPick = option.dataset.value as Disposition;
+  } else game.dispositions[player] = option.dataset.value as Disposition;
   renderDispositions();
 });
-btnDispoOk.addEventListener("click", revealPrimaries);
-btnDispoCancel.addEventListener("click", closeDispositions);
+btnDispoOk.addEventListener("click", confirmDispositions);
+btnDispoCancel.addEventListener("click", cancelDispositions);
 window.addEventListener("resize", () => {
   if (cardsPlayer !== null) layoutCardsRow();
 });
@@ -3189,6 +3290,7 @@ cardsRow.addEventListener("click", (e) => {
   const cardEl = button?.closest<HTMLElement>(".sec-card");
   if (button && cardEl?.dataset.primaryPlayer && ["mission", "command", "end-turn"].includes(cardsMode)) {
     const owner = Number(cardEl.dataset.primaryPlayer) as Player;
+    if (online && owner !== online.seat) return;
     const card = primaryCard(owner);
     const s = Number(button.dataset.section ?? button.closest<HTMLElement>(".sec-option--repeat")?.dataset.section);
     const row = button.closest<HTMLElement>(".sec-option--repeat");
@@ -3390,10 +3492,10 @@ window.addEventListener("keydown", (e) => {
   if (dispoOverlay.classList.contains("is-visible")) {
     if (e.code === "Enter" && !e.repeat) {
       e.preventDefault();
-      revealPrimaries();
+      confirmDispositions();
     } else if (e.key === "Escape") {
       e.preventDefault();
-      closeDispositions();
+      cancelDispositions();
     } else if (e.code === "Space") {
       e.preventDefault();
     }
@@ -3694,7 +3796,14 @@ function renderState(prev: GameState, joining: boolean): void {
   secondaryCardsToggle.checked = game.options.cards;
   const wasInGame = inGame(prev);
   if (game.phase === "setup" && wasInGame) resetScreen();
+  if (game.choosing && !prev.choosing) {
+    dispoPick = null;
+    openDispositions();
+  } else if (!game.choosing && prev.choosing && !game.primaries[1]) closeDispositions();
+  if (game.phase === "setup" && game.primaries[1] && !prev.primaries[1]) showReveal();
+  else maybeReveal();
   if (!wasInGame && inGame(game)) {
+    if (cardsPlayer !== null && cardsMode === "primary") closeCards(false);
     closePopovers();
     closeDispositions();
     hideTurnConfirmModal();
@@ -3906,6 +4015,7 @@ function renderSeat(): void {
   const playing = inGame(game) && !isOver();
   app.querySelector<HTMLElement>("#seat-hand")!.hidden = !secondaryCardsOn() || !inGame(game);
   app.querySelector<HTMLElement>("#seat-mission")!.hidden = !secondaryCardsOn() || !inGame(game) || !primaryCard(me);
+  app.querySelector<HTMLElement>("#seat-opp-primary")!.hidden = !secondaryCardsOn() || !primaryCard(them);
   const pauseBtn = app.querySelector<HTMLButtonElement>("#seat-pause")!;
   pauseBtn.hidden = !playing;
   pauseBtn.textContent = t(running ? "seatPause" : "seatResume");
@@ -3932,6 +4042,7 @@ const seatActions: [string, (me: Player) => void][] = [
   ["seat-abilities-btn", (me) => openAbilities(me)],
   ["seat-hand", (me) => openCards(me, "hand")],
   ["seat-mission", (me) => openCards(me, "mission")],
+  ["seat-opp-primary", (me) => openCards(other(me), "mission")],
   [
     "seat-pause",
     () => {
@@ -4108,7 +4219,7 @@ function renderAll(): void {
 
 btnStart.addEventListener("click", () => {
   if (inGame(game)) return;
-  if (secondaryCardsOn()) openDispositions();
+  if (secondaryCardsOn()) chooseDispositions();
   else start();
 });
 
