@@ -240,6 +240,12 @@ const EN = {
   seatPause: "Pause",
   seatResume: "Resume",
   seatSetup: "Set the time, then start",
+  dispoYourIntro: "Pick your force disposition. Your opponent sees it at the reveal.",
+  dispoLock: "Lock in",
+  dispoChosen: "Player {n} has chosen",
+  vsWaitP1: "Player 1 starts the game",
+  oppPrimary: "Opponent's primary",
+  myPrimary: "My primary",
 };
 
 export type StringKey = keyof typeof EN;
@@ -476,6 +482,12 @@ const FR: Record<StringKey, string> = {
   seatPause: "Pause",
   seatResume: "Reprendre",
   seatSetup: "Réglez le temps, puis lancez",
+  dispoYourIntro: "Choisissez votre disposition de force. L'adversaire la découvre à la révélation.",
+  dispoLock: "Valider",
+  dispoChosen: "Joueur {n} a choisi",
+  vsWaitP1: "Le joueur 1 lance la partie",
+  oppPrimary: "Primaire adverse",
+  myPrimary: "Ma primaire",
 };
 
 const STRINGS: Record<Lang, Record<StringKey, string>> = { en: EN, fr: FR };

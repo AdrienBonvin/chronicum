@@ -75,6 +75,8 @@ export type GameState = {
   secondaries: Record<Player, SecondaryPile>;
   /** Swapping a card for a new one (−1 CP) is allowed once per battle */
   newCardUsed: Record<Player, boolean>;
+  /** Online, each player is picking a force disposition on their own phone */
+  choosing: boolean;
   dispositions: Record<Player, Disposition | null>;
   /** Each player's primary card (its id), once both dispositions are revealed */
   primaries: Record<Player, string | null>;
@@ -129,6 +131,7 @@ export function newGame(seconds: number = DEFAULT_TIME_SEC): GameState {
     bonusCpGained: { 1: false, 2: false },
     secondaries: { 1: newSecondaryPile(), 2: newSecondaryPile() },
     newCardUsed: { 1: false, 2: false },
+    choosing: false,
     dispositions: { 1: null, 2: null },
     primaries: { 1: null, 2: null },
     primaryScored: { 1: {}, 2: {} },
