@@ -146,12 +146,11 @@ body {
   zoom: var(--ui-scale);
 }
 
-/* Scale corner HUD: score blocks + command points + free CP coin stack.
-   --hud-fit (set from main.ts) shrinks it where the chosen size does not fit, as on a phone */
+/* Scale corner HUD: score blocks + command points + free CP coin stack */
 .mini-counter--tl,
 .mini-counter--bl,
 .panel-corner {
-  transform: scale(min(var(--ui-scale), var(--hud-fit, 99)));
+  transform: scale(var(--ui-scale));
 }
 
 .mini-counter--tl {
@@ -1159,18 +1158,6 @@ kbd {
     background 0.25s ease,
     flex 0.48s cubic-bezier(0.4, 0, 0.2, 1);
   cursor: default;
-}
-
-/* Room for the corner boxes when they would cover the clock (phone): it sits beside them no more, but past them */
-.panel {
-  padding-top: var(--hud-top, 0px);
-  padding-bottom: var(--hud-bottom, 0px);
-}
-
-.panel.has-hud-room .panel-head {
-  position: static;
-  transform: none;
-  margin-bottom: 0.6rem;
 }
 
 .panel:focus,
@@ -3975,13 +3962,6 @@ button.sec-option:hover:not(:disabled) {
   letter-spacing: 0.04em;
   color: var(--muted);
   white-space: nowrap;
-}
-
-/* A phone has no keyboard: while the clocks run the shortcuts go, the pause and game-over status stay */
-@media (max-width: 540px) and (orientation: portrait) {
-  #app.match-started:not(.is-paused):not(.is-game-over) .key-hint {
-    display: none;
-  }
 }
 
 .key-hint kbd {

@@ -1182,7 +1182,6 @@ function applyUiSize(size: string): void {
   const v = UI_SIZES.has(size) ? size : UI_SIZE_DEFAULT;
   document.documentElement.dataset.uiSize = v;
   setSegmentedValue(uiSizeOptions, v);
-  scheduleHudFit();
   try {
     localStorage.setItem(UI_SIZE_STORAGE_KEY, v);
   } catch {
@@ -3715,90 +3714,6 @@ btnStart.addEventListener("click", () => {
 });
 
 setTimePreset(String(DEFAULT_TIME_SEC));
-/* ---------- Corner HUD on small screens ---------- */
-
-/** The smallest share of the board a half gets: the idle one, while the clocks run (flex 0.86 + 1.14) */
-const IDLE_SHARE = 0.86 / 2;
-/** Room kept between the boxes, and between them and the clock */
-const HUD_GAP_PX = 8;
-/** Space the end-of-turn alert takes under the score when it shows: counted always, so the HUD does not jump */
-const ALERT_ROOM_REM = 2.2;
-
-let hudFitFrame = 0;
-
-/**
- * The corner boxes keep the chosen interface size while they fit. On a phone they shrink until the
- * score and the command points sit side by side; when they still cross the clock's width, the half
- * makes room for them above (or under) the clock, and they shrink so the clock still fits.
- * Sizes are those of the idle half, so nothing moves when the clocks switch.
- */
-function fitCornerHud(): void {
-  hudFitFrame = 0;
-  const root = document.documentElement;
-  const uiScale = parseFloat(getComputedStyle(root).getPropertyValue("--ui-scale")) || 1;
-  const rootPx = parseFloat(getComputedStyle(root).fontSize) || 16;
-  const stacked = panel2.offsetTop > panel1.offsetTop;
-  const sides = [panel1, panel2].map((panel) => {
-    const score = panel.querySelector<HTMLElement>(".score-box")!;
-    const corner = panel.querySelector<HTMLElement>(".panel-corner")!;
-    const alert = score.querySelector<HTMLElement>(".score-box__alert")!;
-    const width = stacked ? panel.clientWidth : (panel1.clientWidth + panel2.clientWidth) * IDLE_SHARE;
-    const height = stacked ? (panel1.clientHeight + panel2.clientHeight) * IDLE_SHARE : panel.clientHeight;
-    const left = score.offsetLeft;
-    const right = panel.clientWidth - corner.offsetLeft - corner.offsetWidth;
-    // Player 2's boxes sit at the bottom of their half, except side by side where both read from the top
-    const atTop = score.classList.contains("mini-counter--tl") || root.dataset.layout === "columns";
-    const edge = atTop ? score.offsetTop : panel.clientHeight - score.offsetTop - score.offsetHeight;
-    const alertRoom = secondaryCardsOn() && alert.hidden ? ALERT_ROOM_REM * rootPx : 0;
-    const hudHeight = Math.max(score.offsetHeight + alertRoom, corner.offsetHeight);
-    const clock = panel.querySelector<HTMLElement>(".time")!.getBoundingClientRect();
-    const head = panel.querySelector<HTMLElement>(".panel-head")!.getBoundingClientRect();
-    return { panel, score, corner, width, height, left, right, atTop, edge, hudHeight, clock, head };
-  });
-  // Side by side within the half, and within its height
-  let scale = uiScale;
-  for (const side of sides) {
-    const across = (side.width - side.left - side.right - HUD_GAP_PX) / (side.score.offsetWidth + side.corner.offsetWidth);
-    const down = (side.height - 2 * side.edge) / side.hudHeight;
-    scale = Math.min(scale, across, down);
-  }
-  // Boxes over the clock's width: the clock goes beside them no more, but under them
-  const crossesClock = sides.some((side) => {
-    const clockLeft = (side.width - side.clock.width) / 2;
-    const clockRight = clockLeft + side.clock.width;
-    const scoreRight = side.left + side.score.offsetWidth * scale + HUD_GAP_PX;
-    const cornerLeft = side.width - side.right - side.corner.offsetWidth * scale - HUD_GAP_PX;
-    return clockLeft < scoreRight || clockRight > cornerLeft;
-  });
-  if (crossesClock) {
-    for (const side of sides) {
-      // The clock and the player's name, now above it, keep their room
-      const clockBlock = side.clock.height + side.head.height + 3 * HUD_GAP_PX;
-      scale = Math.min(scale, (side.height - side.edge - HUD_GAP_PX - clockBlock) / side.hudHeight);
-    }
-  }
-  scale = Math.max(0.4, scale);
-  root.style.setProperty("--hud-fit", scale.toFixed(3));
-  for (const side of sides) {
-    const room = crossesClock ? `${Math.ceil(side.edge + side.hudHeight * scale + HUD_GAP_PX)}px` : "";
-    side.panel.style.setProperty("--hud-top", side.atTop ? room : "");
-    side.panel.style.setProperty("--hud-bottom", side.atTop ? "" : room);
-    side.panel.classList.toggle("has-hud-room", crossesClock);
-  }
-}
-
-function scheduleHudFit(): void {
-  if (hudFitFrame === 0) hudFitFrame = requestAnimationFrame(fitCornerHud);
-}
-
-// The halves (border box: the room made inside them changes nothing), the boxes and the clocks
-const hudObserver = new ResizeObserver(scheduleHudFit);
-for (const panel of [panel1, panel2]) {
-  hudObserver.observe(panel, { box: "border-box" });
-  for (const el of panel.querySelectorAll<HTMLElement>(".score-box, .panel-corner, .time")) hudObserver.observe(el);
-}
-secondaryCardsToggle.addEventListener("change", scheduleHudFit);
-
 loadLang();
 loadTheme();
 loadFactions();
