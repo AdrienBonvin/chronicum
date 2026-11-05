@@ -3,6 +3,7 @@
  * their opponent's. Only names and point values are kept, with short labels in our own words:
  * the full card text stays on gdmissions.app (see `url`).
  */
+import { ACTIONS, type MissionAction } from "./actions";
 import type { Text } from "./secondaries";
 
 export type Disposition = "take-and-hold" | "purge-the-foe" | "reconnaissance" | "priority-assets" | "disruption";
@@ -17,12 +18,14 @@ export const DISPOSITIONS: { id: Disposition; name: string; hint: Text }[] = [
 
 /**
  * A way to score: fixed points, points per thing (with an optional bonus per some of those
- * things), or a base plus points per thing.
+ * things), or a base plus points per thing. With `action`, what it counts comes from the card's
+ * action, told on its back
  */
-export type PrimaryItem =
+export type PrimaryItem = (
   | { vp: number; label: Text }
   | { per: number; label: Text; bonus?: { per: number; label: Text } }
-  | { base: number; label: Text; plus: { per: number; label: Text } };
+  | { base: number; label: Text; plus: { per: number; label: Text } }
+) & { action?: true };
 
 export type PrimarySection = {
   /** Battle rounds when it scores, or the end of the battle */
@@ -40,6 +43,8 @@ export type PrimaryCard = {
   vs: Disposition;
   url: string;
   note?: Text;
+  /** On the back of the card */
+  action?: MissionAction;
   sections: PrimarySection[];
 };
 
@@ -56,15 +61,24 @@ const ENEMY_HOME: Text = { en: "You control the enemy home objective", fr: "Vous
 const CENTRAL: Text = { en: "You control a central objective", fr: "Vous contrôlez un objectif central" };
 const TOOK_OBJECTIVE: Text = { en: "You took an objective this turn (not home)", fr: "Objectif pris ce tour (hors objectif maison)" };
 const KILLED_ON_OBJECTIVE: Text = {
-  en: "Enemy unit destroyed that started on an objective",
-  fr: "Unité ennemie détruite partie d'un objectif",
+  en: "Enemy unit destroyed that started the turn within range of an objective",
+  fr: "Unité ennemie détruite qui commençait le tour à portée d'un objectif",
+};
+/** The terrain area holding a marker, held: one of your units in it and no enemy unit, even partly */
+const LAST_ENEMY_MARKER: Text = {
+  en: "A unit of yours within the terrain area of the last enemy marker, no enemy unit within it",
+  fr: "Une unité à vous dans le décor du dernier marqueur adverse, aucun ennemi dedans (même en partie)",
+};
+const LAST_OWN_MARKER: Text = {
+  en: "A unit of yours within the terrain area of your last marker, no enemy unit within it",
+  fr: "Une unité à vous dans le décor de votre dernier marqueur, aucun ennemi dedans (même en partie)",
 };
 const OUT_KILLED: Text = {
   en: "Destroyed more than you lost last turn",
   fr: "Plus de pertes infligées que subies au tour précédent",
 };
 
-const card = (deck: Disposition, id: string, name: string, vs: Disposition, rest: Pick<PrimaryCard, "note" | "sections">): PrimaryCard => ({
+const card = (deck: Disposition, id: string, name: string, vs: Disposition, rest: Pick<PrimaryCard, "note" | "action" | "sections">): PrimaryCard => ({
   id,
   name,
   deck,
@@ -101,7 +115,7 @@ export const PRIMARY_CARDS: PrimaryCard[] = [
       {
         rounds: FROM_2,
         when: "command",
-        items: [{ per: 3, label: PER_OBJECTIVE, bonus: { per: 3, label: { en: "Bonus per one in enemy territory", fr: "Bonus par objectif en territoire adverse" } } }],
+        items: [{ per: 3, label: PER_OBJECTIVE, bonus: { per: 3, label: { en: "Bonus per one within enemy territory", fr: "Bonus par objectif dans le territoire adverse" } } }],
       },
     ],
   }),
@@ -130,7 +144,7 @@ export const PRIMARY_CARDS: PrimaryCard[] = [
         when: "yours",
         pickOne: true,
         items: [
-          { vp: 3, label: { en: "Enemy unit destroyed by a unit on an objective", fr: "Unité ennemie détruite par une unité sur un objectif" } },
+          { vp: 3, label: { en: "Enemy unit destroyed by a unit within range of an objective", fr: "Unité ennemie détruite par une unité à portée d'un objectif" } },
           { vp: 3, label: KILLED_ON_OBJECTIVE },
         ],
       },
@@ -141,7 +155,10 @@ export const PRIMARY_CARDS: PrimaryCard[] = [
 
   // Purge the Foe
   card("purge-the-foe", "consecrate", "Consecrate", "reconnaissance", {
-    note: { en: "A unit that destroys a unit can consecrate an objective", fr: "Une unité qui en détruit une peut consacrer un objectif" },
+    note: {
+      en: "A unit that destroys a unit can consecrate an objective it is within range of",
+      fr: "Une unité qui en détruit une peut consacrer un objectif à sa portée",
+    },
     sections: [
       {
         rounds: ALL,
@@ -193,16 +210,21 @@ export const PRIMARY_CARDS: PrimaryCard[] = [
 
   // Reconnaissance
   card("reconnaissance", "gather-intel", "Gather Intel", "reconnaissance", {
+    action: ACTIONS.extractIntelligence,
     sections: [
       { rounds: [1, 1], when: "yours", items: [{ vp: 6, label: CENTRAL }] },
       { rounds: FROM_2, when: "command", items: [{ vp: 4, label: CONTROL_ONE }] },
-      { rounds: FROM_2, when: "yours", items: [{ per: 7, label: { en: "Per unit that extracted intelligence", fr: "Par unité ayant extrait des infos" } }] },
+      {
+        rounds: FROM_2,
+        when: "yours",
+        items: [{ per: 7, label: { en: "Per unit that extracted intelligence", fr: "Par unité ayant extrait des infos" }, action: true }],
+      },
       {
         rounds: "end",
         when: "end",
         items: [
           { vp: 5, label: { en: "3+ of your markers on the battlefield", fr: "3+ de vos marqueurs sur la table" } },
-          { vp: 5, label: { en: "A marker on the enemy home objective", fr: "Un marqueur sur l'objectif maison adverse" } },
+          { vp: 5, label: { en: "A marker of yours within range of the enemy home objective", fr: "Un de vos marqueurs à portée de l'objectif maison adverse" } },
         ],
       },
     ],
@@ -214,8 +236,8 @@ export const PRIMARY_CARDS: PrimaryCard[] = [
         when: "yours",
         pickOne: true,
         items: [
-          { vp: 3, label: { en: "Units in 3 table quarters, off the centre", fr: "Unités dans 3 quarts de table, hors centre" } },
-          { vp: 6, label: { en: "Units in 4 table quarters, off the centre", fr: "Unités dans 4 quarts de table, hors centre" } },
+          { vp: 3, label: { en: "Units wholly within 3 table quarters, not within 6\" of the centre", fr: "Unités entièrement dans 3 quarts de table, à plus de 6\" du centre" } },
+          { vp: 6, label: { en: "Units wholly within 4 table quarters, not within 6\" of the centre", fr: "Unités entièrement dans 4 quarts de table, à plus de 6\" du centre" } },
         ],
       },
       { rounds: ALL, when: "yours", items: [{ per: 1, label: PER_ENEMY_DESTROYED }] },
@@ -229,26 +251,31 @@ export const PRIMARY_CARDS: PrimaryCard[] = [
         when: "yours",
         items: [
           { vp: 3, label: CENTRAL },
-          { vp: 2, label: { en: "Enemy unit destroyed that started in terrain", fr: "Unité ennemie détruite partie d'un décor" } },
+          { vp: 2, label: { en: "Enemy unit destroyed that started the turn within a terrain area", fr: "Unité ennemie détruite qui commençait le tour dans un décor (même en partie)" } },
         ],
       },
       { rounds: FROM_2, when: "command", items: [{ per: 4, label: PER_OBJECTIVE_NOT_HOME }] },
       {
         rounds: "end",
         when: "end",
-        items: [{ vp: 5, label: { en: "No enemy unit wholly in your territory", fr: "Aucune unité ennemie entièrement chez vous" } }],
+        items: [{ vp: 5, label: { en: "No enemy unit wholly within your territory", fr: "Aucune unité ennemie entièrement dans votre territoire" } }],
       },
     ],
   }),
   card("reconnaissance", "surveil-the-foe", "Surveil the Foe", "disruption", {
-    note: { en: "Ending a move on an objective removes enemy markers there", fr: "Finir un mouvement sur un objectif retire les marqueurs adverses" },
+    note: {
+      en: "Ending a move within range of an objective removes the enemy markers within range of it",
+      fr: "Finir un mouvement à portée d'un objectif retire les marqueurs adverses à sa portée",
+    },
+    action: ACTIONS.surveil,
     sections: [
-      { rounds: ALL, when: "yours", items: [{ vp: 4, label: { en: "Enemy unit surveilled this turn", fr: "Unité ennemie surveillée ce tour" } }] },
+      { rounds: ALL, when: "yours", items: [{ vp: 4, label: { en: "Enemy unit surveilled this turn", fr: "Unité ennemie surveillée ce tour" }, action: true }] },
       { rounds: FROM_2, when: "command", items: [{ vp: 4, label: CONTROL_ONE }, { vp: 4, label: MORE_OBJECTIVES }] },
       { rounds: FROM_2, when: "yours", items: [{ vp: 5, label: { en: "No enemy marker left on the battlefield", fr: "Plus aucun marqueur adverse sur la table" } }] },
     ],
   }),
   card("reconnaissance", "triangulation", "Triangulation", "purge-the-foe", {
+    action: ACTIONS.triangulate,
     sections: [
       { rounds: FROM_2, when: "command", items: [{ vp: 4, label: CONTROL_ONE }] },
       {
@@ -256,9 +283,9 @@ export const PRIMARY_CARDS: PrimaryCard[] = [
         when: "yours",
         pickOne: true,
         items: [
-          { vp: 3, label: { en: "1 objective triangulated", fr: "1 objectif triangulé" } },
-          { vp: 6, label: { en: "2 objectives triangulated", fr: "2 objectifs triangulés" } },
-          { vp: 10, label: { en: "3+ objectives triangulated", fr: "3+ objectifs triangulés" } },
+          { vp: 3, label: { en: "1 objective triangulated", fr: "1 objectif triangulé" }, action: true },
+          { vp: 6, label: { en: "2 objectives triangulated", fr: "2 objectifs triangulés" }, action: true },
+          { vp: 10, label: { en: "3+ objectives triangulated", fr: "3+ objectifs triangulés" }, action: true },
         ],
       },
       { rounds: "end", when: "end", items: [{ vp: 10, label: { en: "You control 4+ objectives", fr: "Vous contrôlez 4+ objectifs" } }] },
@@ -267,25 +294,27 @@ export const PRIMARY_CARDS: PrimaryCard[] = [
 
   // Priority Assets
   card("priority-assets", "extract-relic", "Extract Relic", "disruption", {
+    action: ACTIONS.sensorSweep,
     sections: [
       {
         rounds: ALL,
         when: "yours",
         items: [
-          { vp: 4, label: { en: "A unit performed a sensor sweep", fr: "Une unité a fait un balayage" } },
+          { vp: 4, label: { en: "A unit performed a sensor sweep", fr: "Une unité a fait un balayage" }, action: true },
           { vp: 3, label: KILLED_ON_OBJECTIVE },
-          { vp: 4, label: { en: "You hold the terrain of the last enemy marker", fr: "Vous tenez le décor du dernier marqueur adverse" } },
+          { vp: 4, label: LAST_ENEMY_MARKER },
         ],
       },
       { rounds: FROM_2, when: "command", items: [{ vp: 4, label: CONTROL_ONE }] },
       {
         rounds: "end",
         when: "end",
-        items: [{ vp: 5, label: { en: "You hold the terrain of the last enemy marker", fr: "Vous tenez le décor du dernier marqueur adverse" } }],
+        items: [{ vp: 5, label: LAST_ENEMY_MARKER }],
       },
     ],
   }),
   card("priority-assets", "sabotage", "Sabotage", "priority-assets", {
+    action: ACTIONS.sabotage,
     sections: [
       {
         rounds: ALL,
@@ -294,7 +323,8 @@ export const PRIMARY_CARDS: PrimaryCard[] = [
           {
             per: 3,
             label: { en: "Per unit that committed sabotage", fr: "Par unité ayant saboté" },
-            bonus: { per: 2, label: { en: "Bonus per one on an objective in enemy territory", fr: "Bonus par saboteur sur un objectif adverse" } },
+            bonus: { per: 2, label: { en: "Bonus per one within range of an objective in enemy territory", fr: "Bonus par saboteur à portée d'un objectif du territoire adverse" } },
+            action: true,
           },
         ],
       },
@@ -302,13 +332,14 @@ export const PRIMARY_CARDS: PrimaryCard[] = [
     ],
   }),
   card("priority-assets", "secure-asset", "Secure Asset", "take-and-hold", {
+    action: ACTIONS.secureAsset,
     sections: [
       {
         rounds: ALL,
         when: "yours",
         items: [
-          { vp: 4, label: { en: "A unit secured the asset", fr: "Une unité a sécurisé la cible" } },
-          { vp: 2, label: { en: "Enemy unit destroyed that started on a central objective", fr: "Unité ennemie détruite partie d'un objectif central" } },
+          { vp: 4, label: { en: "A unit secured the asset", fr: "Une unité a sécurisé la cible" }, action: true },
+          { vp: 2, label: { en: "Enemy unit destroyed that started the turn within range of a central objective", fr: "Unité ennemie détruite qui commençait le tour à portée d'un objectif central" } },
         ],
       },
       {
@@ -319,12 +350,13 @@ export const PRIMARY_CARDS: PrimaryCard[] = [
     ],
   }),
   card("priority-assets", "vanguard-operation", "Vanguard Operation", "reconnaissance", {
+    action: ACTIONS.vanguard,
     sections: [
       {
         rounds: ALL,
         when: "yours",
         items: [
-          { vp: 4, label: { en: "A unit performed a vanguard operation", fr: "Une unité a mené une opération d'avant-garde" } },
+          { vp: 4, label: { en: "A unit performed a vanguard operation", fr: "Une unité a mené une opération d'avant-garde" }, action: true },
           { vp: 2, label: ENEMY_DESTROYED },
         ],
       },
@@ -333,11 +365,12 @@ export const PRIMARY_CARDS: PrimaryCard[] = [
     ],
   }),
   card("priority-assets", "vital-link", "Vital Link", "purge-the-foe", {
+    action: ACTIONS.maintainControl,
     sections: [
       {
         rounds: ALL,
         when: "yours",
-        items: [{ base: 2, label: CENTRAL, plus: { per: 1, label: { en: "Per marker of yours on it", fr: "Par marqueur à vous dessus" } } }],
+        items: [{ base: 2, label: CENTRAL, plus: { per: 1, label: { en: "Per marker of yours within range of it", fr: "Par marqueur à vous à sa portée" } }, action: true }],
       },
       {
         rounds: FROM_2,
@@ -351,6 +384,7 @@ export const PRIMARY_CARDS: PrimaryCard[] = [
 
   // Disruption
   card("disruption", "death-trap", "Death Trap", "take-and-hold", {
+    action: ACTIONS.boobyTrap,
     sections: [
       {
         rounds: ALL,
@@ -360,10 +394,23 @@ export const PRIMARY_CARDS: PrimaryCard[] = [
             per: 2,
             label: { en: "Per terrain area trapped this turn", fr: "Par décor piégé ce tour" },
             bonus: { per: 3, label: { en: "Bonus per one that is an objective", fr: "Bonus par décor qui est un objectif" } },
+            action: true,
           },
         ],
       },
-      { rounds: ALL, when: "yours", items: [{ vp: 3, label: { en: "Enemy unit destroyed in a trapped terrain", fr: "Unité ennemie détruite dans un décor piégé" } }] },
+      {
+        rounds: ALL,
+        when: "yours",
+        items: [
+          {
+            vp: 3,
+            label: {
+              en: "Enemy unit destroyed that started the turn within a trapped terrain area",
+              fr: "Unité ennemie détruite qui commençait le tour dans un décor piégé (même en partie)",
+            },
+          },
+        ],
+      },
       { rounds: FROM_2, when: "command", items: [{ vp: 4, label: CONTROL_ONE }] },
     ],
   }),
@@ -379,21 +426,25 @@ export const PRIMARY_CARDS: PrimaryCard[] = [
     ],
   }),
   card("disruption", "locate-and-deny", "Locate and Deny", "priority-assets", {
-    note: { en: "Start of battle: put markers in 5 terrain areas out of your zone", fr: "Début de bataille : marqueurs dans 5 décors hors de votre zone" },
+    note: {
+      en: "Start of battle: a marker in 5 terrain areas not within your deployment zone",
+      fr: "Début de bataille : un marqueur dans 5 décors entièrement hors de votre zone de déploiement",
+    },
+    action: ACTIONS.sensorSweep,
     sections: [
       {
         rounds: ALL,
         when: "yours",
         items: [
           { vp: 4, label: KILLED_ON_OBJECTIVE },
-          { vp: 4, label: { en: "You hold the terrain of your last marker", fr: "Vous tenez le décor de votre dernier marqueur" } },
+          { vp: 4, label: LAST_OWN_MARKER },
         ],
       },
       { rounds: FROM_2, when: "command", items: [{ vp: 4, label: CONTROL_ONE }] },
       {
         rounds: "end",
         when: "end",
-        items: [{ vp: 5, label: { en: "You hold the terrain of your last marker", fr: "Vous tenez le décor de votre dernier marqueur" } }],
+        items: [{ vp: 5, label: LAST_OWN_MARKER }],
       },
     ],
   }),
@@ -406,6 +457,7 @@ export const PRIMARY_CARDS: PrimaryCard[] = [
     ],
   }),
   card("disruption", "smoke-and-mirrors", "Smoke and Mirrors", "reconnaissance", {
+    action: ACTIONS.decoy,
     sections: [
       {
         rounds: ALL,
@@ -414,12 +466,13 @@ export const PRIMARY_CARDS: PrimaryCard[] = [
           {
             per: 2,
             label: { en: "Per objective decoyed", fr: "Par objectif leurré" },
-            bonus: { per: 2, label: { en: "Bonus per one in enemy territory", fr: "Bonus par objectif en territoire adverse" } },
+            bonus: { per: 2, label: { en: "Bonus per one within enemy territory", fr: "Bonus par objectif dans le territoire adverse" } },
+            action: true,
           },
         ],
       },
       { rounds: FROM_2, when: "command", items: [{ vp: 4, label: CONTROL_ONE }] },
-      { rounds: "end", when: "end", items: [{ vp: 10, label: { en: "4+ objectives decoyed", fr: "4+ objectifs leurrés" } }] },
+      { rounds: "end", when: "end", items: [{ vp: 10, label: { en: "4+ objectives decoyed", fr: "4+ objectifs leurrés" }, action: true }] },
     ],
   }),
 ];

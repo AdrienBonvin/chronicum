@@ -1,12 +1,19 @@
 /*
  * 11th edition secondary mission deck, tactical scoring. Only names and point values are kept,
  * with short labels in our own words: the full card text stays on gdmissions.app (see `url`).
+ * Where a card says within, wholly within or not within, so do the labels: it changes everything.
+ * In French: within an area is « (même en partie) dans », wholly within « entièrement dans », not
+ * within « entièrement hors de »; within a distance stays « à 6" ».
  */
+import { ACTIONS, type MissionAction } from "./actions";
 
 export type Text = { en: string; fr: string };
 
-/** One click scores `vp`, or a count of things scores `per` each up to `max` */
-export type ScoreOption = { vp: number; label: Text } | { per: number; max: number; label: Text };
+/**
+ * One click scores `vp`, or a count of things scores `per` each up to `max`. With `action`, what
+ * it counts comes from the card's action, told on its back
+ */
+export type ScoreOption = ({ vp: number; label: Text } | { per: number; max: number; label: Text }) & { action?: true };
 
 export type SecondaryCard = {
   id: string;
@@ -18,6 +25,8 @@ export type SecondaryCard = {
   note?: Text;
   /** Free redraw allowed when drawn under a condition: the card goes back to the deck or to the discard */
   redraw?: { condition: Text; to: "deck" | "discard" };
+  /** On the back of the card */
+  action?: MissionAction;
   options: ScoreOption[];
 };
 
@@ -38,7 +47,7 @@ export const SECONDARY_CARDS: SecondaryCard[] = [
   }),
   card("a-tempting-target", "A Tempting Target", {
     when: "yours",
-    note: { en: "Your opponent picks an objective in No Man's Land", fr: "L'adversaire choisit un objectif du no man's land" },
+    note: { en: "Your opponent picks an objective within No Man's Land", fr: "L'adversaire choisit un objectif dans le no man's land" },
     options: [{ vp: 5, label: { en: "You control the tempting target", fr: "Vous contrôlez la cible tentante" } }],
   }),
   card("assassination", "Assassination", {
@@ -51,15 +60,15 @@ export const SECONDARY_CARDS: SecondaryCard[] = [
     when: "opponent",
     note: { en: "Pick a friendly unit as your beacon", fr: "Choisissez une unité alliée comme balise" },
     options: [
-      { vp: 3, label: { en: "Beacon out of your deployment zone", fr: "Balise hors de votre zone de déploiement" } },
-      { vp: 5, label: { en: "Beacon out of your territory", fr: "Balise hors de votre territoire" } },
+      { vp: 3, label: { en: "Beacon not within your deployment zone", fr: "Balise entièrement hors de votre zone de déploiement" } },
+      { vp: 5, label: { en: "Beacon not within your territory", fr: "Balise entièrement hors de votre territoire" } },
     ],
   }),
   card("behind-enemy-lines", "Behind Enemy Lines", {
     when: "yours",
     redraw: { condition: FIRST_ROUND, to: "deck" },
     options: [
-      { per: 3, max: 5, label: { en: "Per unit in the enemy deployment zone", fr: "Par unité dans la zone de déploiement adverse" } },
+      { per: 3, max: 5, label: { en: "Per unit wholly within the enemy deployment zone", fr: "Par unité entièrement dans la zone de déploiement adverse" } },
     ],
   }),
   card("bring-it-down", "Bring it Down", {
@@ -82,9 +91,10 @@ export const SECONDARY_CARDS: SecondaryCard[] = [
   card("cleanse", "Cleanse", {
     when: "yours",
     redraw: { condition: { en: "Plunder is active", fr: "Plunder est active" }, to: "deck" },
+    action: ACTIONS.cleanse,
     options: [
-      { vp: 2, label: { en: "1 objective cleansed", fr: "1 objectif purifié" } },
-      { vp: 5, label: { en: "2+ objectives cleansed", fr: "2+ objectifs purifiés" } },
+      { vp: 2, label: { en: "1 objective cleansed", fr: "1 objectif purifié" }, action: true },
+      { vp: 5, label: { en: "2+ objectives cleansed", fr: "2+ objectifs purifiés" }, action: true },
     ],
   }),
   card("defend-stronghold", "Defend Stronghold", {
@@ -92,20 +102,20 @@ export const SECONDARY_CARDS: SecondaryCard[] = [
     redraw: { condition: { en: "First battle round (required)", fr: "Premier round (obligatoire)" }, to: "deck" },
     options: [
       { vp: 3, label: { en: "You control your home objective", fr: "Vous contrôlez votre objectif maison" } },
-      { vp: 5, label: { en: "…and no enemy in your deployment zone", fr: "…et aucun ennemi dans votre zone" } },
+      { vp: 5, label: { en: "…and no enemy unit within your deployment zone", fr: "…et aucun ennemi dans votre zone (même en partie)" } },
     ],
   }),
   card("display-of-might", "Display of Might", {
     options: [
-      { vp: 2, label: { en: "More units than the enemy wholly in No Man's Land, your turn", fr: "Plus d'unités que l'ennemi entièrement au no man's land, votre tour" } },
-      { vp: 5, label: { en: "More units than the enemy wholly in No Man's Land, enemy turn", fr: "Plus d'unités que l'ennemi entièrement au no man's land, tour adverse" } },
+      { vp: 2, label: { en: "More units than the enemy wholly within No Man's Land, your turn", fr: "Plus d'unités que l'ennemi entièrement dans le no man's land, votre tour" } },
+      { vp: 5, label: { en: "More units than the enemy wholly within No Man's Land, enemy turn", fr: "Plus d'unités que l'ennemi entièrement dans le no man's land, tour adverse" } },
     ],
   }),
   card("engage-on-all-fronts", "Engage on All Fronts", {
     when: "yours",
     options: [
-      { vp: 3, label: { en: "Presence in 3 table quarters", fr: "Présence dans 3 quarts de table" } },
-      { vp: 5, label: { en: "Presence in 4 table quarters", fr: "Présence dans 4 quarts de table" } },
+      { vp: 3, label: { en: "Units wholly within 3 table quarters, not within 6\" of the centre", fr: "Unités entièrement dans 3 quarts de table, à plus de 6\" du centre" } },
+      { vp: 5, label: { en: "Units wholly within 4 table quarters, not within 6\" of the centre", fr: "Unités entièrement dans 4 quarts de table, à plus de 6\" du centre" } },
     ],
   }),
   card("forward-position", "Forward Position", {
@@ -122,8 +132,8 @@ export const SECONDARY_CARDS: SecondaryCard[] = [
   card("outflank", "Outflank", {
     when: "yours",
     options: [
-      { vp: 3, label: { en: "Unit by a board edge, out of your territory", fr: "Unité près d'un bord, hors de votre territoire" } },
-      { vp: 5, label: { en: "Units by opposite board edges", fr: "Unités près de bords opposés" } },
+      { vp: 3, label: { en: "Unit within 6\" of a board edge, not within your territory", fr: "Unité à 6\" d'un bord, entièrement hors de votre territoire" } },
+      { vp: 5, label: { en: "Units within 6\" of opposite edges, one not within your territory", fr: "Unités à 6\" de bords opposés, dont une entièrement hors de votre territoire" } },
     ],
   }),
   card("overwhelming-force", "Overwhelming Force", {
@@ -135,11 +145,12 @@ export const SECONDARY_CARDS: SecondaryCard[] = [
   card("plunder", "Plunder", {
     when: "yours",
     redraw: { condition: { en: "Cleanse is active", fr: "Cleanse est active" }, to: "deck" },
-    options: [{ vp: 5, label: { en: "A terrain area was plundered", fr: "Un décor a été pillé" } }],
+    action: ACTIONS.plunder,
+    options: [{ vp: 5, label: { en: "A terrain area was plundered", fr: "Un décor a été pillé" }, action: true }],
   }),
   card("secure-no-man-s-land", "Secure No Man's Land", {
     when: "yours",
-    options: [{ vp: 5, label: { en: "You control 2+ objectives in No Man's Land", fr: "Vous contrôlez 2+ objectifs du no man's land" } }],
+    options: [{ vp: 5, label: { en: "You control 2+ objectives within No Man's Land", fr: "Vous contrôlez 2+ objectifs dans le no man's land" } }],
   }),
 ];
 

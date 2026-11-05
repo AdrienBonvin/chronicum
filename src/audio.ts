@@ -25,7 +25,16 @@ export type SoundName =
   | "coinRestore"
   | "victory"
   | "checkOn"
-  | "checkOff";
+  | "checkOff"
+  | "whistle"
+  | "coinToss"
+  | "drumroll"
+  | "tossReveal"
+  | "cpBurn"
+  | "battleReady"
+  | "timeOut"
+  | "flip"
+  | "joined";
 
 export type MusicTrack = "off" | "calm" | "tense" | "epic";
 
@@ -38,6 +47,22 @@ const SAMPLE_SRC: Record<SampleName, string> = {
   // "Distant War Horn"
   warHorn: `${import.meta.env.BASE_URL}sounds/war-horn.mp3`,
 };
+
+/** The VS: when the primaries' hit lands, from the start of the sound */
+const CLASH_HIT_SEC = 0.48;
+/**
+ * And when the horns' boom is heard: their low attack comes 0.05 s after the hit in the recording
+ * (measured on the file). The VS slams down on it, 20 ms ahead: seen right on it, it felt late
+ */
+export const CLASH_BOOM_SEC = 0.51;
+/** A command point spent: when the flame that takes it bursts, from the start of the sound */
+export const CP_BURST_SEC = 0.42;
+/** Battle ready: when its points land on the score, from the start of the sound */
+export const READY_LAND_SEC = 0.7;
+/** Then the score counts them up, one tick per step */
+export const READY_COUNT_SEC = 0.36;
+/** A clock runs out: when the knell strikes, from the start of the sound */
+export const TIME_OUT_HIT_SEC = 0.14;
 
 /** Where the blow lands in each sample (measured on the files), to meet the animation */
 const SAMPLE_HIT_SEC: Record<SampleName, number> = { vsHit: 0.04, warHorn: 0 };
@@ -54,8 +79,20 @@ const MUSIC_SRC: Record<Exclude<MusicTrack, "off">, string> = {
 const MUSIC_LEVEL = 0.45;
 const MUSIC_FADE_MS = 1500;
 
+/** A pick in the menu is heard at once: its fades are short, "off" has none */
+const MENU_FADE_MS = 300;
+/** A track picked in the menu plays a short extract, about 8 seconds with its fades */
+const PREVIEW_MS = 7000;
+const PREVIEW_END_FADE_MS = 800;
+/** Where each track is in full swing (measured on the files): their quiet intros say little */
+const PREVIEW_FROM_SEC: Record<Exclude<MusicTrack, "off">, number> = { calm: 0, tense: 12, epic: 12 };
+
 let soundsOn = false;
 let muted = false;
+/** The music alone, on this device: in an online game the other phone may be playing it already */
+let musicMuted = false;
+/** Online, a shared screen at the table plays the music: the phones keep their sound effects, not the music three times over */
+let musicElsewhere = false;
 let volume = 0.8;
 
 type Engine = { ctx: AudioContext; out: GainNode; wet: GainNode; noise: AudioBuffer; clip: Float32Array<ArrayBuffer> };
@@ -334,6 +371,122 @@ function rumble(t: number, dur = 1.6, peak = 0.4, cutoff = 170): void {
   source.stop(t + dur + 0.1);
 }
 
+/** Low noise that breathes: the body of a fire, never steady */
+function flame(t: number, dur: number, peak: number, cutoff = 900): void {
+  const { ctx, noise } = getEngine();
+  const source = ctx.createBufferSource();
+  source.buffer = noise;
+  source.loop = true;
+  const filter = ctx.createBiquadFilter();
+  filter.type = "lowpass";
+  filter.frequency.value = cutoff;
+  const gain = ctx.createGain();
+  gain.gain.setValueAtTime(0.0001, t);
+  // It grows, flickering at random as a flame does
+  for (let at = 0; at < dur; at += 0.03 + Math.random() * 0.04) {
+    const grown = Math.min(1, at / (dur * 0.6));
+    gain.gain.linearRampToValueAtTime(peak * grown * (0.55 + Math.random() * 0.45), t + at);
+  }
+  gain.gain.linearRampToValueAtTime(0.0001, t + dur);
+  source.connect(filter).connect(gain);
+  route(gain, 0.3);
+  source.start(t);
+  source.stop(t + dur + 0.05);
+}
+
+/** Wood and wax popping in the heat: tiny cracks at uneven times, thick at first then thinning out */
+function embers(t: number, dur: number, count: number, peak: number): void {
+  for (let i = 0; i < count; i++) {
+    const at = t + dur * Math.random() ** 1.6;
+    crack(at, 1800 + Math.random() * 6000, 0.004 + Math.random() * 0.012, peak * (0.3 + Math.random() * 0.7));
+  }
+}
+
+/** Air thrown out as a flame flares up: the soft "fwoomp", noise closing from bright to dull */
+function fwoomp(t: number, dur: number, peak: number, from = 2400, to = 160, attack = 0.012): void {
+  const { ctx, noise } = getEngine();
+  const source = ctx.createBufferSource();
+  source.buffer = noise;
+  const filter = ctx.createBiquadFilter();
+  filter.type = "lowpass";
+  filter.Q.value = 0.5;
+  filter.frequency.setValueAtTime(from, t);
+  filter.frequency.exponentialRampToValueAtTime(to, t + dur);
+  const gain = ctx.createGain();
+  envelope(gain, t, peak, attack, dur);
+  source.connect(filter).connect(gain);
+  route(gain, 0.5);
+  source.start(t);
+  source.stop(t + dur + 0.05);
+}
+
+/** Air drawn in toward a blow: noise swelling and opening up, cut off at its peak */
+function swell(t: number, dur: number, peak: number, from = 150, to = 1400): void {
+  const { ctx, noise } = getEngine();
+  const source = ctx.createBufferSource();
+  source.buffer = noise;
+  const filter = ctx.createBiquadFilter();
+  filter.type = "lowpass";
+  filter.frequency.setValueAtTime(from, t);
+  filter.frequency.exponentialRampToValueAtTime(to, t + dur);
+  const gain = ctx.createGain();
+  gain.gain.setValueAtTime(0.0001, t);
+  gain.gain.exponentialRampToValueAtTime(peak, t + dur);
+  gain.gain.exponentialRampToValueAtTime(0.0001, t + dur + 0.04);
+  source.connect(filter).connect(gain);
+  route(gain, 0.4);
+  source.start(t);
+  source.stop(t + dur + 0.1);
+}
+
+/** A referee's pea whistle: a high tone the pea makes trill, and the breath through it */
+function whistleBlast(t: number, dur: number, peak = 0.2): void {
+  const { ctx, noise } = getEngine();
+  const gain = ctx.createGain();
+  gain.gain.setValueAtTime(0.0001, t);
+  gain.gain.exponentialRampToValueAtTime(peak, t + 0.015);
+  gain.gain.setValueAtTime(peak, t + dur - 0.04);
+  gain.gain.exponentialRampToValueAtTime(0.0001, t + dur);
+  route(gain, 0.12);
+  const tone = ctx.createOscillator();
+  tone.frequency.value = 2900;
+  const pea = ctx.createOscillator();
+  pea.frequency.value = 27;
+  const depth = ctx.createGain();
+  depth.gain.value = 110;
+  pea.connect(depth).connect(tone.frequency);
+  tone.connect(gain);
+  const breath = ctx.createBufferSource();
+  breath.buffer = noise;
+  breath.loop = true;
+  const band = ctx.createBiquadFilter();
+  band.type = "bandpass";
+  band.frequency.value = 3100;
+  band.Q.value = 2.5;
+  const breathLevel = ctx.createGain();
+  breathLevel.gain.value = 0.5;
+  breath.connect(band).connect(breathLevel).connect(gain);
+  for (const source of [tone, pea, breath]) {
+    source.start(t);
+    source.stop(t + dur + 0.05);
+  }
+}
+
+/** A heavy bell struck once: its partials ring out of tune with each other, the high ones dying first */
+function bell(t: number, freq: number, dur: number, peak: number): void {
+  crack(t, 2800, 0.04, peak);
+  const partials: [ratio: number, level: number][] = [
+    [0.5, 0.9],
+    [1, 1],
+    [1.2, 0.55],
+    [1.5, 0.4],
+    [2, 0.5],
+    [2.74, 0.25],
+    [4.07, 0.15],
+  ];
+  partials.forEach(([ratio, level], i) => note(t, freq * ratio, "sine", dur / (1 + i * 0.35), peak * level, 0.002));
+}
+
 function note(t: number, freq: number, type: OscillatorType, dur: number, peak: number, attack = 0.005, lowpass = 0): void {
   const { ctx } = getEngine();
   const osc = ctx.createOscillator();
@@ -404,8 +557,8 @@ const SOUNDS: Record<SoundName, (t: number, count: number) => void> = {
   // The VS: air rising as the primaries rush in, then the recorded hit with horns as they meet.
   // Until the recording is loaded, a synthesized hit stands in
   clash: (t) => {
-    whoosh(t, 300, 7000, 0.48, 0.3);
-    if (!sample(t, "vsHit", t + 0.48)) championHit(t + 0.48, [73.4, 110, 146.8], [659.3, 987.8, 1318.5, 1661.2, 1975.5], 2.8);
+    whoosh(t, 300, 7000, CLASH_HIT_SEC, 0.3);
+    if (!sample(t, "vsHit", t + CLASH_HIT_SEC)) championHit(t + CLASH_HIT_SEC, [73.4, 110, 146.8], [659.3, 987.8, 1318.5, 1661.2, 1975.5], 2.8);
   },
   // Points: a warm thump and a low major chord, deep rather than bright
   score: (t) => {
@@ -458,15 +611,93 @@ const SOUNDS: Record<SoundName, (t: number, count: number) => void> = {
     crack(t, 3000, 0.02, 0.3);
     note(t, 760, "sine", 0.08, 0.11);
   },
+  // A judge to the table: a short blast, then a long one
+  whistle: (t) => {
+    whistleBlast(t, 0.16);
+    whistleBlast(t + 0.26, 0.65);
+  },
+  // Who goes first: the coin flicked up, a snare roll rising while it spins, the length of its flight
+  drumroll: (t) => {
+    crack(t, 6000, 0.02, 0.35);
+    for (let i = 0; i < 6; i++) note(t + 0.05 + i * 0.12, i % 2 ? 2637 : 3136, "sine", 0.1, 0.04 * (1 - i / 8), 0.002);
+    whoosh(t + 0.2, 180, 1800, 2.15, 0.12);
+    let at = t + 0.15;
+    while (at < t + 2.3) {
+      const progress = (at - t) / 2.3;
+      crack(at, 2400, 0.045, 0.06 + 0.3 * progress ** 2);
+      note(at, 95, "triangle", 0.08, 0.05 + 0.12 * progress, 0.003, 400);
+      at += 0.09 - 0.055 * progress;
+    }
+  },
+  // It lands: the heavy hit that opens a battle, a bright chord on top
+  tossReveal: (t) => {
+    championHit(t, [65.4, 98, 130.8], [784, 1046.5, 1318.5, 1568, 2093], 2.6);
+  },
+  // A command point catches fire, draws the air in and goes off deep: heavy and low, no bright pop
+  cpBurn: (t) => {
+    const burst = t + CP_BURST_SEC;
+    // The flame takes, breathing, pulling the air toward the blow
+    flame(t, CP_BURST_SEC + 0.1, 0.3, 700);
+    swell(t, CP_BURST_SEC, 0.5, 150, 1400);
+    embers(t + 0.05, CP_BURST_SEC, 6, 0.1);
+    // The blow: its body where small speakers still play it, its weight below that, a hall around it
+    fwoomp(burst, 0.9, 1, 260, 55, 0.02);
+    fwoomp(burst, 1.6, 0.5, 900, 70, 0.04);
+    deep(burst, 62, 30, 2, 0.8);
+    rumble(burst, 2.2, 0.4, 110);
+    embers(burst + 0.2, 1.2, 5, 0.06);
+  },
+  // Battle ready: the points float up, land on the score and tick it up to a warm chord
+  battleReady: (t) => {
+    const land = t + READY_LAND_SEC;
+    whoosh(t, 500, 2600, READY_LAND_SEC, 0.12);
+    crack(land, 5000, 0.02, 0.2);
+    [523.3, 587.3, 659.3, 784, 880].forEach((freq, i) => note(land + (i * READY_COUNT_SEC) / 5, freq, "triangle", 0.25, 0.09, 0.004, 3000));
+    const done = land + READY_COUNT_SEC;
+    deep(done, 130, 70, 0.6, 0.45);
+    [261.6, 329.6, 392, 523.3].forEach((freq, i) => note(done + i * 0.02, freq, "triangle", 1.1, 0.12 / (1 + i * 0.3), 0.01, 2400));
+  },
+  // A clock runs out: it stops dead on a last tick, then a heavy bell tolls twice over a low brass blast
+  timeOut: (t) => {
+    const hit = t + TIME_OUT_HIT_SEC;
+    crack(t, 5200, 0.025, 0.35);
+    bell(hit, 110, 4, 0.2);
+    braam(hit, 55, 2.4, 0.26);
+    boom(hit, 100, 38, 1.1, 0.75);
+    bell(hit + 1.3, 98, 3.5, 0.13);
+  },
+  // A card turned over: a flick of air as it spins, then a soft slap as it settles on its other
+  // face, nearly flat, two thirds into the turn (main.ts, turnCard: 440 ms)
+  flip: (t) => {
+    whoosh(t + 0.05, 900, 4800, 0.24, 0.16);
+    crack(t + 0.28, 2600, 0.035, 0.24);
+    note(t + 0.28, 330, "triangle", 0.12, 0.05, 0.002, 1800);
+  },
+  // A player's phone joins the shared screen: two bright notes, rising
+  joined: (t) => {
+    note(t, 659.3, "triangle", 0.35, 0.12, 0.004, 3200);
+    note(t + 0.11, 987.8, "triangle", 0.55, 0.12, 0.004, 3200);
+  },
+  // Flicked up, ringing as it spins, landing on the table
+  coinToss: (t) => {
+    crack(t, 6000, 0.02, 0.35);
+    for (let i = 0; i < 9; i++) note(t + 0.05 + i * 0.12, i % 2 ? 2637 : 3136, "sine", 0.1, 0.05 * (1 - i / 12), 0.002);
+    crack(t + 1.15, 4200, 0.03, 0.4);
+    note(t + 1.15, 1760, "sine", 0.5, 0.12, 0.002);
+    note(t + 1.32, 2093, "sine", 0.35, 0.06, 0.002);
+  },
 };
 
-export function playSound(name: SoundName, count = 1): void {
-  if (!soundsOn || muted) return;
+/** Seconds until the sound is heard (its lead and the speaker's delay), or null when silent */
+export function playSound(name: SoundName, count = 1): number | null {
+  if (!soundsOn || muted) return null;
   const { ctx } = getEngine();
   if (ctx.state === "suspended") void ctx.resume();
   // Still waking up: a little later, but whole and at full strength
   const lead = ctx.state !== "running" || performance.now() < wakingUntil ? WAKE_LEAD_SEC : 0.01;
   SOUNDS[name](ctx.currentTime + lead, count);
+  // Bluetooth speakers and headphones add a good fraction of a second
+  return lead + (ctx.outputLatency || ctx.baseLatency || 0);
 }
 
 /* ---------- Music ---------- */
@@ -475,10 +706,124 @@ export function playSound(name: SoundName, count = 1): void {
 let musicTrack: MusicTrack = "off";
 let playingTrack: MusicTrack = "off";
 let battleOn = false;
-let music: HTMLAudioElement | null = null;
 const fades = new Map<HTMLAudioElement, number>();
 
-const musicVolume = (): number => (muted ? 0 : volume * MUSIC_LEVEL);
+const musicVolume = (): number => volume * MUSIC_LEVEL;
+/** Silenced through `muted`, not the volume: iOS ignores a volume set by the page */
+const musicSilent = (): boolean => muted || musicMuted || musicElsewhere;
+const musicLevel = (): number => (musicSilent() ? 0 : musicVolume());
+
+/*
+ * The battle music loops through Web Audio, not an <audio loop>: the element leaves a blank at
+ * each loop, and its volume can't fade on iOS. Each pass overlaps the next one a little.
+ */
+
+/** Below this, a sample is silence: the blank a file starts or ends with is cut from the loop */
+const AUDIBLE = 0.01;
+
+/**
+ * How each pass hands over to the next, in seconds (measured on the files): the next pass starts
+ * `overlap` before the end and rises over `fadeIn`. Calm keeps its level to the end: a hair of
+ * overlap hides the seam. Epic ends lower than it starts. Tense fades out over its last six
+ * seconds: the next pass starts under that fade and rises fast, before the level drops
+ */
+const MUSIC_SEAM: Record<Exclude<MusicTrack, "off">, { overlap: number; fadeIn: number }> = {
+  calm: { overlap: 0.15, fadeIn: 0.15 },
+  tense: { overlap: 6.5, fadeIn: 2 },
+  epic: { overlap: 2, fadeIn: 2 },
+};
+
+/** Equal power: the two passes keep a steady level all through the overlap */
+const FADE_IN_CURVE = Float32Array.from({ length: 64 }, (_, i) => Math.sin(((i / 63) * Math.PI) / 2));
+const FADE_OUT_CURVE = FADE_IN_CURVE.slice().reverse();
+
+type MusicLoop = { buffer: AudioBuffer; from: number; to: number };
+type MusicPlayer = { out: GainNode; sources: Set<AudioBufferSourceNode>; timer: number };
+
+let music: MusicPlayer | null = null;
+/** One track decoded at a time: a few minutes of decoded music weigh tens of megabytes */
+let decoded: { track: MusicTrack; loop: Promise<MusicLoop> } | null = null;
+
+/** The audible part of a track, in seconds */
+function audibleSpan(buffer: AudioBuffer): { from: number; to: number } {
+  const channels = Array.from({ length: buffer.numberOfChannels }, (_, i) => buffer.getChannelData(i));
+  const audible = (i: number): boolean => channels.some((data) => Math.abs(data[i]) > AUDIBLE);
+  let first = 0;
+  while (first < buffer.length - 1 && !audible(first)) first++;
+  let last = buffer.length - 1;
+  while (last > first && !audible(last)) last--;
+  return { from: first / buffer.sampleRate, to: (last + 1) / buffer.sampleRate };
+}
+
+function loadMusic(track: Exclude<MusicTrack, "off">): Promise<MusicLoop> {
+  if (decoded?.track === track) return decoded.loop;
+  // An offline context decodes before any click: a live one would wait for it
+  const loop = fetch(MUSIC_SRC[track])
+    .then((response) => response.arrayBuffer())
+    .then((data) => new OfflineAudioContext(2, 1, 44100).decodeAudioData(data))
+    .then((buffer) => ({ buffer, ...audibleSpan(buffer) }));
+  decoded = { track, loop };
+  // Failed: the next battle tries again
+  loop.catch(() => {
+    if (decoded?.loop === loop) decoded = null;
+  });
+  return loop;
+}
+
+/** From where the gain stands to `target`, over `ms` */
+function rampTo(gain: GainNode, target: number, ms: number): void {
+  const now = gain.context.currentTime;
+  gain.gain.cancelScheduledValues(now);
+  gain.gain.setValueAtTime(gain.gain.value, now);
+  gain.gain.linearRampToValueAtTime(target, now + ms / 1000);
+}
+
+function playMusic(track: Exclude<MusicTrack, "off">, fadeMs: number): MusicPlayer {
+  const { ctx } = getEngine();
+  const out = ctx.createGain();
+  out.gain.value = 0;
+  out.connect(ctx.destination);
+  const player: MusicPlayer = { out, sources: new Set(), timer: 0 };
+  void loadMusic(track).then(
+    ({ buffer, from, to }) => {
+      // Stopped or replaced while it was decoding
+      if (music !== player) return;
+      const { overlap, fadeIn } = MUSIC_SEAM[track];
+      const length = to - from;
+      const queue = (at: number, first: boolean): void => {
+        const start = Math.max(at, ctx.currentTime);
+        const source = ctx.createBufferSource();
+        source.buffer = buffer;
+        const gain = ctx.createGain();
+        if (!first) gain.gain.setValueCurveAtTime(FADE_IN_CURVE, start, fadeIn);
+        gain.gain.setValueCurveAtTime(FADE_OUT_CURVE, start + length - overlap, overlap);
+        source.connect(gain).connect(out);
+        source.start(start, from, length);
+        player.sources.add(source);
+        source.onended = () => player.sources.delete(source);
+        // The next pass is queued as this one begins: a whole pass ahead, even if timers slow down
+        player.timer = window.setTimeout(
+          () => queue(start + length - overlap, false),
+          Math.max(0, start - ctx.currentTime) * 1000,
+        );
+      };
+      queue(ctx.currentTime + 0.05, true);
+      rampTo(out, musicLevel(), fadeMs);
+    },
+    () => undefined,
+  );
+  return player;
+}
+
+/** Fades the music out, then lets it go */
+function stopMusic(player: MusicPlayer, ms: number): void {
+  window.clearTimeout(player.timer);
+  rampTo(player.out, 0, ms);
+  window.setTimeout(() => {
+    for (const source of player.sources) source.stop();
+    player.out.disconnect();
+  }, ms + 50);
+}
 
 function fadeTo(el: HTMLAudioElement, target: number, ms: number, then?: () => void): void {
   window.clearInterval(fades.get(el));
@@ -497,28 +842,27 @@ function fadeTo(el: HTMLAudioElement, target: number, ms: number, then?: () => v
   );
 }
 
-function startMusic(el: HTMLAudioElement): void {
-  // Refused until the first click or key: unlockAudio() starts it then
-  void el.play().then(
-    () => fadeTo(el, musicVolume(), MUSIC_FADE_MS),
-    () => undefined,
-  );
+/** Fades a track out and stops it, or at once with no fade */
+function stopAudio(el: HTMLAudioElement, ms: number): void {
+  if (ms > 0) {
+    fadeTo(el, 0, ms, () => el.pause());
+    return;
+  }
+  window.clearInterval(fades.get(el));
+  fades.delete(el);
+  el.pause();
 }
 
 /** One track at a time: the old one fades out as the new one fades in */
-function refreshMusic(): void {
+function refreshMusic(fadeMs = MUSIC_FADE_MS): void {
   const wanted = battleOn ? musicTrack : "off";
   if (wanted === playingTrack) return;
   playingTrack = wanted;
   const previous = music;
   music = null;
-  if (previous) fadeTo(previous, 0, MUSIC_FADE_MS, () => previous.pause());
+  if (previous) stopMusic(previous, fadeMs);
   if (wanted === "off") return;
-  const el = new Audio(MUSIC_SRC[wanted]);
-  el.loop = true;
-  el.volume = 0;
-  music = el;
-  startMusic(el);
+  music = playMusic(wanted, fadeMs);
 }
 
 /** The track picked in the menu: heard once the battle is on */
@@ -526,13 +870,46 @@ export function setMusic(track: MusicTrack): void {
   musicTrack = track;
   // Picked ahead of the battle: on the device by the time it starts, network or not
   if (track !== "off") keepOffline(MUSIC_SRC[track]);
-  refreshMusic();
+  refreshMusic(track === "off" ? 0 : MENU_FADE_MS);
 }
 
 /** The battle begins with the VS (or the clocks, without the cards) and ends with its result */
 export function setBattleMusic(on: boolean): void {
   battleOn = on;
+  if (on) stopMusicPreview();
   refreshMusic();
+}
+
+let preview: { el: HTMLAudioElement; timer: number } | null = null;
+
+/** A few seconds of the track picked in the menu. In a battle, the music itself has changed already */
+export function previewMusic(): void {
+  stopMusicPreview(musicTrack === "off" ? 0 : MENU_FADE_MS);
+  if (battleOn || musicTrack === "off") return;
+  // The extract streams at once; the whole track decodes meanwhile, ready for the battle
+  void loadMusic(musicTrack).catch(() => undefined);
+  const el = new Audio(`${MUSIC_SRC[musicTrack]}#t=${PREVIEW_FROM_SEC[musicTrack]}`);
+  el.volume = 0;
+  el.muted = musicSilent();
+  const current = { el, timer: 0 };
+  preview = current;
+  void el.play().then(
+    () => {
+      if (preview !== current) return;
+      fadeTo(el, musicVolume(), MENU_FADE_MS);
+      current.timer = window.setTimeout(() => stopMusicPreview(PREVIEW_END_FADE_MS), PREVIEW_MS);
+    },
+    () => undefined,
+  );
+}
+
+/** Fades the extract out, if one is playing: closing the menu cuts it short, softly */
+export function stopMusicPreview(ms = MENU_FADE_MS): void {
+  if (!preview) return;
+  const { el, timer } = preview;
+  preview = null;
+  window.clearTimeout(timer);
+  stopAudio(el, ms);
 }
 
 /* ---------- Settings ---------- */
@@ -553,17 +930,32 @@ export function setMuted(value: boolean): void {
 
 export const isMuted = (): boolean => muted;
 
+export function setMusicMuted(value: boolean): void {
+  musicMuted = value;
+  applyLevels();
+}
+
+export const isMusicMuted = (): boolean => musicMuted;
+
+export function setMusicElsewhere(value: boolean): void {
+  musicElsewhere = value;
+  applyLevels();
+}
+
 function applyLevels(): void {
   if (engine) engine.out.gain.setTargetAtTime(muted ? 0 : volume, engine.ctx.currentTime, 0.05);
-  if (music && !fades.has(music)) music.volume = musicVolume();
+  if (music) rampTo(music.out, musicLevel(), 50);
+  if (preview) {
+    preview.el.muted = musicSilent();
+    if (!fades.has(preview.el)) preview.el.volume = musicVolume();
+  }
 }
 
 /**
  * Every click or key: audio may start. With the effects on, the engine wakes up there,
- * ahead of the first sound, and a music picked earlier begins
+ * ahead of the first sound; a battle music waiting for it begins
  */
 export function unlockAudio(): void {
   if (soundsOn && !muted) getEngine();
   if (engine?.ctx.state === "suspended") void engine.ctx.resume();
-  if (music?.paused) startMusic(music);
 }
