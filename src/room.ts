@@ -1,6 +1,7 @@
 /*
- * An online game: a room on Firebase Realtime Database, under a short code. Each phone signs in
- * anonymously, takes a seat (Player 1 or 2) and shares one state, kept as a JSON string.
+ * An online game: a room on Firebase Realtime Database, under a short code. Each device signs in
+ * anonymously, takes a seat (Player 1 or 2, or the shared screen) and shares one state, kept as a
+ * JSON string.
  * Loaded only when a game goes online: the single-screen clock never pulls Firebase in.
  */
 import { initializeApp } from "firebase/app";
@@ -9,11 +10,14 @@ import {
   connectDatabaseEmulator,
   get,
   getDatabase,
+  onDisconnect,
   onValue,
   ref,
+  remove,
   runTransaction,
   set,
   type Database,
+  type DatabaseReference,
 } from "firebase/database";
 import { setClockOffset, type Player } from "./game";
 
@@ -31,21 +35,33 @@ const FIREBASE_CONFIG = {
 const CODE_ALPHABET = "ABCDEFGHJKLMNPQRSTUVWXYZ23456789";
 export const CODE_LENGTH = 5;
 
+/** A player's phone, or the shared screen: a PC or tablet at the table, showing the game to both */
+export type Seat = Player | "board";
+/**
+ * Which seats are taken. `away`: taken by a phone that is not connected now (closed, asleep,
+ * its data wiped): the seat waits for it, or for another phone, to come back
+ */
+export type Seats = Record<Player, boolean> & { board: boolean; away: Record<Player, boolean> };
+
 export type RoomEvents = {
   /** The shared state, each time it changes on the server */
   onState: (json: string) => void;
   /** Connected to the server or not: changes made meanwhile are sent once back */
   onConnection: (connected: boolean) => void;
   /** Which seats are taken */
-  onSeats: (seats: Record<Player, boolean>) => void;
+  onSeats: (seats: Seats) => void;
+  /** The game was ended online from another device: this one is out of the room */
+  onEnded: () => void;
 };
 
 export type Room = {
   code: string;
-  seat: Player;
+  seat: Seat;
   /** Replaces the state with `update(remote)`, retried until no other phone wrote in between */
   transact: (update: (remote: string | null) => string) => Promise<string>;
   leave: () => void;
+  /** Ends the game online for every device in the room, then leaves it */
+  end: () => void;
 };
 
 export class RoomError extends Error {
@@ -83,19 +99,77 @@ function newCode(): string {
 
 export const isRoomCode = (code: string): boolean => new RegExp(`^[${CODE_ALPHABET}]{${CODE_LENGTH}}$`).test(code);
 
-function open(db: Database, code: string, seat: Player, events: RoomEvents): Room {
+/**
+ * Where a device sits: a player's seat, holding its id, or its own place among the shared screens.
+ * Several can show one game, a second PC never pushes the first one out
+ */
+const placeRef = (db: Database, code: string, seat: Seat, uid: string): DatabaseReference =>
+  ref(db, seat === "board" ? `rooms/${code}/boards/${uid}` : `rooms/${code}/seats/${seat}`);
+
+/**
+ * A player's seat holds the id of the phone that took it, until another takes it over: it says
+ * who plays there, not whether that phone is still here. Each phone also marks itself present
+ * while it is connected, the mark gone with it
+ */
+const presenceRef = (db: Database, code: string, uid: string): DatabaseReference => ref(db, `rooms/${code}/phones/${uid}`);
+
+const seatsFrom = (seats: Record<string, unknown>, phones: Record<string, unknown>, board: boolean): Seats => ({
+  1: !!seats[1],
+  2: !!seats[2],
+  board,
+  away: { 1: !!seats[1] && !phones[String(seats[1])], 2: !!seats[2] && !phones[String(seats[2])] },
+});
+
+function open(db: Database, uid: string, code: string, seat: Seat, events: RoomEvents): Room {
   const stateRef = ref(db, `rooms/${code}/state`);
+  // A shared screen counts among the boards, a phone among the phones present: both while connected
+  const hereRef = seat === "board" ? placeRef(db, code, "board", uid) : presenceRef(db, code, uid);
+  let seats: Record<string, unknown> = {};
+  let phones: Record<string, unknown> = {};
+  let boards = 0;
+  // Told once the seats, the phones and the shared screens have all come in: half of it would
+  // show, for a moment, a seat empty or a shared screen missing that are not
+  const loaded = new Set<string>();
+  const tellSeats = (part: string): void => {
+    loaded.add(part);
+    if (loaded.size === 3) events.onSeats(seatsFrom(seats, phones, boards > 0));
+  };
   const stops = [
     onValue(stateRef, (snap) => {
       const value: unknown = snap.val();
       if (typeof value === "string") events.onState(value);
     }),
-    onValue(ref(db, ".info/connected"), (snap) => events.onConnection(snap.val() === true)),
+    onValue(ref(db, ".info/connected"), (snap) => {
+      const connected = snap.val() === true;
+      events.onConnection(connected);
+      // Here while connected, gone with the connection: once no shared screen is left the phones
+      // play the music again, and a phone gone shows its code again on the shared screen
+      if (connected) {
+        void onDisconnect(hereRef)
+          .remove()
+          .then(() => set(hereRef, true))
+          .catch(() => undefined);
+      }
+    }),
     onValue(ref(db, `rooms/${code}/seats`), (snap) => {
-      const seats = (snap.val() ?? {}) as Record<string, unknown>;
-      events.onSeats({ 1: !!seats[1], 2: !!seats[2] });
+      seats = (snap.val() ?? {}) as Record<string, unknown>;
+      tellSeats("seats");
+    }),
+    onValue(ref(db, `rooms/${code}/phones`), (snap) => {
+      phones = (snap.val() ?? {}) as Record<string, unknown>;
+      tellSeats("phones");
+    }),
+    onValue(ref(db, `rooms/${code}/boards`), (snap) => {
+      boards = Object.keys((snap.val() ?? {}) as Record<string, unknown>).length;
+      tellSeats("boards");
+    }),
+    onValue(ref(db, `rooms/${code}/ended`), (snap) => {
+      if (snap.val() === true) events.onEnded();
     }),
   ];
+  const stopAll = (): void => {
+    for (const stop of stops) stop();
+  };
   return {
     code,
     seat,
@@ -105,14 +179,23 @@ function open(db: Database, code: string, seat: Player, events: RoomEvents): Roo
       });
       return result.snapshot.val() as string;
     },
+    end() {
+      // Written before this device lets go of its place, which is what allows it to write
+      stopAll();
+      void set(ref(db, `rooms/${code}/ended`), true).catch(() => undefined);
+      this.leave();
+    },
     leave() {
-      for (const stop of stops) stop();
+      stopAll();
+      // A phone keeps its seat, to come back to it; it is no longer here
+      void onDisconnect(hereRef).cancel().catch(() => undefined);
+      void remove(hereRef).catch(() => undefined);
     },
   };
 }
 
-/** A new room holding `state`, with this phone in `seat` */
-export async function createRoom(seat: Player, state: string, events: RoomEvents): Promise<Room> {
+/** A new room holding `state`, with this device in `seat` */
+export async function createRoom(seat: Seat, state: string, events: RoomEvents): Promise<Room> {
   const { db, uid } = await connect().catch(() => {
     throw new RoomError("unavailable");
   });
@@ -123,25 +206,47 @@ export async function createRoom(seat: Player, state: string, events: RoomEvents
       current === null ? Date.now() : undefined,
     );
     if (!committed) continue;
-    await set(ref(db, `rooms/${code}/seats/${seat}`), uid);
+    await set(placeRef(db, code, seat, uid), seat === "board" ? true : uid);
     await set(ref(db, `rooms/${code}/state`), state);
-    return open(db, code, seat, events);
+    return open(db, uid, code, seat, events);
   }
   throw new RoomError("unavailable");
 }
 
+/** Who is in a room, before joining it: a PC joins as the player still missing, or as a shared screen */
+export async function peekSeats(code: string): Promise<Seats> {
+  const { db } = await connect().catch(() => {
+    throw new RoomError("unavailable");
+  });
+  const snap = await get(ref(db, `rooms/${code}`)).catch(() => {
+    throw new RoomError("unavailable");
+  });
+  if (!snap.child("state").exists() || snap.child("ended").exists()) throw new RoomError("not-found");
+  const seats = (snap.child("seats").val() ?? {}) as Record<string, unknown>;
+  const phones = (snap.child("phones").val() ?? {}) as Record<string, unknown>;
+  return seatsFrom(seats, phones, snap.child("boards").exists());
+}
+
 /**
  * Takes `seat` in the room: a phone that joins a seat already taken replaces the one there,
- * so a player whose battery dies goes on with another phone
+ * so a player whose battery dies goes on with another phone. With `preferFree`, a code typed by
+ * hand: the player picked is taken by another device and the other seat is free, so the wrong
+ * player was picked, and the free seat is taken instead (the room's seat says which)
  */
-export async function joinRoom(code: string, seat: Player, events: RoomEvents): Promise<Room> {
+export async function joinRoom(code: string, seat: Seat, events: RoomEvents, preferFree = false): Promise<Room> {
   const { db, uid } = await connect().catch(() => {
     throw new RoomError("unavailable");
   });
-  const snap = await get(ref(db, `rooms/${code}/state`)).catch(() => {
+  const [snap, ended] = await Promise.all([get(ref(db, `rooms/${code}/state`)), get(ref(db, `rooms/${code}/ended`))]).catch(() => {
     throw new RoomError("unavailable");
   });
-  if (!snap.exists()) throw new RoomError("not-found");
-  await set(ref(db, `rooms/${code}/seats/${seat}`), uid);
-  return open(db, code, seat, events);
+  if (!snap.exists() || ended.exists()) throw new RoomError("not-found");
+  let taken = seat;
+  if (preferFree && seat !== "board") {
+    const seats = ((await get(ref(db, `rooms/${code}/seats`)).catch(() => null))?.val() ?? {}) as Record<string, unknown>;
+    const free: Player = seat === 1 ? 2 : 1;
+    if (seats[seat] && seats[seat] !== uid && !seats[free]) taken = free;
+  }
+  await set(placeRef(db, code, taken, uid), taken === "board" ? true : uid);
+  return open(db, uid, code, taken, events);
 }

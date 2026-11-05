@@ -1,11 +1,13 @@
 import "./style.css";
 import { getLang, setLang, t, type Lang, type StringKey } from "./i18n";
+import type { MissionAction } from "./actions";
 import { SECONDARY_BY_ID, type SecondaryCard, type Text } from "./secondaries";
 import { FACTION_BY_ID, FACTIONS, SPACE_MARINES, SPACE_MARINES_NAME, type FactionGroup } from "./factions";
 import { applyUpdateIfIdle, setupPwa } from "./pwa";
-import type { Room, RoomEvents } from "./room";
+import type { Room, RoomEvents, Seat, Seats } from "./room";
 import { merge } from "./sync";
 import {
+  BATTLE_READY_VP,
   DEFAULT_TIME_SEC,
   MAX_GAME_TURN,
   MAX_PLAYER_TURNS,
@@ -17,6 +19,7 @@ import {
   isStopped,
   newGame,
   newSecondaryPile,
+  nowMs,
   other,
   playerTurnSlot,
   runClock,
@@ -27,18 +30,30 @@ import {
   stopClock,
   type Ability,
   type AbilityKind,
+  type ClockEvent,
+  type ClockEventKind,
   type GameState,
   type Player,
   type ScoreKind,
 } from "./game";
 import {
+  CLASH_BOOM_SEC,
+  CP_BURST_SEC,
+  READY_COUNT_SEC,
+  READY_LAND_SEC,
+  TIME_OUT_HIT_SEC,
+  isMusicMuted,
   isMuted,
   playSound,
+  previewMusic,
   setBattleMusic,
   setMusic,
+  setMusicMuted,
   setMuted,
+  setMusicElsewhere,
   setSoundsOn,
   setVolume,
+  stopMusicPreview,
   unlockAudio,
   type MusicTrack,
 } from "./audio";
@@ -62,11 +77,23 @@ const PRESETS = [
 
 const CUSTOM_PRESET_VALUE = "custom";
 
+/** Something comes and goes in the layout: it slides or glides open and shut in this time (slideRow, glideHeight) */
+const SLIDE_MS = 260;
+const SLIDE = "slide";
+const GLIDE = "glide";
+const SLIDE_PROPS = ["height", "minHeight", "paddingTop", "paddingBottom", "borderTopWidth", "borderBottomWidth", "marginTop", "opacity"] as const;
+/** The state each sliding row was last put in: the first time, it is set without motion */
+const slidShown = new WeakMap<HTMLElement, boolean>();
+
 /** Open the hand (S) and the primary (P) of the player whose clock runs; physical keys, the same on AZERTY */
 const HAND_KEY = "S";
 const HAND_KEY_CODE = "KeyS";
 const PRIMARY_KEY = "P";
 const PRIMARY_KEY_CODE = "KeyP";
+const JUDGE_KEY = "J";
+const JUDGE_KEY_CODE = "KeyJ";
+/** A judge adds or takes back time a minute at a time */
+const JUDGE_STEP_SEC = 60;
 /** At the end of a turn, from one player's scoring cards to the other's */
 const SWITCH_KEY = "Tab";
 
@@ -83,16 +110,18 @@ const ABILITY_KINDS: Record<AbilityKind, { title: StringKey; hint: StringKey; sh
 
 /** Key kept from the former "Counters" setting so saved choices survive the rename */
 const UI_SIZE_STORAGE_KEY = "warhammerClock.counterSize";
-const UI_SIZE_DEFAULT = "m";
+const UI_SIZE_DEFAULT = "auto";
 
 const LAYOUT_STORAGE_KEY = "warhammerClock.layout";
-const LAYOUT_DEFAULT = "rows";
+const LAYOUT_DEFAULT = "auto";
 
 const LANG_STORAGE_KEY = "warhammerClock.lang";
 
 const THEME_STORAGE_KEY = "warhammerClock.theme";
 
+/** Saved by older versions even when nobody picked it: read once, for an "on" */
 const SOUNDS_STORAGE_KEY = "warhammerClock.sounds";
+const SFX_STORAGE_KEY = "warhammerClock.sfx";
 const MUSIC_STORAGE_KEY = "warhammerClock.music";
 const VOLUME_STORAGE_KEY = "warhammerClock.volume";
 const MUSIC_TRACKS: MusicTrack[] = ["off", "calm", "tense", "epic"];
@@ -146,6 +175,10 @@ const ICON_TARGET = svgIcon('<circle cx="12" cy="12" r="7" /><circle cx="12" cy=
 const ICON_CARDS = svgIcon('<rect x="4" y="6" width="11" height="15" rx="2" /><path d="M9 3h9a2 2 0 0 1 2 2v13" />');
 const ICON_CLOCK = svgIcon('<circle cx="12" cy="13" r="8" /><path d="M12 9v4l2.5 2.5M10 2h4" />');
 const ICON_CAMERA = svgIcon('<path d="M4 8h3l2-3h6l2 3h3v11H4z" /><circle cx="12" cy="13" r="3.5" />');
+const ICON_SOUND = svgIcon('<path d="M4 9h4l5-4v14l-5-4H4z" /><path d="M16.5 8.5a5 5 0 0 1 0 7M19 6a8.5 8.5 0 0 1 0 12" />');
+const ICON_MUTED = svgIcon('<path d="M4 9h4l5-4v14l-5-4H4z" /><path d="M17 9.5l5 5M22 9.5l-5 5" />');
+const ICON_MUSIC = svgIcon('<path d="M9 18V5l11-2v13" /><circle cx="6" cy="18" r="3" /><circle cx="17" cy="16" r="3" />');
+const ICON_MUSIC_OFF = svgIcon('<path d="M9 18V5l11-2v13" /><circle cx="6" cy="18" r="3" /><circle cx="17" cy="16" r="3" /><path d="M3 3l18 18" />');
 const ICON_SLIDERS = svgIcon(
   '<path d="M4 7h9M17 7h3M4 17h3M11 17h9" /><circle cx="15" cy="7" r="2" /><circle cx="9" cy="17" r="2" />',
 );
@@ -153,6 +186,11 @@ const ICON_CHECK = svgIcon('<path d="M5 12.5l4.5 4.5L19 7.5" />');
 const ICON_CHEVRON = svgIcon('<path d="M7 10l5 5 5-5" />');
 const ICON_ONLINE = svgIcon('<rect x="2.5" y="5" width="7" height="14" rx="1.5" /><rect x="14.5" y="5" width="7" height="14" rx="1.5" /><path d="M9.5 12h5" />');
 const ICON_RESET = svgIcon('<path d="M4 12a8 8 0 1 0 2.4-5.7M4 4v4h4" />');
+/** A referee's whistle: the judge call, set apart from the players' own pause */
+const ICON_WHISTLE = svgIcon('<circle cx="8.5" cy="14.5" r="5.5" /><path d="M8.5 9H21v4h-7.2" /><circle cx="8.5" cy="14.5" r="1.4" />');
+const ICON_IMAGE = svgIcon('<rect x="3" y="4" width="18" height="16" rx="2" /><circle cx="9" cy="10" r="2" /><path d="M21 16l-5-5-9 9" />');
+const ICON_SWAP = svgIcon('<path d="M8 20V4M4.5 7.5L8 4l3.5 3.5M16 4v16M12.5 16.5L16 20l3.5-3.5" />');
+const ICON_LOG = svgIcon('<path d="M9 6h11M9 12h11M9 18h11" /><path d="M4.5 6h.01M4.5 12h.01M4.5 18h.01" />');
 const ICON_ROWS = svgIcon('<rect x="2" y="2" width="24" height="7" rx="1" /><rect x="2" y="11" width="24" height="7" rx="1" />', "0 0 28 20");
 const ICON_COLUMNS = svgIcon('<rect x="2" y="2" width="11" height="16" rx="1" /><rect x="15" y="2" width="11" height="16" rx="1" />', "0 0 28 20");
 
@@ -161,15 +199,20 @@ const ICON_COLUMNS = svgIcon('<rect x="2" y="2" width="11" height="16" rx="1" />
  * data-i18n-placeholder) and their placeholders (data-v-*): applyTranslations() fills them.
  */
 function scoreCounterHtml(player: Player, corner: "tl" | "bl"): string {
-  const rows = SCORE_KINDS.map(
+  const tiles = SCORE_KINDS.map(
     ({ kind, label, ariaMinus, ariaPlus }) => `
-        <div class="score-box__row" data-kind="${kind}">
-          <span class="score-box__kind" data-i18n="${label}"></span>
-          <button type="button" class="mini-counter__btn" id="p${player}-${kind}-minus" data-i18n-aria="${ariaMinus}" data-v-n="${player}">−</button>
-          <span class="mini-counter__val" id="p${player}-${kind}-val">0</span>
-          <button type="button" class="mini-counter__btn" id="p${player}-${kind}-plus" data-i18n-aria="${ariaPlus}" data-v-n="${player}">+</button>
-        </div>`,
+          <div class="score-box__tile" data-kind="${kind}">
+            <span class="score-box__kind" data-i18n="${label}"></span>
+            <div class="score-box__tile-value">
+              <button type="button" class="mini-counter__btn" id="p${player}-${kind}-minus" data-i18n-aria="${ariaMinus}" data-v-n="${player}">−</button>
+              <span class="mini-counter__val" id="p${player}-${kind}-val">0</span>
+              <button type="button" class="mini-counter__btn" id="p${player}-${kind}-plus" data-i18n-aria="${ariaPlus}" data-v-n="${player}">+</button>
+            </div>
+          </div>`,
   ).join("");
+  const rows = `
+        <div class="score-box__tiles">${tiles}
+        </div>`;
   return `
       <div class="mini-counter mini-counter--${corner} score-box">
         <div class="score-box__head">
@@ -222,14 +265,18 @@ function panelHtml(player: Player): string {
       ${cpCornerHtml(player, player === 1 ? "tr" : "br")}
       <div class="panel-head">
         <span class="panel-label" data-i18n="player" data-v-n="${player}"></span>
+        <span class="panel-me" data-i18n="you"></span>
         <span class="panel-turn" data-i18n="playerTurn"></span>
+        <span class="panel-turn panel-deploy" data-i18n="deploying"></span>
       </div>
       <span class="time" id="t${player}">1:00:00</span>
+      <span class="panel-flag" data-i18n="timeOutLimits"></span>
     </section>`;
 }
 
 app.innerHTML = `
   <header class="toolbar">
+    <p class="toolbar-deploy" data-i18n="deployToolbarHint"></p>
     <div class="toolbar__group">
       <div class="setting">
         <span class="setting__label">${ICON_CLOCK}<span data-i18n="time"></span></span>
@@ -253,6 +300,11 @@ app.innerHTML = `
                 <input id="m2" type="number" min="0" max="999" step="1" value="${DEFAULT_TIME_SEC / 60}" />
               </label>
             </div>
+            <label class="toggle-chip time-deploy">
+              <input type="checkbox" id="deploy-clock" checked />
+              <span data-i18n="deployClock"></span>
+              <span class="toggle-chip__switch" aria-hidden="true"></span>
+            </label>
           </div>
         </div>
       </div>
@@ -270,45 +322,14 @@ app.innerHTML = `
       </label>
     </div>
     <div class="toolbar__group toolbar__group--end">
-      <button type="button" class="btn-online" id="btn-online">${ICON_ONLINE}<span data-i18n="online"></span></button>
+      <button type="button" class="btn-online" id="btn-online">${ICON_ONLINE}<span id="online-label"></span></button>
       <div class="popover-anchor">
         <button type="button" class="btn-icon" id="btn-settings" aria-expanded="false" aria-controls="settings-panel" data-i18n-aria="display" data-i18n-title="display">${ICON_SLIDERS}</button>
         <div class="popover popover--end settings__panel" id="settings-panel" hidden>
           <div class="settings__section">
-            <span class="settings__label" data-i18n="layout"></span>
-            <div class="segmented segmented--tiles" id="layout-options" role="group" data-i18n-aria="layoutAria">
-              <button type="button" class="segmented__option" data-value="rows">${ICON_ROWS}<span data-i18n="layoutRows"></span></button>
-              <button type="button" class="segmented__option" data-value="columns">${ICON_COLUMNS}<span data-i18n="layoutColumns"></span></button>
-            </div>
-          </div>
-          <div class="settings__section">
-            <span class="settings__label" data-i18n="uiSize"></span>
-            <div class="segmented segmented--wrap" id="ui-size-options" role="group" data-i18n-aria="uiSizeAria">
-              <button type="button" class="segmented__option" data-value="s" data-i18n="sizeS"></button>
-              <button type="button" class="segmented__option" data-value="m" data-i18n="sizeM"></button>
-              <button type="button" class="segmented__option" data-value="l" data-i18n="sizeL"></button>
-              <button type="button" class="segmented__option" data-value="xl" data-i18n="sizeXl"></button>
-              <button type="button" class="segmented__option" data-value="uw" data-i18n="sizeUw"></button>
-            </div>
-          </div>
-          <div class="settings__section">
-            <span class="settings__label" data-i18n="language"></span>
-            <div class="segmented" id="lang-options" role="group" data-i18n-aria="language">
-              <button type="button" class="segmented__option" data-value="en">English</button>
-              <button type="button" class="segmented__option" data-value="fr">Français</button>
-            </div>
-          </div>
-          <div class="settings__section">
-            <span class="settings__label"><span data-i18n="sound"></span> <kbd>${MUTE_KEY}</kbd> <span class="settings__hint" data-i18n="muteHint"></span></span>
-            <div class="sound-row">
-              <span class="sound-row__label" data-i18n="soundEffects"></span>
-              <div class="segmented" id="sfx-options" role="group" data-i18n-aria="soundEffects">
-                <button type="button" class="segmented__option" data-value="off" data-i18n="off"></button>
-                <button type="button" class="segmented__option" data-value="on" data-i18n="on"></button>
-              </div>
-            </div>
-            <div class="sound-row">
-              <span class="sound-row__label" data-i18n="music"></span>
+            <span class="settings__label"><span data-i18n="sound"></span> <kbd data-i18n-title="muteHint">${MUTE_KEY}</kbd></span>
+            <div class="settings-row">
+              <span class="settings-row__label" data-i18n="music"></span>
               <div class="segmented" id="music-options" role="group" data-i18n-aria="music">
                 <button type="button" class="segmented__option" data-value="off" data-i18n="musicOff"></button>
                 <button type="button" class="segmented__option" data-value="calm" data-i18n="musicCalm"></button>
@@ -316,8 +337,13 @@ app.innerHTML = `
                 <button type="button" class="segmented__option" data-value="epic" data-i18n="musicEpic"></button>
               </div>
             </div>
-            <div class="sound-row">
-              <span class="sound-row__label" data-i18n="volume"></span>
+            <label class="settings-row toggle-chip settings-switch">
+              <span class="settings-row__label" data-i18n="soundEffects"></span>
+              <input type="checkbox" id="sfx-toggle" />
+              <span class="toggle-chip__switch" aria-hidden="true"></span>
+            </label>
+            <div class="settings-row">
+              <span class="settings-row__label" data-i18n="volume"></span>
               <input type="range" class="volume" id="volume" min="0" max="100" step="5" data-i18n-aria="volume" />
             </div>
           </div>
@@ -329,6 +355,7 @@ app.innerHTML = `
               <button type="button" class="segmented__option" data-value="factions">${themePreviewHtml("factions")}<span data-i18n="themeFactions"></span></button>
             </div>
             <div class="faction-menu" id="factions-section" hidden>
+              <button type="button" class="faction-swap" id="faction-swap" data-i18n-title="factionSwap">${ICON_SWAP}<span data-i18n="factionSwapShort"></span></button>
               ${([1, 2] as const)
                 .map(
                   (player) => `
@@ -339,6 +366,38 @@ app.innerHTML = `
               </div>`,
                 )
                 .join("")}
+            </div>
+          </div>
+          <div class="settings__section settings__section--board">
+            <span class="settings__label" data-i18n="screen"></span>
+            <div class="settings-row">
+              <span class="settings-row__label" data-i18n="layout"></span>
+              <div class="segmented" id="layout-options" role="group" data-i18n-aria="layoutAria">
+                <button type="button" class="segmented__option" data-value="auto" data-i18n="sizeAuto"></button>
+                <button type="button" class="segmented__option" data-value="rows" data-i18n-title="layoutRows" data-i18n-aria="layoutRows">${ICON_ROWS}</button>
+                <button type="button" class="segmented__option" data-value="columns" data-i18n-title="layoutColumns" data-i18n-aria="layoutColumns">${ICON_COLUMNS}</button>
+              </div>
+            </div>
+            <div class="settings-row">
+              <span class="settings-row__label" data-i18n="uiSizeShort"></span>
+              <div class="segmented" id="ui-size-options" role="group" data-i18n-aria="uiSizeAria">
+                <button type="button" class="segmented__option" data-value="auto" data-i18n="sizeAuto"></button>
+                <button type="button" class="segmented__option" data-value="s" data-i18n="sizeS"></button>
+                <button type="button" class="segmented__option" data-value="m" data-i18n="sizeM"></button>
+                <button type="button" class="segmented__option" data-value="l" data-i18n="sizeL"></button>
+              </div>
+            </div>
+          </div>
+          <div class="settings__section settings__section--seat-game">
+            <button type="button" class="btn-ghost strip-reset" id="seat-reset">${ICON_RESET}<span data-i18n="reset"></span></button>
+          </div>
+          <div class="settings__section">
+            <div class="settings-row">
+              <span class="settings__label" data-i18n="language"></span>
+              <div class="segmented settings-lang" id="lang-options" role="group" data-i18n-aria="language">
+                <button type="button" class="segmented__option" data-value="en" title="English">EN</button>
+                <button type="button" class="segmented__option" data-value="fr" title="Français">FR</button>
+              </div>
             </div>
           </div>
         </div>
@@ -355,7 +414,7 @@ app.innerHTML = `
           </svg>
         </span>
       </button>
-      <button type="button" class="btn-primary toolbar__start" id="btn-start"><span data-i18n="start"></span> <kbd data-i18n="keyEnter"></kbd></button>
+      <button type="button" class="btn-primary toolbar__start" id="btn-start"><span class="toolbar__start-label" data-i18n="start"></span><span class="toolbar__deploy-label" data-i18n="deployDone"></span> <kbd data-i18n="keyEnter"></kbd></button>
     </div>
   </header>
   <div class="board">
@@ -363,8 +422,14 @@ app.innerHTML = `
     <div class="turn-tracker">
       <div class="turn-tracker__controls">
         <button type="button" class="btn-ghost strip-reset" id="btn-reset" data-i18n-title="reset">${ICON_RESET}<span data-i18n="reset"></span></button>
+        <span class="popover-anchor">
+          <button type="button" class="btn-ghost strip-settings" id="strip-settings" aria-expanded="false" aria-controls="settings-panel" data-i18n-aria="display" data-i18n-title="display">${ICON_SLIDERS}</button>
+        </span>
+        <button type="button" class="btn-judge" id="btn-judge" data-i18n-aria="judgeCallAria" data-i18n-title="judgeCallAria" hidden>${ICON_WHISTLE}<span data-i18n="judgeCall"></span> <kbd>${JUDGE_KEY}</kbd></button>
+        <button type="button" class="btn-ghost strip-settings strip-room" id="strip-room" hidden>${ICON_ONLINE}<span class="strip-room__dot" aria-hidden="true"></span></button>
       </div>
       <div class="turn-tracker__round" role="group" data-i18n-aria="battleRoundAria">
+        <span class="turn-tracker__deploy" data-i18n="deployment"></span>
         <span class="turn-tracker__label" aria-hidden="true" data-i18n="round"></span>
         <div class="turn-tracker__dots" id="turn-dots"></div>
       </div>
@@ -372,13 +437,38 @@ app.innerHTML = `
     </div>
     ${panelHtml(2)}
   </div>
+  <section class="phone-home" id="phone-home">
+    <div class="phone-home__brand">
+      <img class="phone-home__logo" src="icon.svg" alt="" />
+      <h1>Warhammer Clock</h1>
+    </div>
+    <div class="phone-home__start" id="phone-home-start"></div>
+    <p class="phone-home__note" data-i18n="homeScan"></p>
+    <p class="phone-home__note" data-i18n="homeBoard"></p>
+  </section>
   <section class="seat" id="seat" aria-live="polite">
     <header class="seat-bar">
       <button type="button" class="seat-room" id="seat-room"><span class="seat-room__dot" aria-hidden="true"></span><span id="seat-code"></span></button>
       <span class="seat-bar__round" id="seat-round"></span>
+      <div class="seat-bar__tools">
+        <button type="button" class="btn-icon" id="seat-music" aria-pressed="false" data-i18n-aria="musicMute" data-i18n-title="musicMute" hidden>${ICON_MUSIC}</button>
+        <button type="button" class="btn-icon" id="seat-mute" aria-pressed="false" data-i18n-aria="sound" data-i18n-title="sound">${ICON_SOUND}</button>
+        <div class="popover-anchor" id="seat-settings-anchor">
+          <button type="button" class="btn-icon" id="seat-settings" aria-expanded="false" aria-controls="settings-panel" data-i18n-aria="display" data-i18n-title="display">${ICON_SLIDERS}</button>
+        </div>
+      </div>
     </header>
+    <section class="seat-invite" id="seat-invite" hidden>
+      <div class="seat-invite__qr" id="seat-invite-qr"></div>
+      <div class="seat-invite__text">
+        <p class="seat-invite__title" id="seat-invite-title"></p>
+        <p class="seat-invite__code" id="seat-invite-code"></p>
+        <p class="seat-invite__hint" id="seat-invite-hint"></p>
+        <button type="button" class="btn-secondary" id="seat-invite-share" data-i18n="onlineShare"></button>
+      </div>
+    </section>
     <div class="seat-opp" id="seat-opp">
-      <span class="seat-opp__name" id="seat-opp-name"></span>
+      <span class="seat-opp__name"><span id="seat-opp-name"></span><span class="seat-opp__away" id="seat-opp-away" data-i18n="seatOppAway" hidden></span></span>
       <span class="seat-opp__score"><span id="seat-opp-score">0</span> <small data-i18n="vpUnit"></small></span>
       <span class="seat-opp__time" id="seat-opp-time"></span>
       <button type="button" class="seat-opp__primary" id="seat-opp-primary" data-i18n-aria="oppPrimary" data-i18n-title="oppPrimary">${ICON_TARGET}</button>
@@ -390,22 +480,31 @@ app.innerHTML = `
     </button>
     <div class="seat-stats">
       <div class="seat-card seat-score">
-        <div class="seat-card__head"><span data-i18n="score"></span><b id="seat-score">0</b></div>
+        <div class="seat-card__head">
+          <span data-i18n="score"></span>
+          <span class="seat-score__total"><b id="seat-score">0</b> <small data-i18n="vpUnit"></small></span>
+        </div>
         <span class="seat-card__sub" id="seat-turn"></span>
-        ${SCORE_KINDS.map(
-          ({ kind, label }) => `
-        <div class="seat-row">
-          <span data-i18n="${label}"></span>
-          <button type="button" class="mini-counter__btn" id="seat-${kind}-minus" aria-label="−">−</button>
-          <b id="seat-${kind}">0</b>
-          <button type="button" class="mini-counter__btn" id="seat-${kind}-plus" aria-label="+">+</button>
-        </div>`,
-        ).join("")}
-        <div class="seat-row" id="seat-bonus-row" hidden>
-          <span data-i18n="endBonus"></span>
-          <button type="button" class="mini-counter__btn" id="seat-bonus-minus" aria-label="−">−</button>
-          <b id="seat-bonus">0</b>
-          <button type="button" class="mini-counter__btn" id="seat-bonus-plus" aria-label="+">+</button>
+        <div class="seat-tiles">
+          ${SCORE_KINDS.map(
+            ({ kind, label }) => `
+          <div class="seat-tile">
+            <span class="seat-tile__label" data-i18n="${label}"></span>
+            <div class="seat-tile__value">
+              <button type="button" class="mini-counter__btn" id="seat-${kind}-minus" aria-label="−">−</button>
+              <b id="seat-${kind}">0</b>
+              <button type="button" class="mini-counter__btn" id="seat-${kind}-plus" aria-label="+">+</button>
+            </div>
+          </div>`,
+          ).join("")}
+          <div class="seat-tile seat-tile--wide" id="seat-bonus-row" hidden>
+            <span class="seat-tile__label" data-i18n="endBonus"></span>
+            <div class="seat-tile__value">
+              <button type="button" class="mini-counter__btn" id="seat-bonus-minus" aria-label="−">−</button>
+              <b id="seat-bonus">0</b>
+              <button type="button" class="mini-counter__btn" id="seat-bonus-plus" aria-label="+">+</button>
+            </div>
+          </div>
         </div>
       </div>
       <div class="seat-card seat-cp">
@@ -420,15 +519,40 @@ app.innerHTML = `
       </div>
     </div>
     <nav class="seat-actions">
-      <button type="button" class="btn-secondary" id="seat-hand"><span data-i18n="secondaryHand"></span> <span class="seat-count" id="seat-hand-count">0</span></button>
-      <button type="button" class="btn-secondary" id="seat-mission" data-i18n="primaryCard"></button>
+      <button type="button" class="score-box__deck seat-deck" id="seat-mission">
+        <span class="score-box__primary-card" aria-hidden="true">${ICON_TARGET}</span>
+        <span class="score-box__deck-label" data-i18n="primaryCard"></span>
+      </button>
+      <button type="button" class="score-box__deck seat-deck" id="seat-hand">
+        <span class="score-box__hand-stack" aria-hidden="true"><span class="score-box__hand-count" id="seat-hand-count">0</span></span>
+        <span class="score-box__deck-label" data-i18n="secondaryHand"></span>
+      </button>
       <button type="button" class="btn-secondary" id="seat-pause"></button>
+      <button type="button" class="btn-secondary btn-judge" id="seat-judge" data-i18n-aria="judgeCallAria">${ICON_WHISTLE}<span data-i18n="judgeCall"></span></button>
       <button type="button" class="btn-primary" id="seat-end" data-i18n="seatEndTurn"></button>
+      <button type="button" class="btn-primary" id="seat-deploy-done" data-i18n="deployDone" hidden></button>
     </nav>
-    <div class="seat-foot">
-      <button type="button" class="btn-ghost strip-reset" id="seat-reset">${ICON_RESET}<span data-i18n="reset"></span></button>
-    </div>
+    <div class="seat-setup" id="seat-setup"></div>
   </section>
+  <div class="cp-burn" id="cp-burn" aria-hidden="true">
+    <div class="cp-burn__veil"></div>
+    <div class="cp-burn__flash"></div>
+    <div class="cp-burn__ring"></div>
+    <div class="cp-burn__token"><b class="cp-burn__n"></b><span>CP</span></div>
+    <div class="cp-burn__sparks"></div>
+  </div>
+  <div class="overlay overlay--time-out" id="time-out-overlay" role="alertdialog" aria-modal="true" aria-labelledby="time-out-title" aria-hidden="true">
+    <div class="time-out__flash"></div>
+    <div class="overlay-inner">
+      <span class="time-out__who" id="time-out-who"></span>
+      <b class="time-out__clock">0:00:00</b>
+      <h2 id="time-out-title" data-i18n="timeOutTitle"></h2>
+      <p class="overlay-msg" id="time-out-msg"></p>
+      <div class="overlay-actions">
+        <button type="button" class="btn-primary" id="btn-time-out"><span></span> <kbd data-i18n="keySpace"></kbd></button>
+      </div>
+    </div>
+  </div>
   <div class="overlay overlay--turn-confirm" id="turn-confirm-overlay" role="dialog" aria-modal="true" aria-labelledby="turn-confirm-title" aria-hidden="true">
     <div class="overlay-inner">
       <h2 id="turn-confirm-title"></h2>
@@ -441,11 +565,79 @@ app.innerHTML = `
   </div>
   <div class="overlay overlay--result" id="result-overlay" role="dialog" aria-modal="true" aria-labelledby="result-title" aria-hidden="true">
     <div class="overlay-inner">
-      <h2 id="result-title"></h2>
-      <p class="overlay-msg" id="result-msg"></p>
-      <table class="result-table" id="result-table"></table>
+      <article class="report" id="battle-report"></article>
       <div class="overlay-actions">
+        <button type="button" class="btn-ghost btn-log" id="btn-result-log">${ICON_LOG}<span data-i18n="clockLog"></span></button>
+        <button type="button" class="btn-secondary btn-log" id="btn-result-export">${ICON_IMAGE}<span data-i18n="reportExport"></span></button>
         <button type="button" class="btn-primary" id="btn-result-dismiss"><span data-i18n="ok"></span> <kbd data-i18n="keyEnter"></kbd></button>
+      </div>
+    </div>
+  </div>
+  <div class="overlay overlay--judge" id="judge-overlay" role="dialog" aria-modal="true" aria-labelledby="judge-title" aria-hidden="true">
+    <div class="overlay-inner">
+      <span class="judge-badge">${ICON_WHISTLE}<span data-i18n="clocksFrozen"></span></span>
+      <h2 id="judge-title" data-i18n="judgeTitle"></h2>
+      <p class="judge-since" id="judge-since"></p>
+      <p class="overlay-msg" id="judge-msg"></p>
+      <div class="judge-clocks">
+        ${([1, 2] as const)
+          .map(
+            (player) => `
+        <div class="judge-clock is-p${player}">
+          <span class="judge-clock__name" data-i18n="player" data-v-n="${player}"></span>
+          <span class="judge-clock__time" id="judge-time-${player}"></span>
+          <span class="judge-clock__delta" id="judge-delta-${player}"></span>
+          <div class="judge-clock__adjust">
+            <button type="button" class="btn-secondary" data-judge-player="${player}" data-judge-seconds="${-JUDGE_STEP_SEC}">−1 min</button>
+            <button type="button" class="btn-secondary" data-judge-player="${player}" data-judge-seconds="${JUDGE_STEP_SEC}">+1 min</button>
+          </div>
+        </div>`,
+          )
+          .join("")}
+      </div>
+      <div class="overlay-actions">
+        <button type="button" class="btn-ghost btn-log" id="btn-judge-log">${ICON_LOG}<span data-i18n="clockLog"></span></button>
+        <button type="button" class="btn-primary" id="btn-judge-resume" data-i18n="judgeResume"></button>
+      </div>
+    </div>
+  </div>
+  <div class="overlay overlay--log" id="log-overlay" role="dialog" aria-modal="true" aria-labelledby="log-title" aria-hidden="true">
+    <div class="overlay-inner">
+      <h2 id="log-title" data-i18n="clockLog"></h2>
+      <p class="overlay-msg" data-i18n="clockLogIntro"></p>
+      <div class="clock-log" id="clock-log"></div>
+      <div class="overlay-actions">
+        <button type="button" class="btn-secondary" id="btn-log-copy" data-i18n="copy"></button>
+        <button type="button" class="btn-primary" id="btn-log-close"><span data-i18n="close"></span> <kbd data-i18n="keyEsc"></kbd></button>
+      </div>
+    </div>
+  </div>
+  <div class="popover-anchor game-settings-anchor" id="game-settings-anchor"></div>
+  <div class="overlay overlay--toss" id="toss-overlay" role="dialog" aria-modal="true" aria-labelledby="toss-title" aria-hidden="true">
+    <div class="toss-flash" aria-hidden="true"></div>
+    <div class="toss-stage" id="toss-stage">
+      <div class="coin-stage" aria-hidden="true">
+        <div class="coin-pop">
+          <div class="coin" id="coin" data-face="1">
+            <span class="coin__face is-p1">1</span>
+            <span class="coin__face coin__face--back is-p2">2</span>
+          </div>
+        </div>
+      </div>
+      <div class="toss-card">
+        <p class="toss-step" id="toss-step"></p>
+        <h2 id="toss-title"></h2>
+        <p class="toss-msg" id="toss-msg" aria-live="polite"></p>
+        <div class="toss-choices" id="toss-choices">
+          <button type="button" class="toss-choice is-p1" data-deploy-first="1" data-i18n="deployFirstBtn" data-v-n="1"></button>
+          <button type="button" class="toss-choice is-p2" data-deploy-first="2" data-i18n="deployFirstBtn" data-v-n="2"></button>
+        </div>
+        <p class="toss-note" id="toss-note"></p>
+        <div class="toss-actions">
+          <button type="button" class="btn-secondary" id="btn-toss-cancel"><span id="toss-cancel-label"></span> <kbd data-i18n="keyEsc"></kbd></button>
+          <button type="button" class="btn-primary" id="btn-toss-start"><span id="toss-start-label"></span> <kbd data-i18n="keyEnter"></kbd></button>
+        </div>
+        <button type="button" class="toss-fix" id="btn-toss-fix" data-i18n="tossFix"></button>
       </div>
     </div>
   </div>
@@ -457,9 +649,17 @@ app.innerHTML = `
         <path d="M24 38h10l4-6h20l4 6h10v30H24z" />
         <circle cx="48" cy="52" r="9" />
       </svg>
+      <img class="photo-shot" id="photo-shot" alt="" />
       <span class="pause-badge" data-i18n="clocksPaused"></span>
       <h2 id="photo-title" data-i18n="photoTitle"></h2>
       <p class="overlay-msg" id="photo-msg"></p>
+      <div class="photo-camera">
+        <input type="file" id="photo-input" accept="image/*" capture="environment" hidden />
+        <button type="button" class="btn-primary photo-take" id="btn-photo-take">${ICON_CAMERA}<span data-i18n="photoTake"></span></button>
+        <button type="button" class="btn-primary photo-save" id="btn-photo-save" data-i18n="photoSaveResume"></button>
+        <button type="button" class="btn-secondary photo-retake" id="btn-photo-retake">${ICON_CAMERA}<span data-i18n="photoRetake"></span></button>
+        <button type="button" class="photo-skip" id="btn-photo-skip"><span class="photo-skip__first" data-i18n="photoSkip"></span><span class="photo-skip__again" data-i18n="photoSkipUnsaved"></span></button>
+      </div>
       <div class="overlay-actions">
         <button type="button" class="btn-primary" id="btn-photo-resume"><span data-i18n="resumeClocks"></span> <kbd data-i18n="keyEnter"></kbd></button>
       </div>
@@ -470,6 +670,7 @@ app.innerHTML = `
     <div class="cards-stage">
       <h2 class="cards-title" id="cards-title"></h2>
       <p class="cards-sub" id="cards-sub"></p>
+      <div class="cards-cap" id="cards-cap" hidden></div>
       <div class="cards-row" id="cards-row"></div>
       <div class="overlay-actions cards-actions">
         <div class="cards-switch" id="cards-switch" role="group" data-i18n-aria="switchSideAria" hidden></div>
@@ -497,8 +698,8 @@ app.innerHTML = `
           )
           .join("")}
       </div>
-      <p class="overlay-msg dispo-status" id="dispo-status" hidden></p>
       <div class="overlay-actions">
+        <p class="dispo-status" id="dispo-status" hidden></p>
         <button type="button" class="btn-secondary" id="btn-dispo-cancel"><span data-i18n="cancel"></span> <kbd data-i18n="keyEsc"></kbd></button>
         <button type="button" class="btn-primary" id="btn-dispo-ok" disabled><span></span> <kbd data-i18n="keyEnter"></kbd></button>
       </div>
@@ -517,7 +718,8 @@ app.innerHTML = `
     <div class="overlay-inner">
       <h2 id="online-title" data-i18n="onlineTitle"></h2>
       <div class="online-start" id="online-start">
-        <p class="overlay-msg" data-i18n="onlineIntro"></p>
+        <p class="online-mode" data-i18n="onlineTableTitle"></p>
+        <p class="overlay-msg" id="online-intro"></p>
         <div class="online-seat">
           <span class="online-seat__label" data-i18n="onlinePlayAs"></span>
           <div class="segmented" id="online-seat" role="group" data-i18n-aria="onlinePlayAs">
@@ -525,7 +727,12 @@ app.innerHTML = `
             <button type="button" class="segmented__option is-p2" data-value="2" data-i18n="player" data-v-n="2"></button>
           </div>
         </div>
-        <button type="button" class="btn-primary online-create" id="online-create" data-i18n="onlineCreate"></button>
+        <button type="button" class="btn-primary online-create" id="online-create"></button>
+        <div class="online-remote">
+          <p class="online-mode" data-i18n="onlineRemoteTitle"></p>
+          <p class="overlay-msg" data-i18n="onlineRemoteIntro"></p>
+          <button type="button" class="btn-secondary online-create" id="online-remote-create" data-i18n="onlineRemoteCreate"></button>
+        </div>
         <p class="online-or" data-i18n="onlineOr"></p>
         <div class="online-join">
           <input id="online-code" type="text" maxlength="5" autocomplete="off" autocapitalize="characters" spellcheck="false" data-i18n-placeholder="onlineCode" />
@@ -533,16 +740,33 @@ app.innerHTML = `
         </div>
       </div>
       <div class="online-room" id="online-room" hidden>
-        <p class="online-code" id="online-room-code"></p>
-        <div class="online-qr" id="online-qr"></div>
         <p class="overlay-msg" id="online-scan"></p>
+        <div class="online-invite" id="online-invite">
+          <p class="online-code" id="online-room-code"></p>
+          <div class="online-qr" id="online-qr"></div>
+          <button type="button" class="btn-secondary" id="online-share" data-i18n="onlineShare"></button>
+        </div>
+        <div class="online-qrs" id="online-qrs" hidden>
+          ${([1, 2] as const)
+            .map(
+              (n) => `
+          <figure class="online-qrs__seat is-p${n}" id="online-seat-${n}">
+            <figcaption data-i18n="player" data-v-n="${n}"></figcaption>
+            <div class="online-qrs__code">
+              <div class="online-qr" id="online-qr-${n}"></div>
+              <span class="online-qrs__check" aria-hidden="true"></span>
+            </div>
+            <p class="online-status" id="online-status-${n}"></p>
+          </figure>`,
+            )
+            .join("")}
+        </div>
         <p class="online-status" id="online-status"></p>
-        <button type="button" class="btn-secondary" id="online-share" data-i18n="onlineShare"></button>
       </div>
       <p class="online-error" id="online-error" role="alert" hidden></p>
       <div class="overlay-actions">
-        <button type="button" class="btn-ghost" id="online-leave" data-i18n="onlineLeave" hidden></button>
-        <button type="button" class="btn-primary" id="online-close"><span data-i18n="done"></span> <kbd data-i18n="keyEsc"></kbd></button>
+        <button type="button" class="btn-ghost" id="online-leave" hidden></button>
+        <button type="button" class="btn-secondary" id="online-close"><span id="online-close-label"></span> <kbd data-i18n="keyEsc"></kbd></button>
       </div>
     </div>
   </div>
@@ -565,7 +789,7 @@ const chapterWrap: Record<Player, HTMLElement> = {
 const layoutOptions = app.querySelector<HTMLElement>("#layout-options")!;
 const uiSizeOptions = app.querySelector<HTMLElement>("#ui-size-options")!;
 const langOptions = app.querySelector<HTMLElement>("#lang-options")!;
-const sfxOptions = app.querySelector<HTMLElement>("#sfx-options")!;
+const sfxToggle = app.querySelector<HTMLInputElement>("#sfx-toggle")!;
 const musicOptions = app.querySelector<HTMLElement>("#music-options")!;
 const volumeInput = app.querySelector<HTMLInputElement>("#volume")!;
 const soundToast = app.querySelector<HTMLElement>("#sound-toast")!;
@@ -618,6 +842,9 @@ const cardsOverlay = app.querySelector<HTMLElement>("#cards-overlay")!;
 const cardsTitle = app.querySelector<HTMLElement>("#cards-title")!;
 const cardsSub = app.querySelector<HTMLElement>("#cards-sub")!;
 const cardsRow = app.querySelector<HTMLElement>("#cards-row")!;
+const cardsCap = app.querySelector<HTMLElement>("#cards-cap")!;
+const cardsStage = app.querySelector<HTMLElement>("#cards-overlay .cards-stage")!;
+const cardsActions = app.querySelector<HTMLElement>("#cards-overlay .cards-actions")!;
 const btnCardsClose = app.querySelector<HTMLButtonElement>("#btn-cards-close")!;
 const dispoOverlay = app.querySelector<HTMLElement>("#dispo-overlay")!;
 const btnDispoOk = app.querySelector<HTMLButtonElement>("#btn-dispo-ok")!;
@@ -632,6 +859,8 @@ const photoBreaksToggle = app.querySelector<HTMLInputElement>("#photo-breaks")!;
 const photoOverlay = app.querySelector<HTMLElement>("#photo-overlay")!;
 const photoMsg = app.querySelector<HTMLElement>("#photo-msg")!;
 const btnPhotoResume = app.querySelector<HTMLButtonElement>("#btn-photo-resume")!;
+const photoInput = app.querySelector<HTMLInputElement>("#photo-input")!;
+const photoShot = app.querySelector<HTMLImageElement>("#photo-shot")!;
 const p1CpVal = app.querySelector<HTMLElement>("#p1-cp-val")!;
 const p2CpVal = app.querySelector<HTMLElement>("#p2-cp-val")!;
 const turnConfirmOverlay = app.querySelector<HTMLElement>("#turn-confirm-overlay")!;
@@ -640,12 +869,32 @@ const turnConfirmMsg = app.querySelector<HTMLElement>("#turn-confirm-msg")!;
 const btnTurnConfirmOk = app.querySelector<HTMLButtonElement>("#btn-turn-confirm-ok")!;
 const btnTurnConfirmCancel = app.querySelector<HTMLButtonElement>("#btn-turn-confirm-cancel")!;
 const resultOverlay = app.querySelector<HTMLElement>("#result-overlay")!;
-const resultTitle = app.querySelector<HTMLElement>("#result-title")!;
-const resultMsg = app.querySelector<HTMLElement>("#result-msg")!;
-const resultTable = app.querySelector<HTMLTableElement>("#result-table")!;
+const timeOutOverlay = app.querySelector<HTMLElement>("#time-out-overlay")!;
+const btnTimeOut = app.querySelector<HTMLButtonElement>("#btn-time-out")!;
 const btnResultDismiss = app.querySelector<HTMLButtonElement>("#btn-result-dismiss")!;
+const judgeOverlay = app.querySelector<HTMLElement>("#judge-overlay")!;
+const logOverlay = app.querySelector<HTMLElement>("#log-overlay")!;
+const btnJudge = app.querySelector<HTMLButtonElement>("#btn-judge")!;
+const tossOverlay = app.querySelector<HTMLElement>("#toss-overlay")!;
+const deployClockToggle = app.querySelector<HTMLInputElement>("#deploy-clock")!;
 const btnOnline = app.querySelector<HTMLButtonElement>("#btn-online")!;
+const stripRoom = app.querySelector<HTMLButtonElement>("#strip-room")!;
 const seatClock = app.querySelector<HTMLButtonElement>("#seat-clock")!;
+const seatMusic = app.querySelector<HTMLButtonElement>("#seat-music")!;
+const seatMute = app.querySelector<HTMLButtonElement>("#seat-mute")!;
+const seatSettings = app.querySelector<HTMLButtonElement>("#seat-settings")!;
+const seatSettingsAnchor = app.querySelector<HTMLElement>("#seat-settings-anchor")!;
+const stripSettings = app.querySelector<HTMLButtonElement>("#strip-settings")!;
+const gameSettingsAnchor = app.querySelector<HTMLElement>("#game-settings-anchor")!;
+const seatSetup = app.querySelector<HTMLElement>("#seat-setup")!;
+const toolbar = app.querySelector<HTMLElement>(".toolbar")!;
+const toolbarEnd = app.querySelector<HTMLElement>(".toolbar__group--end")!;
+const setupGroup = app.querySelector<HTMLElement>(".toolbar__group:not(.toolbar__group--end)")!;
+const phoneHomeStart = app.querySelector<HTMLElement>("#phone-home-start")!;
+const onlineStart = app.querySelector<HTMLElement>("#online-start")!;
+const onlineRoomSection = app.querySelector<HTMLElement>("#online-room")!;
+/** A phone, upright or sideways: a tablet keeps the board */
+const PHONE = window.matchMedia("(pointer: coarse) and (max-width: 640px), (pointer: coarse) and (max-height: 640px)");
 const seatTime = app.querySelector<HTMLElement>("#seat-time")!;
 const seatOppTime = app.querySelector<HTMLElement>("#seat-opp-time")!;
 const seatAbilities = app.querySelector<HTMLElement>("#seat-abilities")!;
@@ -657,8 +906,28 @@ const onlineError = app.querySelector<HTMLElement>("#online-error")!;
 /** Everything both players share: see game.ts. The rest of this file is the screen */
 let game: GameState = newGame();
 
-/** Online, this phone is one player's: its seat, and the room once connected */
-let online: { seat: Player; room: Room | null; connected: boolean; seats: Record<Player, boolean> } | null = null;
+/** A device in an online game: the room once connected */
+type RoomSession = {
+  room: Room | null;
+  connected: boolean;
+  /** Which seats are taken: unknown until the room tells */
+  seats: Seats | null;
+};
+
+/** A player's phone in the room and connected now: taken but gone (closed, wiped) does not count */
+const seatHere = (seats: Seats | null, player: Player): boolean => !!seats?.[player] && !seats.away[player];
+
+/**
+ * Online, this device is one player's: its seat, and the room once connected. A phone shows that
+ * player's own screen; a PC or a tablet the whole board, its own side to play and the other to read
+ */
+let online: (RoomSession & { seat: Player; phone: boolean }) | null = null;
+/** Online, this PC or tablet is the shared screen: the board for both, each phone playing its own side */
+let table: RoomSession | null = null;
+const roomSession = (): RoomSession | null => online ?? table;
+const phoneView = (): boolean => !!online?.phone;
+/** Online, a player's device changes its own side only: the opponent's is there to read */
+const canEdit = (player: Player): boolean => !online || online.seat === player;
 
 /** A clock runs */
 const isRunning = (): boolean => game.phase === "running";
@@ -685,6 +954,9 @@ const DOUBLE_SPACE_MS = 380;
 
 const scoreOf = (player: Player, kind?: ScoreKind): number => scoreOfGame(game, player, kind);
 const scoringTurnIdx = (player: Player): number => scoringTurnIdxOf(game, player);
+/** Battle ready points on their way to the scores: not shown until they land */
+const readyHeld: Record<Player, number> = { 1: 0, 2: 0 };
+const shownScore = (player: Player): number => scoreOf(player) - readyHeld[player];
 
 /** Whose abilities panel is open */
 let abilitiesPlayer: Player | null = null;
@@ -693,7 +965,8 @@ let settlingAbilityId: number | null = null;
 /** Unit whose strike / restore animation plays on the next render only */
 let justToggledId: number | null = null;
 
-type TurnConfirmKind = "start-game" | "p1-to-p2" | "next-round" | "finish-game" | "reset" | "unscore";
+/** "mid-round": the first player ends their turn, the other one takes theirs */
+type TurnConfirmKind = "deploy-end" | "mid-round" | "next-round" | "finish-game" | "reset" | "unscore";
 
 let turnConfirmKind: TurnConfirmKind | null = null;
 
@@ -712,12 +985,12 @@ function hideResultOverlay(): void {
 
 function openTurnConfirmModal(kind: TurnConfirmKind): void {
   turnConfirmKind = kind;
-  if (kind === "start-game") {
-    turnConfirmTitle.textContent = t("startTitle");
-    turnConfirmMsg.textContent = game.options.photoBreaks ? `${t("startMsg")} ${t("photoBreaksOn")}` : t("startMsg");
-  } else if (kind === "p1-to-p2") {
-    turnConfirmTitle.textContent = t("endTurnTitle");
-    turnConfirmMsg.textContent = t("endTurnMsg");
+  if (kind === "deploy-end") {
+    turnConfirmTitle.textContent = t("deployEndTitle");
+    turnConfirmMsg.textContent = t("deployEndMsg");
+  } else if (kind === "mid-round") {
+    turnConfirmTitle.textContent = t("endTurnTitle", { n: game.firstPlayer });
+    turnConfirmMsg.textContent = t("endTurnMsg", { n: other(game.firstPlayer) });
   } else if (kind === "finish-game") {
     turnConfirmTitle.textContent = t("finishTitle");
     turnConfirmMsg.textContent = t("finishMsg", { n: MAX_GAME_TURN });
@@ -730,71 +1003,497 @@ function openTurnConfirmModal(kind: TurnConfirmKind): void {
     turnConfirmMsg.textContent = t("unscoreMsg", { vp: scored?.vp ?? 0, unit: t("vpUnit"), n: (scored?.turn ?? 0) + 1 });
   } else {
     turnConfirmTitle.textContent = t("nextRoundTitle", { n: game.round + 1 });
-    turnConfirmMsg.textContent = t("nextRoundMsg");
+    turnConfirmMsg.textContent = t("nextRoundMsg", { n: game.firstPlayer });
   }
   turnConfirmOverlay.classList.add("is-visible");
   turnConfirmOverlay.setAttribute("aria-hidden", "false");
   btnTurnConfirmOk.focus();
 }
 
-function renderResultTable(): void {
-  const cells = (primary: number, secondary: number): string =>
-    `<td class="is-group">${primary}</td><td>${secondary}</td>`;
-  const roundRows = Array.from(
-    { length: MAX_GAME_TURN },
-    (_, i) =>
-      `<tr><th scope="row">${t("turnN", { n: i + 1 })}</th>${cells(game.scoreByTurn[1].primary[i], game.scoreByTurn[1].secondary[i])}${cells(game.scoreByTurn[2].primary[i], game.scoreByTurn[2].secondary[i])}</tr>`,
-  ).join("");
-  resultTable.innerHTML = `
-    <thead>
-      <tr>
-        <th rowspan="2"></th>
-        <th scope="colgroup" colspan="2" class="is-group is-p1">${t("player", { n: 1 })}</th>
-        <th scope="colgroup" colspan="2" class="is-group is-p2">${t("player", { n: 2 })}</th>
-      </tr>
-      <tr class="result-table__kinds">
-        <th scope="col" class="is-group">${t("pri")}</th><th scope="col">${t("sec")}</th>
-        <th scope="col" class="is-group">${t("pri")}</th><th scope="col">${t("sec")}</th>
-      </tr>
-    </thead>
-    <tbody>${roundRows}${
-      game.endBonus[1] || game.endBonus[2]
-        ? `<tr class="result-table__bonus"><th scope="row">${t("endBonus")}</th><td class="is-group">${game.endBonus[1]}</td><td>–</td><td class="is-group">${game.endBonus[2]}</td><td>–</td></tr>`
-        : ""
-    }</tbody>
-    <tfoot>
-      <tr class="result-table__subtotal"><th scope="row">${t("subtotal")}</th>${cells(scoreOf(1, "primary"), scoreOf(1, "secondary"))}${cells(scoreOf(2, "primary"), scoreOf(2, "secondary"))}</tr>
-      <tr class="result-table__total"><th scope="row">${t("total")}</th><td colspan="2" class="is-group">${scoreOf(1)}</td><td colspan="2" class="is-group">${scoreOf(2)}</td></tr>
-    </tfoot>
-  `;
+/* ---------- Before the battle: the first toss, the deployment, the second toss ---------- */
+
+const TOSS_MS = 1300;
+/** Who goes first: the coin flies higher and longer, under a drumroll */
+const FINAL_TOSS_MS = 2400;
+let tossTimer = 0;
+/** The coin of the toss on screen is down: its result shows */
+let tossLanded = false;
+
+const isDeploying = (): boolean => game.phase === "setup" && game.preBattle?.step === "deployment";
+/** The tosses or the deployment are under way: the setup is fixed */
+const inPreBattle = (): boolean => game.phase === "setup" && !!game.preBattle;
+const deploymentTimed = (): boolean => game.options.deployClock !== false;
+/** The clocks tick in the battle, and during a timed deployment */
+const clockTicks = (): boolean => isRunning() || (isDeploying() && deploymentTimed());
+
+/** After the missions: the first toss, whose winner picks who deploys first */
+function openChooserToss(): void {
+  closePopovers();
+  game.clockLog = {};
+  const chooser: Player = Math.random() < 0.5 ? 1 : 2;
+  game.preBattle = { step: "chooser", at: nowMs(), chooser, deployFirst: null, toss: null };
+  logClock("chooser", { player: chooser });
+  setInputsEnabled(false);
+  updateButtons();
+  showToss();
 }
 
-function showResultOverlay(heading: string, message: string, winner: Player | null): void {
-  resultTitle.textContent = heading;
-  resultTitle.className = winner ? `is-p${winner}` : "";
-  resultMsg.textContent = message;
-  renderResultTable();
+/** The chooser has picked: the deployment starts, with that player's clock if it is timed */
+function startDeployment(deployFirst: Player): void {
+  const pre = game.preBattle;
+  if (!pre || pre.step !== "chooser" || !tossLanded || (online && online.seat !== pre.chooser)) return;
+  pre.deployFirst = deployFirst;
+  pre.step = "deployment";
+  game.clock = clockFromInputs();
+  game.clock.active = deployFirst;
+  logClock("deploy", { player: deployFirst });
+  if (deploymentTimed()) {
+    runClock(game.clock);
+    startLoop();
+    void tryAcquireWakeLock();
+  }
+  hideToss();
+  if (cardsPlayer !== null) closeCards(false);
+  renderDeployment();
+}
+
+/** A unit is down: the other player places one */
+function passDeployment(): void {
+  if (!isDeploying() || (online && game.clock.active !== online.seat)) return;
+  playSound("switch");
+  const next = other(game.clock.active);
+  logClock("switch", { player: next });
+  setActiveClock(game.clock, next);
+  if (deploymentTimed() && timeLeft(next) <= 0) stopClock(game.clock);
+  else if (deploymentTimed() && game.clock.since === null) {
+    runClock(game.clock);
+    startLoop();
+  }
+  renderDeployment();
+}
+
+/** Asked first: a stray Enter or tap must not end the deployment */
+function requestDeploymentEnd(): void {
+  if (isDeploying()) openTurnConfirmModal("deploy-end");
+}
+
+/** Every unit is down: the second toss says who goes first */
+function endDeployment(): void {
+  const pre = game.preBattle;
+  if (!pre || !isDeploying()) return;
+  stopClock(game.clock);
+  stopLoop();
+  logClock("deployEnd");
+  const result: Player = Math.random() < 0.5 ? 1 : 2;
+  pre.step = "first";
+  pre.toss = { at: nowMs(), result, corrected: false };
+  game.firstPlayer = result;
+  logClock("first", { player: result });
+  renderDeployment();
+  showToss();
+}
+
+/** The latest log line of a kind, by its key: a step taken back removes it */
+function lastLogKey(kind: ClockEventKind): string | undefined {
+  return Object.keys(game.clockLog)
+    .filter((key) => game.clockLog[key].kind === kind)
+    .sort((a, b) => game.clockLog[a].at - game.clockLog[b].at)
+    .pop();
+}
+
+/** "Deployment done" came too early: the deployment goes on where it was */
+function backToDeployment(): void {
+  const pre = game.preBattle;
+  if (!pre || pre.step !== "first") return;
+  for (const kind of ["first", "deployEnd"] as const) {
+    const key = lastLogKey(kind);
+    if (key) delete game.clockLog[key];
+  }
+  pre.step = "deployment";
+  pre.toss = null;
+  hideToss();
+  if (deploymentTimed() && timeLeft(game.clock.active) > 0) {
+    runClock(game.clock);
+    startLoop();
+  }
+  renderDeployment();
+}
+
+/** Rolled with real dice instead: the result goes the other way */
+function correctFirstToss(): void {
+  const toss = game.preBattle?.toss;
+  if (!toss || !tossLanded) return;
+  toss.result = other(toss.result);
+  toss.corrected = true;
+  game.firstPlayer = toss.result;
+  const key = lastLogKey("first");
+  if (key) game.clockLog[key].player = toss.result;
+  app.querySelector<HTMLElement>("#coin")!.dataset.face = String(toss.result);
+  renderToss();
+}
+
+/** Before the first toss, back to the missions or the setup */
+function cancelChooserToss(): void {
+  game.preBattle = null;
+  game.clockLog = {};
+  hideToss();
+  setInputsEnabled(true);
+  updateButtons();
+}
+
+function startBattle(): void {
+  if (app.querySelector<HTMLButtonElement>("#btn-toss-start")!.disabled) return;
+  hideToss();
+  if (cardsPlayer !== null) closeCards();
+  start();
+}
+
+/** The board and the phones during the deployment: who places a unit, the clock it runs on */
+function renderDeployment(): void {
+  setActivePanels();
+  applyTimesToDisplay();
+  updateButtons();
+}
+
+/** Either toss, also when made on the other phone: the same flip, the same side */
+function showToss(): void {
+  const pre = game.preBattle;
+  if (!pre || pre.step === "deployment") return;
+  const final = pre.step === "first";
+  const result = final ? pre.toss!.result : pre.chooser;
+  const coin = app.querySelector<HTMLElement>("#coin")!;
+  const still = prefersReducedMotion();
+  tossOverlay.classList.toggle("is-final", final);
+  tossOverlay.classList.remove("is-landed");
+  tossOverlay.style.setProperty("--toss-color", `var(--p${result})`);
+  tossLanded = false;
+  renderToss();
+  placeCoin();
+  playSound(final ? "drumroll" : "coinToss");
+  tossLanded = still;
+  coin.classList.remove("is-tossing-1", "is-tossing-2", "is-long");
+  void coin.offsetWidth;
+  if (!still) coin.classList.add(`is-tossing-${result}`, ...(final ? ["is-long"] : []));
+  window.clearTimeout(tossTimer);
+  const land = (): void => {
+    tossLanded = true;
+    tossOverlay.classList.add("is-landed");
+    if (final) playSound("tossReveal");
+    renderToss();
+  };
+  if (still) land();
+  else tossTimer = window.setTimeout(land, final ? FINAL_TOSS_MS : TOSS_MS);
+  tossOverlay.classList.add("is-visible");
+  tossOverlay.setAttribute("aria-hidden", "false");
+  renderToss();
+}
+
+/**
+ * The coin flies alone in the middle of the dimmed screen. Its place on landing is at the top of
+ * the card, which is already laid out, hidden: the coin starts that far down and rises to it
+ */
+function placeCoin(): void {
+  const stage = app.querySelector<HTMLElement>("#toss-stage")!;
+  stage.classList.add("is-placing");
+  stage.style.setProperty("--toss-shift", "0px");
+  const box = stage.querySelector(".coin-stage")!.getBoundingClientRect();
+  const scale = parseFloat(getComputedStyle(document.documentElement).getPropertyValue("--ui-scale")) || 1;
+  stage.style.setProperty("--toss-shift", `${(window.innerHeight / 2 - (box.top + box.height / 2)) / scale}px`);
+  void stage.offsetWidth;
+  stage.classList.remove("is-placing");
+}
+
+function renderToss(): void {
+  const pre = game.preBattle;
+  if (!pre || pre.step === "deployment") return;
+  const final = pre.step === "first";
+  const result = final ? pre.toss!.result : pre.chooser;
+  const coin = app.querySelector<HTMLElement>("#coin")!;
+  if (tossLanded) {
+    coin.classList.remove("is-tossing-1", "is-tossing-2", "is-long");
+    coin.dataset.face = String(result);
+  }
+  const text = (id: string, value: string): void => {
+    app.querySelector(`#${id}`)!.textContent = value;
+  };
+  text("toss-step", t(final ? "tossStepFirst" : "tossStepChooser"));
+  // Online, the winner's phone picks and the first player's phone starts: their clock is the one that runs
+  const chooserWaits = !!online && online.seat !== pre.chooser;
+  const starterWaits = !!online && online.seat !== result;
+  if (final) {
+    text("toss-title", t("tossFirstWon", { n: result }));
+    text("toss-msg", pre.toss!.corrected ? t("tossCorrected") : "");
+    text("toss-note", game.options.photoBreaks ? `${t("startMsg", { n: result })} ${t("photoBreaksOn")}` : t("startMsg", { n: result }));
+  } else {
+    text("toss-title", t("tossChooserTitle"));
+    text("toss-msg", t("tossChooserWon", { n: result }));
+    text("toss-note", chooserWaits ? t("tossChooserWait", { n: result }) : "");
+  }
+  const choices = app.querySelector<HTMLElement>("#toss-choices")!;
+  choices.hidden = final;
+  for (const choice of choices.querySelectorAll("button")) choice.disabled = chooserWaits || !tossLanded;
+  const startButton = app.querySelector<HTMLButtonElement>("#btn-toss-start")!;
+  startButton.hidden = !final;
+  startButton.disabled = !tossLanded || starterWaits;
+  text("toss-start-label", starterWaits ? t("tossWait", { n: result }) : t("startBattle"));
+  text("toss-cancel-label", t(final ? "backToDeployment" : "cancel"));
+  app.querySelector<HTMLElement>("#btn-toss-fix")!.hidden = !final;
+}
+
+function hideToss(): void {
+  window.clearTimeout(tossTimer);
+  // It fades out as it is, coin landed on its card: the next toss puts the coin back (showToss)
+  tossOverlay.classList.remove("is-visible");
+  tossOverlay.setAttribute("aria-hidden", "true");
+}
+
+function cancelToss(): void {
+  if (game.preBattle?.step === "first") backToDeployment();
+  else cancelChooserToss();
+}
+
+/* ---------- Battle report: the end-of-battle screen ---------- */
+
+const ROUNDS = Array.from({ length: MAX_GAME_TURN }, (_, i) => i + 1);
+
+/** WTC points from the VP gap: 10–10 up to 5 apart, then a point more every 5 VP, 20–0 past 50 */
+function wtcPoints(mine: number, theirs: number): number {
+  const gap = mine - theirs;
+  const step = Math.min(10, Math.ceil(Math.max(0, Math.abs(gap) - 5) / 5));
+  return gap >= 0 ? 10 + step : 10 - step;
+}
+
+/** Time each player spent in each round, from the clock log. A judge's adjustment is not time spent */
+function timeByRound(): Record<Player, number[]> | null {
+  const events = clockEvents();
+  const marks = events.filter((event) => event.kind === "start" || event.kind === "end" || (event.kind === "turn" && event.player === game.firstPlayer));
+  if (marks.length === 0) return null;
+  const now = { at: nowMs(), left: { 1: timeLeft(1), 2: timeLeft(2) } };
+  const spent: Record<Player, number[]> = { 1: ROUNDS.map(() => 0), 2: ROUNDS.map(() => 0) };
+  marks.forEach((mark, i) => {
+    if (mark.kind === "end") return;
+    const next: { at: number; left: Record<Player, number> } = marks[i + 1] ?? now;
+    for (const player of [1, 2] as const) {
+      const adjusted = events
+        .filter((event) => event.kind === "adjust" && event.player === player && event.at >= mark.at && event.at < next.at)
+        .reduce((total, event) => total + (event.seconds ?? 0), 0);
+      const slot = Math.min(MAX_GAME_TURN, mark.round) - 1;
+      spent[player][slot] += Math.max(0, mark.left[player] - next.left[player] + adjusted);
+    }
+  });
+  return spent;
+}
+
+/** Time each player spent deploying, when the deployment was timed */
+function deploymentSpent(): Record<Player, number> | null {
+  const events = clockEvents();
+  const from = events.find((event) => event.kind === "deploy");
+  const to = events.find((event) => event.kind === "deployEnd");
+  if (!from || !to || !deploymentTimed()) return null;
+  return { 1: Math.max(0, from.left[1] - to.left[1]), 2: Math.max(0, from.left[2] - to.left[2]) };
+}
+
+const reportChip = (vp: number): string => `<span class="report-chip">${vp}</span>`;
+
+/** Cut short by the 15-point turn cap: what counted, in the warning colour; what it was worth on hover */
+const reportCutChip = (vp: number, full: number): string =>
+  `<span class="report-chip is-cut" title="${t("capCut", { vp, full, max: MAX_POINTS_PER_TURN })}">${vp}</span>`;
+
+/** A round not reached yet stays empty; one played without a point shows its 0 */
+const reportPoints = (vp: number, round: number): string =>
+  `<td>${vp > 0 ? reportChip(vp) : round <= game.round ? '<span class="report-zero">0</span>' : ""}</td>`;
+
+function reportRow(label: string, cells: string, total: string, kind = ""): string {
+  return `<tr${kind ? ` class="${kind}"` : ""}><th scope="row">${label}</th>${cells}<td class="report-total">${total}</td></tr>`;
+}
+
+/** Card by card: drawn (•), scored (its points) or discarded unscored (✕), in the round it happened */
+function secondaryCardRows(player: Player): string {
+  const pile = game.secondaries[player];
+  const rounds = game.cardRounds?.[player] ?? {};
+  const ids = [...new Set([...pile.scored.map(({ id }) => id), ...pile.discard, ...pile.hand])];
+  return ids
+    .map((id) => {
+      const scored = pile.scored.filter((entry) => entry.id === id);
+      const { drawn, discarded } = rounds[id] ?? {};
+      const cells = ROUNDS.map((round) => {
+        const inRound = scored.filter((entry) => entry.turn + 1 === round);
+        if (inRound.length > 0) {
+          const vp = inRound.reduce((total, entry) => total + entry.vp, 0);
+          const full = inRound.reduce((total, entry) => total + (entry.full ?? entry.vp), 0);
+          return `<td>${full > vp ? reportCutChip(vp, full) : reportChip(vp)}</td>`;
+        }
+        if (scored.length === 0 && discarded === round) return '<td class="report-mark" aria-label="✕">✕</td>';
+        if (drawn === round) return '<td class="report-mark">•</td>';
+        return "<td></td>";
+      }).join("");
+      const total = scored.reduce((sum, entry) => sum + entry.vp, 0);
+      return { order: drawn ?? MAX_GAME_TURN + 1, html: reportRow(SECONDARY_BY_ID.get(id)?.name ?? id, cells, String(total)) };
+    })
+    .sort((a, b) => a.order - b.order)
+    .map(({ html }) => html)
+    .join("");
+}
+
+function reportPlayer(player: Player, spent: Record<Player, number[]> | null): string {
+  const turns = game.scoreByTurn[player];
+  const primaryTotal = scoreOf(player, "primary");
+  const secondaryTotal = scoreOf(player, "secondary");
+  const disposition = DISPOSITIONS.find(({ id }) => id === game.dispositions[player])?.name;
+  const faction = document.documentElement.dataset.theme === "factions" ? FACTION_BY_ID.get(factionOf[player])?.name[getLang()] : undefined;
+  const sub = [faction, disposition].filter(Boolean).join(" · ");
+  const sumSpent = spent ? spent[player].reduce((total, seconds) => total + seconds, 0) : 0;
+  const badges = [
+    game.preBattle?.deployFirst === player ? t("reportDeployedFirst") : "",
+    player === game.firstPlayer ? t("reportWentFirst") : "",
+  ]
+    .filter(Boolean)
+    .map((badge) => ` <span class="report-badge">${badge}</span>`)
+    .join("");
+  const deployed = deploymentSpent();
+  // Per turn, what the primary lines cut by the 15-point cap would have added
+  const primaryCut = ROUNDS.map((round) =>
+    Object.entries(game.primaryFull?.[player] ?? {})
+      .filter(([key]) => key.startsWith(`${round - 1}|`))
+      .reduce((total, [key, full]) => total + full - (game.primaryScored[player][key] ?? full), 0),
+  );
+  const primaryRows =
+    reportRow(
+      primaryCard(player)?.name ?? t("reportPrimary"),
+      ROUNDS.map((round) => {
+        const vp = turns.primary[round - 1];
+        const cut = primaryCut[round - 1];
+        return cut > 0 ? `<td>${reportCutChip(vp, vp + cut)}</td>` : reportPoints(vp, round);
+      }).join(""),
+      String(primaryTotal - game.endBonus[player]),
+    ) +
+    (game.endBonus[player] > 0 ? reportRow(t("endBonus"), ROUNDS.map(() => "<td></td>").join(""), String(game.endBonus[player])) : "");
+  const secondaryRows = game.options.cards
+    ? secondaryCardRows(player)
+    : reportRow(t("reportSecondaries"), ROUNDS.map((round) => reportPoints(turns.secondary[round - 1], round)).join(""), String(secondaryTotal));
+  const timeRow = spent
+    ? reportRow(
+        t("reportTime"),
+        ROUNDS.map((round) => `<td>${spent[player][round - 1] > 0 ? formatSpan(spent[player][round - 1]) : ""}</td>`).join(""),
+        formatSpan(sumSpent),
+        "report-time",
+      )
+    : "";
+  const head = `<tr><th scope="col"><span class="report-sr">${t("logEvent")}</span></th>${ROUNDS.map((round) => `<th scope="col">R${round}</th>`).join("")}<th scope="col">${t("total")}</th></tr>`;
+  const group = (label: string, total: number, rows: string): string =>
+    `<tbody><tr class="report-group"><th scope="rowgroup" colspan="${MAX_GAME_TURN + 1}">${label}</th><td class="report-total">${total}</td></tr>${rows}</tbody>`;
+  return `
+    <section class="report-player is-p${player}">
+      <header class="report-player__head">
+        <div>
+          <h3>${t("player", { n: player })}${badges}</h3>
+          ${sub ? `<p>${sub}</p>` : ""}
+        </div>
+        <span class="report-player__total">${scoreOf(player)}</span>
+      </header>
+      <table class="report-table">
+        <thead>${head}</thead>
+        ${group(t("reportPrimary"), primaryTotal, primaryRows)}
+        ${group(t("reportSecondaries"), secondaryTotal, secondaryRows)}
+        ${group(t("battleReady"), BATTLE_READY_VP, "")}
+        ${timeRow ? `<tbody>${timeRow}</tbody>` : ""}
+      </table>
+      ${primaryCut.some((cut) => cut > 0) || game.secondaries[player].scored.some((entry) => entry.full) ? `<p class="report-cut-note"><span class="report-cut-swatch" aria-hidden="true"></span>${t("reportCutNote", { max: MAX_POINTS_PER_TURN })}</p>` : ""}
+      <footer class="report-player__foot">
+        <span>${t("reportCpLeft")} <b>${game.cp[player]}</b></span>
+        ${deployed ? `<span>${t("reportDeployTime")} <b>${formatSpan(deployed[player])}</b></span>` : ""}
+        <span>${t("reportTimeLeft")} <b>${formatTime(timeLeft(player))}</b></span>
+      </footer>
+    </section>`;
+}
+
+/** Everything about the battle on one page: built to be read at the table and, later, shared as an image */
+function renderBattleReport(): void {
+  const [total1, total2] = [scoreOf(1), scoreOf(2)];
+  const winner: Player | null = total1 > total2 ? 1 : total2 > total1 ? 2 : null;
+  const events = clockEvents();
+  const started = events.find((event) => event.kind === "start");
+  const ended = events.filter((event) => event.kind === "end").pop();
+  const date = new Date(started?.at ?? Date.now()).toLocaleDateString(getLang(), { day: "numeric", month: "short", year: "numeric" });
+  const meta = [t("reportTitle"), date, started && ended ? formatDuration((ended.at - started.at) / 1000) : "", `${t("round")} ${game.round}`]
+    .filter(Boolean)
+    .join(" · ");
+  const side = (player: Player): string => {
+    const faction = document.documentElement.dataset.theme === "factions" ? FACTION_BY_ID.get(factionOf[player])?.name[getLang()] : undefined;
+    return `<div class="report-side is-p${player}"><span class="report-side__name">${t("player", { n: player })}</span>${faction ? `<span class="report-side__faction">${faction}</span>` : ""}</div>`;
+  };
+  const score = (player: Player): string => `<b class="is-p${player}${winner && winner !== player ? " is-behind" : ""}">${scoreOf(player)}</b>`;
+  app.querySelector("#battle-report")!.innerHTML = `
+    <header class="report-hero${winner ? ` is-p${winner}-wins` : ""}">
+      <p class="report-hero__meta">${meta}</p>
+      <div class="report-hero__score">${side(1)}<div class="report-score">${score(1)}<span>–</span>${score(2)}</div>${side(2)}</div>
+      <h2 id="result-title" class="report-hero__result"><span class="report-pill${winner ? ` is-p${winner}` : ""}">${winner ? t("wins", { n: winner }) : t("draw")}</span><span class="report-wtc">${t("reportWtc", { a: wtcPoints(total1, total2), b: wtcPoints(total2, total1) })}</span></h2>
+    </header>
+    <div class="report-players">${reportPlayer(1, timeByRound())}${reportPlayer(2, timeByRound())}</div>
+    ${game.options.cards ? `<p class="report-legend"><span>• ${t("reportDrawn")}</span><span>✕ ${t("reportDiscarded")}</span></p>` : ""}`;
+}
+
+/**
+ * The report as a picture, to share: one player under the other at a fixed width, whatever the
+ * screen, from a copy drawn off screen. A phone opens its share sheet, a computer downloads it
+ */
+async function exportBattleReport(): Promise<void> {
+  const button = app.querySelector<HTMLButtonElement>("#btn-result-export")!;
+  const sheet = document.createElement("div");
+  sheet.className = "report-export";
+  sheet.innerHTML = `${app.querySelector("#battle-report")!.outerHTML}<p class="report-export__foot">Warhammer Clock</p>`;
+  for (const el of sheet.querySelectorAll("[id]")) el.removeAttribute("id");
+  document.body.append(sheet);
+  button.disabled = true;
+  try {
+    const { toBlob } = await import("html-to-image");
+    const blob = await toBlob(sheet, {
+      pixelRatio: 2,
+      backgroundColor: getComputedStyle(document.body).backgroundColor,
+      style: { position: "static", left: "auto" },
+    });
+    if (!blob) return;
+    const day = new Date(clockEvents().find((event) => event.kind === "start")?.at ?? Date.now()).toISOString().slice(0, 10);
+    const file = new File([blob], `warhammer-clock-${day}.png`, { type: "image/png" });
+    if (PHONE.matches && navigator.canShare?.({ files: [file] })) {
+      await navigator.share({ files: [file] }).catch(() => undefined);
+      return;
+    }
+    const link = document.createElement("a");
+    link.href = URL.createObjectURL(file);
+    link.download = file.name;
+    link.click();
+    window.setTimeout(() => URL.revokeObjectURL(link.href), 1000);
+  } catch {
+    showToast(t("reportExportFailed"));
+  } finally {
+    sheet.remove();
+    button.disabled = false;
+  }
+}
+
+function showResultOverlay(): void {
+  renderBattleReport();
   resultOverlay.classList.add("is-visible");
   resultOverlay.setAttribute("aria-hidden", "false");
-  btnResultDismiss.focus();
+  // The result is read from the top, where the score is; OK stays at hand for Enter
+  resultOverlay.querySelector(".overlay-inner")!.scrollTop = 0;
+  btnResultDismiss.focus({ preventScroll: true });
 }
 
 function finishGameByScore(): void {
   game.phase = "over";
   stopClock(game.clock);
+  logClock("end");
   lastSpaceTime = 0;
   stopLoop();
   syncInputsFromState();
   setInputsEnabled(true);
   setActivePanels();
   updateButtons();
-  const total1 = scoreOf(1);
-  const total2 = scoreOf(2);
   setBattleMusic(false);
   playSound("victory");
-  if (total1 > total2) showResultOverlay(t("wins", { n: 1 }), t("wonOnPoints"), 1);
-  else if (total2 > total1) showResultOverlay(t("wins", { n: 2 }), t("wonOnPoints"), 2);
-  else showResultOverlay(t("draw"), t("tiedOnPoints"), null);
+  showResultOverlay();
 }
 
 function applyTurnConfirm(): void {
@@ -805,24 +1504,26 @@ function applyTurnConfirm(): void {
 }
 
 function applyConfirmed(kind: TurnConfirmKind): void {
+  if (kind === "deploy-end") {
+    endDeployment();
+    return;
+  }
   if (kind === "unscore") {
     if (pendingUnscore) restoreSecondary(pendingUnscore.player, pendingUnscore.id);
     pendingUnscore = null;
     return;
   }
-  if (kind === "start-game") {
-    start();
-    return;
-  }
-  if (kind === "p1-to-p2") {
+  if (kind === "mid-round") {
+    const second = other(game.firstPlayer);
     turnSound("turn");
-    game.turnPlayer = 2;
+    game.turnPlayer = second;
     gainCpBothPlayers();
-    applyAbilityCp(2, ["turn-cp"]);
-    setActiveClock(game.clock, 2);
+    applyAbilityCp(second, ["turn-cp"]);
+    logClock("turn", { player: second });
+    handClock(second);
     setActivePanels();
     if (game.options.photoBreaks) startPhotoBreak();
-    startTurnSecondaries(2);
+    startTurnSecondaries(second);
     return;
   }
   if (kind === "finish-game") {
@@ -836,7 +1537,7 @@ function applyConfirmed(kind: TurnConfirmKind): void {
   advanceGameTurn();
   turnSound("round");
   if (game.options.photoBreaks) startPhotoBreak();
-  startTurnSecondaries(1);
+  startTurnSecondaries(game.firstPlayer);
 }
 
 /**
@@ -860,6 +1561,8 @@ function showPhotoBreak(): void {
   stopLoop();
   app.classList.add("is-photo-break");
   photoMsg.textContent = t("photoMsg", { n: game.turnPlayer });
+  // The last break's photo went with it as it faded out: this one starts with the camera
+  showPhotoShot(null);
   photoOverlay.classList.add("is-visible");
   photoOverlay.setAttribute("aria-hidden", "false");
   btnPhotoResume.focus();
@@ -868,7 +1571,7 @@ function showPhotoBreak(): void {
 function endPhotoBreak(): void {
   if (!game.photoBreak) return;
   game.photoBreak = false;
-  if (isRunning()) runClock(game.clock);
+  handClock(game.clock.active);
   hidePhotoBreak();
 }
 
@@ -881,6 +1584,41 @@ function hidePhotoBreak(): void {
     openCards(pendingDraw.player, "draw", pendingDraw.drawn);
     pendingDraw = null;
   }
+}
+
+/** The photo taken during this break: kept nowhere but on screen, until saved to the phone */
+let photoShotFile: File | null = null;
+
+function showPhotoShot(file: File | null): void {
+  if (photoShotFile) URL.revokeObjectURL(photoShot.src);
+  photoShotFile = file;
+  if (file) photoShot.src = URL.createObjectURL(file);
+  else photoShot.removeAttribute("src");
+  photoOverlay.classList.toggle("has-shot", !!file);
+}
+
+const isIos = (): boolean =>
+  /iPhone|iPad|iPod/.test(navigator.userAgent) || (/Macintosh/.test(navigator.userAgent) && navigator.maxTouchPoints > 1);
+
+/**
+ * An iPhone puts a photo in its gallery only from the share sheet ("Save Image"); elsewhere it
+ * is downloaded. False when the share sheet was closed without saving
+ */
+async function savePhotoShot(file: File): Promise<boolean> {
+  const extension = file.name.split(".").pop() || "jpg";
+  const named = new File([file], `warhammer-clock-round-${game.round}-player-${game.turnPlayer}.${extension}`, { type: file.type });
+  if (isIos() && navigator.canShare?.({ files: [named] })) {
+    return navigator.share({ files: [named] }).then(
+      () => true,
+      () => false,
+    );
+  }
+  const link = document.createElement("a");
+  link.href = URL.createObjectURL(named);
+  link.download = named.name;
+  link.click();
+  window.setTimeout(() => URL.revokeObjectURL(link.href), 1000);
+  return true;
 }
 
 function readMinutes(): { a: number; b: number } {
@@ -928,7 +1666,11 @@ function renderTimeValue(): void {
 }
 
 /** Setup bar menus: closed by a click outside or Escape */
-const POPOVERS: [HTMLButtonElement, HTMLElement][] = [[btnSettings, settingsPanel]];
+const POPOVERS: [HTMLButtonElement, HTMLElement][] = [
+  [btnSettings, settingsPanel],
+  [seatSettings, settingsPanel],
+  [stripSettings, settingsPanel],
+];
 
 /**
  * The time choices unfold over the bar on hover (or keyboard focus). Once a time is
@@ -936,33 +1678,94 @@ const POPOVERS: [HTMLButtonElement, HTMLElement][] = [[btnSettings, settingsPane
  */
 function foldTimePicker(): void {
   timePicker.classList.add("is-folded");
+  timePicker.classList.remove("is-open");
   if (timePicker.contains(document.activeElement)) (document.activeElement as HTMLElement).blur();
+}
+
+/** On a phone the menu is a sheet: it slides back down before it hides (style.css) */
+const SHEET = window.matchMedia("(max-width: 640px)");
+const SHEET_CLOSE_MS = 180;
+
+function hidePanel(panel: HTMLElement): void {
+  if (panel.hidden || panel.classList.contains("is-closing")) return;
+  if (!SHEET.matches || prefersReducedMotion()) {
+    panel.hidden = true;
+    return;
+  }
+  panel.classList.add("is-closing");
+  window.setTimeout(() => {
+    // Opened again while it was sliding down: it stays
+    if (!panel.classList.contains("is-closing")) return;
+    panel.classList.remove("is-closing");
+    panel.hidden = true;
+  }, SHEET_CLOSE_MS);
 }
 
 function closePopovers(): void {
   closePicker();
+  stopMusicPreview();
+  timePicker.classList.remove("is-open");
   for (const [button, panel] of POPOVERS) {
-    panel.hidden = true;
+    hidePanel(panel);
     button.setAttribute("aria-expanded", "false");
   }
 }
 
 function togglePopover(button: HTMLButtonElement, panel: HTMLElement): void {
-  const open = panel.hidden;
+  const open = panel.hidden || panel.classList.contains("is-closing");
   closePopovers();
-  panel.hidden = !open;
-  button.setAttribute("aria-expanded", String(open));
+  if (!open) return;
+  panel.classList.remove("is-closing");
+  panel.hidden = false;
+  button.setAttribute("aria-expanded", "true");
 }
 
-const UI_SIZES = new Set(["s", "m", "l", "xl", "uw"]);
-const LAYOUTS = new Set(["rows", "columns"]);
+const UI_SIZES = new Set(["auto", "s", "m", "l"]);
+const LAYOUTS = new Set(["auto", "rows", "columns"]);
+/** The layout picked in the menu: "auto" follows the screen */
+let layoutPref = LAYOUT_DEFAULT;
+
+/**
+ * Auto: the board follows the screen it is on, a laptop as an ultrawide, and again when the
+ * window moves from one to the other. A size or a layout picked by hand stays as it is
+ */
+function fitScreen(): void {
+  const root = document.documentElement;
+  const { innerWidth: w, innerHeight: h } = window;
+  if (root.dataset.uiSize === "auto") {
+    // By the screen's area: about Standard on a laptop, Ultra wide on a 3440 px ultrawide. Neither
+    // side may overflow, and a phone keeps the size its screens were drawn for
+    const scale = PHONE.matches ? 1.12 : Math.max(0.86, Math.min(Math.sqrt(w * h) / 1020, h / 560, w / 1100, 2.12));
+    root.style.setProperty("--ui-scale", scale.toFixed(3));
+  } else root.style.removeProperty("--ui-scale");
+  // Twice as wide as tall, an ultrawide: the players side by side
+  if (layoutPref === "auto") root.dataset.layout = w / h >= 2 ? "columns" : "rows";
+  renderMe();
+}
+
+window.addEventListener("resize", fitScreen);
+
+/**
+ * A player's PC shows the whole board: its own side marked, the opponent's to read, and turned so
+ * its own side is the nearest one, at the bottom or on the left
+ */
+function renderMe(): void {
+  const root = document.documentElement;
+  const me = online && !online.phone ? online.seat : null;
+  if (me) root.dataset.me = String(me);
+  else delete root.dataset.me;
+  root.toggleAttribute("data-flip", me !== null && (root.dataset.layout === "columns" ? me === 2 : me === 1));
+}
 const THEMES = new Set(["clean", "warzone", "factions"]);
 
 function applyTheme(theme: string): void {
   const v = THEMES.has(theme) ? theme : THEME_DEFAULT;
   document.documentElement.dataset.theme = v;
   setSegmentedValue(themeOptions, v);
-  factionsSection.hidden = v !== "factions";
+  // The faction menu comes and goes inside the open panel: the panel grows or shrinks to it
+  glideHeight(settingsPanel, () => {
+    factionsSection.hidden = v !== "factions";
+  });
   try {
     localStorage.setItem(THEME_STORAGE_KEY, v);
   } catch {
@@ -988,6 +1791,14 @@ function applyFaction(player: Player, id: string): void {
   } catch {
     /* quota / private mode */
   }
+}
+
+/** The players sat the other way round: each keeps their army, the seats trade colors */
+function swapFactions(): void {
+  const [first, second] = [factionOf[1], factionOf[2]];
+  closePicker();
+  applyFaction(1, second);
+  applyFaction(2, first);
 }
 
 /** A chapter shows as Space Marines in the first list, the chapter itself in the second */
@@ -1196,6 +2007,7 @@ function applyUiSize(size: string): void {
   } catch {
     /* quota / private mode */
   }
+  fitScreen();
 }
 
 function store(key: string, value: string): void {
@@ -1222,11 +2034,19 @@ function stored(key: string): string | null {
   }
 }
 
-function applySounds(value: string): void {
+function applySounds(value: string, remember = true): void {
   const on = value === "on";
   setSoundsOn(on);
-  setSegmentedValue(sfxOptions, on ? "on" : "off");
-  store(SOUNDS_STORAGE_KEY, on ? "on" : "off");
+  sfxToggle.checked = on;
+  if (remember) store(SFX_STORAGE_KEY, on ? "on" : "off");
+  renderSeatSound();
+}
+
+/** A phone's speaker button says whether it is heard: effects on and not muted. Silent, a tap brings the sound */
+function renderSeatSound(): void {
+  const heard = sfxToggle.checked && !isMuted();
+  seatMute.innerHTML = heard ? ICON_SOUND : ICON_MUTED;
+  seatMute.setAttribute("aria-pressed", String(!heard));
 }
 
 function applyMusic(value: string): void {
@@ -1234,6 +2054,13 @@ function applyMusic(value: string): void {
   setMusic(track);
   setSegmentedValue(musicOptions, track);
   store(MUSIC_STORAGE_KEY, track);
+  seatMusic.hidden = track === "off";
+}
+
+function applyMusicMuted(value: boolean): void {
+  setMusicMuted(value);
+  seatMusic.innerHTML = value ? ICON_MUSIC_OFF : ICON_MUSIC;
+  seatMusic.setAttribute("aria-pressed", String(value));
 }
 
 function applyVolume(value: number): void {
@@ -1245,7 +2072,10 @@ function applyVolume(value: number): void {
 }
 
 function loadSound(): void {
-  applySounds(stored(SOUNDS_STORAGE_KEY) ?? "off");
+  // A phone is its player's own device: its sound effects are on until they turn them off. The
+  // old setting was saved even when nobody chose it, so only an "on" from it counts
+  const legacy = stored(SOUNDS_STORAGE_KEY) === "on" ? "on" : null;
+  applySounds(stored(SFX_STORAGE_KEY) ?? legacy ?? (PHONE.matches ? "on" : "off"), false);
   applyVolume(Number(stored(VOLUME_STORAGE_KEY) ?? VOLUME_DEFAULT));
   applyMusic(stored(MUSIC_STORAGE_KEY) ?? "off");
 }
@@ -1253,16 +2083,47 @@ function loadSound(): void {
 let soundToastTimer = 0;
 
 /** A short line at the bottom of the screen */
-function showToast(text: string): void {
+/** An important toast holds the screen a little longer: one coming meanwhile, or showing already, follows it */
+let toastHeldUntil = 0;
+let toastNext: string | null = null;
+
+/**
+ * A phone in its player's hand also buzzes at the game's big moments, heard or not. A page may
+ * only vibrate once it was tapped, and never on an iPhone
+ */
+function buzz(pattern: number | number[]): void {
+  if (online?.phone) navigator.vibrate?.(pattern);
+}
+
+function showToast(text: string, important = false): void {
+  const now = performance.now();
+  if (!important && now < toastHeldUntil) {
+    toastNext = text;
+    return;
+  }
+  if (important && soundToast.classList.contains("is-visible")) toastNext = soundToast.textContent;
+  const ms = important ? 2600 : 1400;
+  if (important) toastHeldUntil = now + ms;
   soundToast.textContent = text;
   soundToast.classList.add("is-visible");
   window.clearTimeout(soundToastTimer);
-  soundToastTimer = window.setTimeout(() => soundToast.classList.remove("is-visible"), 1400);
+  soundToastTimer = window.setTimeout(() => {
+    soundToast.classList.remove("is-visible");
+    const next = toastNext;
+    toastNext = null;
+    if (next) window.setTimeout(() => showToast(next), 250);
+  }, ms);
 }
 
 function toggleMute(): void {
   setMuted(!isMuted());
   showToast(t(isMuted() ? "soundMuted" : "soundOn"));
+  renderSeatSound();
+}
+
+function toggleMusicMute(): void {
+  applyMusicMuted(!isMusicMuted());
+  showToast(t(isMusicMuted() ? "musicMuted" : "musicOn"));
 }
 
 function loadUiSize(): void {
@@ -1298,14 +2159,11 @@ function applyTranslations(): void {
     });
 }
 
-function applyLang(value: string): void {
+/** `remember`: picked in the menu. Otherwise the browser's language is followed, wherever it changes */
+function applyLang(value: string, remember = false): void {
   setLang(isLang(value) ? value : "en");
   setSegmentedValue(langOptions, getLang());
-  try {
-    localStorage.setItem(LANG_STORAGE_KEY, getLang());
-  } catch {
-    /* quota / private mode */
-  }
+  if (remember) store(LANG_STORAGE_KEY, getLang());
   applyTranslations();
   refreshFactionPickers();
   renderKeyHint();
@@ -1318,6 +2176,10 @@ function applyLang(value: string): void {
   syncFullscreenLabel();
   renderSeat();
   renderOnlineDialog();
+  renderJudgeCall();
+  if (tossOverlay.classList.contains("is-visible")) renderToss();
+  if (logOverlay.classList.contains("is-visible")) renderClockLog();
+  if (resultOverlay.classList.contains("is-visible")) renderBattleReport();
 }
 
 function loadLang(): void {
@@ -1334,13 +2196,15 @@ function loadLang(): void {
 
 function applyLayout(layout: string): void {
   const v = LAYOUTS.has(layout) ? layout : LAYOUT_DEFAULT;
-  document.documentElement.dataset.layout = v;
+  layoutPref = v;
+  if (v !== "auto") document.documentElement.dataset.layout = v;
   setSegmentedValue(layoutOptions, v);
   try {
     localStorage.setItem(LAYOUT_STORAGE_KEY, v);
   } catch {
     /* quota / private mode */
   }
+  fitScreen();
 }
 
 function loadLayout(): void {
@@ -1380,10 +2244,10 @@ function syncInputsFromState(): void {
   m2.value = String(Math.round(timeLeft(2) / 60));
 }
 
-/** The hour digit is dimmed under an hour, like an unlit segment. */
+/** The hour digit is dimmed under an hour, like an unlit segment; a clock out of time reads in full */
 function renderTime(el: HTMLElement, totalSeconds: number): void {
   const [h, m, s] = formatTime(totalSeconds).split(":");
-  el.innerHTML = `<span class="time__h${h === "0" ? " is-zero" : ""}">${h}:</span>${m}:${s}`;
+  el.innerHTML = `<span class="time__h${h === "0" && totalSeconds > 0 ? " is-zero" : ""}">${h}:</span>${m}:${s}`;
 }
 
 function applyTimesToDisplay(): void {
@@ -1393,6 +2257,20 @@ function applyTimesToDisplay(): void {
 }
 
 function setActivePanels(): void {
+  // The clock out of time has been handed over, here or on another device
+  if (timeOutPlayer !== null && (game.clock.active !== timeOutPlayer || timeLeft(timeOutPlayer) > 0 || !inGame(game))) hideTimeOut();
+  panel1.classList.toggle("is-flag", inGame(game) && timeLeft(1) <= 0);
+  panel2.classList.toggle("is-flag", inGame(game) && timeLeft(2) <= 0);
+  if (isDeploying()) {
+    const deployer = game.clock.active;
+    for (const [player, panel] of [[1, panel1], [2, panel2]] as const) {
+      panel.classList.toggle("is-active", player === deployer);
+      panel.classList.toggle("is-idle", player !== deployer);
+      panel.classList.toggle("is-turn", player === deployer);
+    }
+    renderSeat();
+    return;
+  }
   if (!isRunning()) {
     panel1.classList.remove("is-active", "is-idle");
     panel2.classList.remove("is-active", "is-idle");
@@ -1418,21 +2296,25 @@ function setInputsEnabled(on: boolean): void {
   m2.disabled = !on;
   photoBreaksToggle.disabled = !on;
   secondaryCardsToggle.disabled = !on;
+  deployClockToggle.disabled = !on;
 }
 
 function renderKeyHint(): void {
   const enter = `<kbd>${t("keyEnter")}</kbd>`;
   const space = `<kbd>${t("keySpace")}</kbd>`;
   const sep = '<span class="key-hint__sep"></span>';
-  if (isRunning()) {
+  const judge = ` ${sep} <kbd>${JUDGE_KEY}</kbd> ${t("hintJudge")}`;
+  if (isDeploying()) {
+    keyHint.innerHTML = `${space} ${t("hintDeployPass")} ${sep} ${enter} ${t("hintDeployDone")}`;
+  } else if (isRunning()) {
     const hand = secondaryCardsOn()
       ? ` ${sep} <kbd>${HAND_KEY}</kbd> ${t("hintHand")} <kbd>${PRIMARY_KEY}</kbd> ${t("hintPrimary")}`
       : "";
-    keyHint.innerHTML = `${enter} ${t("hintEndTurn")} ${sep} ${space} ${t("hintSwitch")} ${sep} ${space}${space} ${t("hintPause")}${hand}`;
+    keyHint.innerHTML = `${enter} ${t("hintEndTurn")} ${sep} ${space} ${t("hintSwitch")} ${sep} ${space}${space} ${t("hintPause")}${hand}${judge}`;
   } else if (isOver()) {
     keyHint.innerHTML = `<span class="key-hint__status">${t("gameOver")}</span> ${t("hintPlayAgain")}`;
   } else if (isStopped(game)) {
-    keyHint.innerHTML = `<span class="key-hint__status">${t("paused")}</span> ${space} ${t("hintResume")}`;
+    keyHint.innerHTML = `<span class="key-hint__status">${t("paused")}</span> ${space} ${t("hintResume")}${judge}`;
   } else {
     keyHint.innerHTML = `${enter} ${t("hintStart")}`;
   }
@@ -1443,6 +2325,9 @@ function updateButtons(): void {
   app.classList.toggle("match-started", inGame(game));
   app.classList.toggle("is-paused", game.phase === "paused");
   app.classList.toggle("is-game-over", isOver());
+  btnJudge.hidden = !inGame(game) || isOver();
+  app.classList.toggle("is-deploying", isDeploying());
+  app.classList.toggle("is-pre-battle", inPreBattle());
   renderKeyHint();
   renderSeat();
 }
@@ -1475,17 +2360,249 @@ function warnIfLow(before: number, after: number): void {
 /** Time left on each clock at the previous frame, to ring the warnings as it goes under them */
 let lastSeenLeft: Record<Player, number> = { 1: 0, 2: 0 };
 
-/** Rings the warnings and ends the game when the running clock is out. Returns true if it ended */
+/** Rings the warnings and stops the running clock when it is out. Returns true if it stopped */
 function checkClock(): boolean {
   const player = game.clock.active;
   const left = timeLeft(player);
   warnIfLow(lastSeenLeft[player], left);
   lastSeenLeft[player] = left;
   if (left > 0) return false;
+  clockOut(player);
+  return true;
+}
+
+/**
+ * A clock reaches zero and stays there: the game goes on, that player only rolling saves and
+ * tests and scoring what they hold, as most tournaments rule. Players who play loss on time
+ * stop on this screen
+ */
+function clockOut(player: Player): void {
   stopClock(game.clock);
   game.clock.left[player] = 0;
-  endGame(other(player));
-  return true;
+  // Online, both phones see it reach zero: one line is enough
+  if (!loggedLately("timeOut", player)) logClock("timeOut", { player });
+  stopLoop();
+  applyTimesToDisplay();
+  setActivePanels();
+  showTimeOut(player);
+}
+
+/** The player out of time, while the screen says so */
+let timeOutPlayer: Player | null = null;
+
+/**
+ * Out of time: the knell tolls, the dead clock slams down and the screen asks to hand the clock
+ * over, for good. Online, the device of the player out of time hands it; the others are told
+ */
+function showTimeOut(player: Player): void {
+  timeOutPlayer = player;
+  const handsOver = !online || online.seat === player;
+  timeOutOverlay.classList.remove("is-p1", "is-p2", "is-striking");
+  timeOutOverlay.classList.add(`is-p${player}`);
+  app.querySelector("#time-out-who")!.textContent = t("player", { n: player });
+  app.querySelector("#time-out-msg")!.textContent = handsOver ? t("timeOutRule") : t("timeOutHanded", { n: player });
+  btnTimeOut.querySelector("span")!.textContent = handsOver ? t("timeOutPass", { n: other(player) }) : t("ok");
+  timeOutOverlay.style.setProperty("--hit-at", `${(playSound("timeOut") ?? 0) + TIME_OUT_HIT_SEC}s`);
+  if (online?.seat === player) buzz([300, 120, 300, 120, 300]);
+  // Replayed from the start, even for a second clock out in the same game
+  void timeOutOverlay.offsetWidth;
+  timeOutOverlay.classList.add("is-visible", "is-striking");
+  timeOutOverlay.setAttribute("aria-hidden", "false");
+  btnTimeOut.focus();
+}
+
+function hideTimeOut(): void {
+  timeOutPlayer = null;
+  timeOutOverlay.classList.remove("is-visible");
+  timeOutOverlay.setAttribute("aria-hidden", "true");
+  btnTimeOut.blur();
+}
+
+btnTimeOut.addEventListener("click", () => {
+  const player = timeOutPlayer;
+  hideTimeOut();
+  if (player === null || (online && online.seat !== player) || game.clock.active !== player) return;
+  // A plain handover, never taken for the second tap of a double tap that pauses
+  lastSpaceTime = 0;
+  handleSpaceLikeInput();
+});
+
+/**
+ * The clock goes to `player`. It runs if the game does, unless the clocks are frozen; a clock
+ * at zero stays there until it is passed on
+ */
+function handClock(player: Player): void {
+  setActiveClock(game.clock, player);
+  if (!isRunning() || game.photoBreak || game.judgeCall !== null) return;
+  if (timeLeft(player) <= 0) {
+    stopClock(game.clock);
+    return;
+  }
+  if (game.clock.since !== null) return;
+  runClock(game.clock);
+  startLoop();
+}
+
+/* ---------- Clock log and judge calls ---------- */
+
+function logClock(kind: ClockEventKind, details: { player?: Player; seconds?: number } = {}): string {
+  const at = nowMs();
+  const key = `${at.toString(36)}${Math.random().toString(36).slice(2, 6)}`;
+  const left = { 1: Math.floor(Math.max(0, timeLeft(1))), 2: Math.floor(Math.max(0, timeLeft(2))) };
+  game.clockLog[key] = { at, kind, round: game.round, ...details, left };
+  return key;
+}
+
+const clockEvents = (): ClockEvent[] => Object.values(game.clockLog).sort((a, b) => a.at - b.at);
+
+const loggedLately = (kind: ClockEventKind, player: Player): boolean =>
+  Object.values(game.clockLog).some((event) => event.kind === kind && event.player === player && nowMs() - event.at < 5000);
+
+/** A short span: 4:05, or 1:02:30 past an hour */
+function formatSpan(seconds: number): string {
+  const s = Math.max(0, Math.round(seconds));
+  return s >= 3600 ? formatTime(s) : `${Math.floor(s / 60)}:${String(s % 60).padStart(2, "0")}`;
+}
+
+const formatDelta = (seconds: number): string => `${seconds > 0 ? "+" : "−"}${formatSpan(Math.abs(seconds))}`;
+
+const LOG_TEXT: Record<ClockEventKind, (event: ClockEvent) => string> = {
+  chooser: ({ player }) => t("logChooser", { n: player ?? "" }),
+  deploy: ({ player }) => t("logDeploy", { n: player ?? "" }),
+  deployEnd: () => t("logDeployEnd"),
+  first: ({ player }) => t("logFirst", { n: player ?? "" }),
+  start: () => t("logStart"),
+  switch: ({ player }) => t("logSwitch", { n: player ?? "" }),
+  turn: ({ player }) => t("logTurn", { n: player ?? "" }),
+  pause: () => t("logPause"),
+  resume: () => t("logResume"),
+  judge: () => t("logJudge"),
+  judgeEnd: ({ seconds }) => t("logJudgeEnd", { time: formatSpan(seconds ?? 0) }),
+  adjust: ({ player, seconds }) => t("logAdjust", { n: player ?? "", delta: formatDelta(seconds ?? 0) }),
+  timeOut: ({ player }) => t("logTimeOut", { n: player ?? "" }),
+  end: () => t("logEnd"),
+};
+
+const logTime = (at: number): string =>
+  new Date(at).toLocaleTimeString(getLang(), { hour: "2-digit", minute: "2-digit", second: "2-digit", hourCycle: "h23" });
+
+/** A judge to the table: both clocks freeze at once, with no question asked, and the call is timed */
+function callJudge(): void {
+  if (!inGame(game) || isOver() || game.judgeCall !== null) return;
+  const running = isRunning() && game.clock.since !== null ? game.clock.active : undefined;
+  stopClock(game.clock);
+  game.judgeCall = nowMs();
+  logClock("judge", { player: running });
+  stopLoop();
+  showJudgeCall();
+  updateButtons();
+}
+
+/** The game goes on as it was: the clock that ran runs again */
+function endJudgeCall(): void {
+  if (game.judgeCall === null) return;
+  const lasted = (nowMs() - game.judgeCall) / 1000;
+  game.judgeCall = null;
+  logClock("judgeEnd", { seconds: Math.round(lasted) });
+  hideJudgeCall();
+  handClock(game.clock.active);
+  applyTimesToDisplay();
+  setActivePanels();
+  updateButtons();
+}
+
+/** The judge gives time back or takes some: the clocks are frozen meanwhile, so it applies as is */
+function adjustTime(player: Player, seconds: number): void {
+  if (game.judgeCall === null) return;
+  const before = game.clock.left[player];
+  game.clock.left[player] = Math.max(0, before + seconds);
+  const applied = game.clock.left[player] - before;
+  if (applied === 0) return;
+  logClock("adjust", { player, seconds: applied });
+  renderJudgeCall();
+  applyTimesToDisplay();
+  setActivePanels();
+}
+
+let judgeTimer = 0;
+
+/** Also when the judge was called from the other phone */
+function showJudgeCall(): void {
+  closePopovers();
+  playSound("whistle");
+  renderJudgeCall();
+  judgeOverlay.classList.add("is-visible");
+  judgeOverlay.setAttribute("aria-hidden", "false");
+  window.clearInterval(judgeTimer);
+  judgeTimer = window.setInterval(renderJudgeCall, 1000);
+  (document.activeElement as HTMLElement | null)?.blur();
+}
+
+function hideJudgeCall(): void {
+  window.clearInterval(judgeTimer);
+  judgeOverlay.classList.remove("is-visible");
+  judgeOverlay.setAttribute("aria-hidden", "true");
+}
+
+function renderJudgeCall(): void {
+  const calledAt = game.judgeCall;
+  if (calledAt === null) return;
+  const call = clockEvents().filter((event) => event.kind === "judge").pop();
+  app.querySelector("#judge-since")!.textContent = t("judgeSince", { time: formatSpan((nowMs() - calledAt) / 1000) });
+  app.querySelector("#judge-msg")!.textContent = call?.player ? t("judgeRunning", { n: call.player }) : t("judgeStopped");
+  for (const player of [1, 2] as const) {
+    app.querySelector(`#judge-time-${player}`)!.textContent = formatTime(timeLeft(player));
+    const added = clockEvents()
+      .filter((event) => event.kind === "adjust" && event.player === player && event.at >= calledAt)
+      .reduce((total, event) => total + (event.seconds ?? 0), 0);
+    app.querySelector(`#judge-delta-${player}`)!.textContent = added ? formatDelta(added) : "";
+  }
+}
+
+function renderClockLog(): void {
+  const el = app.querySelector<HTMLElement>("#clock-log")!;
+  const events = clockEvents();
+  if (events.length === 0) {
+    el.innerHTML = `<p class="clock-log__empty">${t("clockLogEmpty")}</p>`;
+    return;
+  }
+  const head = [t("logTime"), t("round"), t("logEvent"), t("player", { n: 1 }), t("player", { n: 2 })];
+  el.innerHTML = `
+    <table>
+      <thead><tr>${head.map((label) => `<th scope="col">${label}</th>`).join("")}</tr></thead>
+      <tbody>${events
+        .map(
+          (event) =>
+            `<tr class="is-${event.kind}"><td>${logTime(event.at)}</td><td data-label="R">${event.round}</td><td>${LOG_TEXT[event.kind](event)}</td><td data-label="${t("playerShort", { n: 1 })}">${formatTime(event.left[1])}</td><td data-label="${t("playerShort", { n: 2 })}">${formatTime(event.left[2])}</td></tr>`,
+        )
+        .join("")}</tbody>
+    </table>`;
+  // The latest first in sight: that is what a dispute is about
+  el.scrollTop = el.scrollHeight;
+}
+
+/** Tab-separated, to paste in a message or a spreadsheet */
+function copyClockLog(): void {
+  const head = [t("logTime"), t("round"), t("logEvent"), t("player", { n: 1 }), t("player", { n: 2 })];
+  const rows = clockEvents().map((event) =>
+    [logTime(event.at), event.round, LOG_TEXT[event.kind](event), formatTime(event.left[1]), formatTime(event.left[2])].join("\t"),
+  );
+  const text = [`Warhammer Clock · ${t("clockLog")}`, head.join("\t"), ...rows].join("\n");
+  void navigator.clipboard?.writeText(text).then(
+    () => showToast(t("logCopied")),
+    () => undefined,
+  );
+}
+
+function openClockLog(): void {
+  renderClockLog();
+  logOverlay.classList.add("is-visible");
+  logOverlay.setAttribute("aria-hidden", "false");
+}
+
+function closeClockLog(): void {
+  logOverlay.classList.remove("is-visible");
+  logOverlay.setAttribute("aria-hidden", "true");
 }
 
 /**
@@ -1493,13 +2610,13 @@ function checkClock(): boolean {
  * so one check puts the screen right when the tab is active again.
  */
 function refreshClock(): void {
-  if (!isRunning() || game.clock.since === null) return;
+  if (!clockTicks() || game.clock.since === null) return;
   if (checkClock()) return;
   applyTimesToDisplay();
 }
 
 function tick(): void {
-  if (!isRunning() || game.clock.since === null) return;
+  if (!clockTicks() || game.clock.since === null) return;
   if (checkClock()) return;
   applyTimesToDisplay();
   raf = requestAnimationFrame(tick);
@@ -1517,32 +2634,16 @@ function stopLoop(): void {
   raf = 0;
 }
 
+/** The log line of the latest switch: a double tap that pauses takes it back */
+let lastSwitchLog = "";
+
 function switchTurn(): void {
   if (!isRunning()) return;
   playSound("switch");
-  setActiveClock(game.clock, other(game.clock.active));
+  const next = other(game.clock.active);
+  lastSwitchLog = logClock("switch", { player: next });
+  handClock(next);
   setActivePanels();
-}
-
-function endGame(winner: Player): void {
-  game.phase = "over";
-  stopClock(game.clock);
-  lastSpaceTime = 0;
-  void releaseWakeLock();
-  stopLoop();
-  hideTurnConfirmModal();
-  syncInputsFromState();
-  setInputsEnabled(true);
-  setActivePanels();
-  updateButtons();
-  applyTimesToDisplay();
-  syncPresetSelectFromState();
-  const loser = other(winner);
-  setBattleMusic(false);
-  playSound("victory");
-  showResultOverlay(t("wins", { n: winner }), t("ranOutOfTime", { n: loser }), winner);
-  panel1.classList.toggle("is-flag", timeLeft(1) <= 0);
-  panel2.classList.toggle("is-flag", timeLeft(2) <= 0);
 }
 
 /** The clocks as set in the bar, stopped, Player 1's first */
@@ -1556,13 +2657,21 @@ function start(): void {
   hideTurnConfirmModal();
   hideResultOverlay();
   game.phase = "setup";
+  // A timed deployment has already used some of the time
+  const deployed = game.preBattle?.deployFirst && deploymentTimed() ? { ...game.clock.left } : null;
   game.clock = clockFromInputs();
-  if (timeLeft(1) <= 0 || timeLeft(2) <= 0) return;
-  game.turnPlayer = 1;
+  if (deployed) game.clock.left = deployed;
+  else if (timeLeft(1) <= 0 || timeLeft(2) <= 0) return;
+  // The coin toss winner's turn and clock come first
+  game.turnPlayer = game.firstPlayer;
+  game.clock.active = game.firstPlayer;
   lastSpaceTime = 0;
   game.phase = "running";
   game.choosing = false;
   runClock(game.clock);
+  // The log began with the first toss
+  if (!game.preBattle) game.clockLog = {};
+  logClock("start");
   game.cp = { 1: 1, 2: 1 };
   game.cpHistory = { 1: emptyCpHistory(), 2: emptyCpHistory() };
   renderMiniCounters();
@@ -1576,13 +2685,91 @@ function start(): void {
   turnSound("start");
   setBattleMusic(true);
   game.secondaries = { 1: newSecondaryPile(), 2: newSecondaryPile() };
+  game.cardRounds = { 1: {}, 2: {} };
   game.newCardUsed = { 1: false, 2: false };
-  startTurnSecondaries(1);
+  celebrateBattleReady();
+  startTurnSecondaries(game.firstPlayer);
+}
+
+let readyTimers: number[] = [];
+
+/** The Battle ready points wait for the cards drawn at the start of the battle to be put away */
+let readyPending = false;
+
+const readyLater = (ms: number, then: () => void): void => {
+  readyTimers.push(window.setTimeout(then, ms));
+};
+
+/**
+ * The battle starts: every army is Battle ready. Its 10 points float up to the score and land on
+ * it as the sound does, the score ticking up to them. The scores show without them until then
+ */
+function celebrateBattleReady(): void {
+  stopBattleReady();
+  readyHeld[1] = readyHeld[2] = BATTLE_READY_VP;
+  renderMiniCounters();
+  readyPending = true;
+  // The first draw opens on this screen first, if it does here (see hideCards). Without the cards
+  // the battle opens with its own blow: the points come once it is heard
+  readyLater(secondaryCardsOn() ? 250 : 1100, () => {
+    if (cardsPlayer === null) playBattleReady();
+  });
+}
+
+function playBattleReady(): void {
+  if (!readyPending) return;
+  readyPending = false;
+  const landAt = (playSound("battleReady") ?? 0) + READY_LAND_SEC;
+  const targets: [HTMLElement, Player][] = online?.phone
+    ? [[app.querySelector<HTMLElement>("#seat-score")!, online.seat]]
+    : [
+        [scoreTotalEl[1], 1],
+        [scoreTotalEl[2], 2],
+      ];
+  for (const [target, player] of targets) document.body.append(readyChip(target, player, landAt));
+  for (let step = 1; step <= BATTLE_READY_VP; step++) {
+    readyLater((landAt + (READY_COUNT_SEC * step) / BATTLE_READY_VP) * 1000, () => {
+      readyHeld[1] = readyHeld[2] = BATTLE_READY_VP - step;
+      renderMiniCounters();
+    });
+  }
+  readyLater((landAt + READY_COUNT_SEC) * 1000, () => {
+    document.querySelectorAll(".ready-chip").forEach((chip) => chip.remove());
+    for (const [target, player] of targets) {
+      target.style.setProperty("--ready", `var(--p${player})`);
+      target.classList.remove("is-ready-pop");
+      void target.offsetWidth;
+      target.classList.add("is-ready-pop");
+    }
+  });
+}
+
+/** "+10 Battle ready", rising from under a score and landing on it */
+function readyChip(target: HTMLElement, player: Player, landAt: number): HTMLElement {
+  const box = target.getBoundingClientRect();
+  const chip = document.createElement("div");
+  chip.className = `ready-chip is-p${player}`;
+  chip.setAttribute("aria-hidden", "true");
+  chip.innerHTML = `<b>+${BATTLE_READY_VP}</b><span>${t("battleReady")}</span>`;
+  chip.style.left = `${box.left + box.width / 2}px`;
+  chip.style.top = `${box.top + box.height / 2}px`;
+  chip.style.setProperty("--land-at", `${landAt}s`);
+  return chip;
+}
+
+/** A reset in the middle: the points are counted at once, nothing keeps floating */
+function stopBattleReady(): void {
+  readyTimers.forEach((timer) => window.clearTimeout(timer));
+  readyTimers = [];
+  readyPending = false;
+  readyHeld[1] = readyHeld[2] = 0;
+  document.querySelectorAll(".ready-chip").forEach((chip) => chip.remove());
 }
 
 function pause(): void {
   game.phase = "paused";
   stopClock(game.clock);
+  logClock("pause");
   lastSpaceTime = 0;
   void releaseWakeLock();
   stopLoop();
@@ -1594,15 +2781,23 @@ function pause(): void {
 
 function reset(): void {
   setBattleMusic(false);
+  stopBattleReady();
   game.phase = "setup";
   lastSpaceTime = 0;
   void releaseWakeLock();
   stopLoop();
   hideTurnConfirmModal();
   hideResultOverlay();
+  game.judgeCall = null;
+  game.clockLog = {};
+  hideJudgeCall();
+  closeClockLog();
   game.round = 1;
   game.clock = clockFromInputs();
   game.turnPlayer = 1;
+  game.firstPlayer = 1;
+  game.preBattle = null;
+  hideToss();
   panel1.classList.remove("is-flag");
   panel2.classList.remove("is-flag");
   setInputsEnabled(true);
@@ -1614,7 +2809,8 @@ function reset(): void {
   endPhotoBreak();
   game.scoreByTurn = { 1: emptyTurnScores(), 2: emptyTurnScores() };
   game.endBonus = { 1: 0, 2: 0 };
-  game.cp = { 1: 1, 2: 1 };
+  // No command point before the game: each player gets theirs when it starts
+  game.cp = { 1: 0, 2: 0 };
   game.cpHistory = { 1: emptyCpHistory(), 2: emptyCpHistory() };
   pendingDraw = null;
   afterPutAway = null;
@@ -1622,7 +2818,9 @@ function reset(): void {
   game.choosing = false;
   game.primaries = { 1: null, 2: null };
   game.primaryScored = { 1: {}, 2: {} };
+  game.primaryFull = { 1: {}, 2: {} };
   game.secondaries = { 1: newSecondaryPile(), 2: newSecondaryPile() };
+  game.cardRounds = { 1: {}, 2: {} };
   game.newCardUsed = { 1: false, 2: false };
   renderMiniCounters();
   closeAbilities();
@@ -1638,15 +2836,19 @@ function reset(): void {
   applyUpdateIfIdle();
 }
 
+/** A kind's points over the game's turns; the end bonus has its own row */
+const gameScore = (player: Player, kind: ScoreKind): number =>
+  game.scoreByTurn[player][kind].reduce((total, points) => total + points, 0);
+
 function renderMiniCounters(): void {
   for (const player of [1, 2] as const) {
-    // The total covers the whole game; primary and secondary show the player's current turn only
+    // Primary and secondary add up over the game; the −/+ work on this turn's points
     const turnIdx = scoringTurnIdx(player);
-    scoreTotalEl[player].textContent = String(scoreOf(player));
+    scoreTotalEl[player].textContent = String(shownScore(player));
     app.querySelector<HTMLElement>(`#p${player}-score-turn`)!.textContent = t("turnN", { n: turnIdx + 1 });
     for (const { kind } of SCORE_KINDS) {
       const points = game.scoreByTurn[player][kind][turnIdx];
-      app.querySelector<HTMLElement>(`#p${player}-${kind}-val`)!.textContent = String(points);
+      app.querySelector<HTMLElement>(`#p${player}-${kind}-val`)!.textContent = String(gameScore(player, kind));
       const plus = app.querySelector<HTMLButtonElement>(`#p${player}-${kind}-plus`)!;
       plus.disabled = points >= MAX_POINTS_PER_TURN;
       plus.title = plus.disabled ? t("maxPerTurn", { max: MAX_POINTS_PER_TURN }) : "";
@@ -1663,183 +2865,155 @@ function renderMiniCounters(): void {
   renderSeat();
 }
 
-const scoreTooltipEl = document.createElement("div");
-scoreTooltipEl.className = "score-tooltip";
-scoreTooltipEl.hidden = true;
-document.body.appendChild(scoreTooltipEl);
-let activeScoreTooltipTarget: HTMLElement | null = null;
+/** The history behind a score or a CP count, on hover: it grows out of the number and fades away */
+function historyTip(className: string): HTMLElement {
+  const el = document.createElement("div");
+  el.className = className;
+  el.hidden = true;
+  document.body.appendChild(el);
+  return el;
+}
 
-function placeScoreTooltip(target: HTMLElement): void {
+const scoreTooltipEl = historyTip("score-tooltip");
+const cpTooltipEl = historyTip("score-tooltip is-cp");
+let activeScoreTooltipTarget: HTMLElement | null = null;
+let activeCpTooltipTarget: HTMLElement | null = null;
+const TIP_FADE_MS = 140;
+const tipHideTimers = new Map<HTMLElement, number>();
+
+/** Above the number, or below it when there is no room; it grows from that side */
+function placeTip(tip: HTMLElement, target: HTMLElement): void {
   const PAD = 8;
   const GAP = 10;
   const r = target.getBoundingClientRect();
-  const t = scoreTooltipEl.getBoundingClientRect();
-  let left = r.left + r.width / 2 - t.width / 2;
-  left = Math.max(PAD, Math.min(left, window.innerWidth - t.width - PAD));
-  let top = r.top - t.height - GAP;
-  if (top < PAD) top = Math.min(window.innerHeight - t.height - PAD, r.bottom + GAP);
-  scoreTooltipEl.style.left = `${left}px`;
-  scoreTooltipEl.style.top = `${top}px`;
+  const box = tip.getBoundingClientRect();
+  let left = r.left + r.width / 2 - box.width / 2;
+  left = Math.max(PAD, Math.min(left, window.innerWidth - box.width - PAD));
+  let top = r.top - box.height - GAP;
+  const above = top >= PAD;
+  if (!above) top = Math.min(window.innerHeight - box.height - PAD, r.bottom + GAP);
+  tip.dataset.side = above ? "above" : "below";
+  tip.style.left = `${left}px`;
+  tip.style.top = `${top}px`;
 }
+
+function showTip(tip: HTMLElement, target: HTMLElement): void {
+  window.clearTimeout(tipHideTimers.get(tip));
+  const wasShown = tip.classList.contains("is-visible");
+  tip.hidden = false;
+  placeTip(tip, target);
+  if (wasShown) return;
+  void tip.offsetWidth;
+  tip.classList.add("is-visible");
+}
+
+function fadeTip(tip: HTMLElement): void {
+  tip.classList.remove("is-visible");
+  window.clearTimeout(tipHideTimers.get(tip));
+  tipHideTimers.set(
+    tip,
+    window.setTimeout(() => {
+      tip.hidden = true;
+    }, TIP_FADE_MS),
+  );
+}
+
+const tipHead = (player: Player, title: string, value: number): string =>
+  `<div class="history-tip__head"><span>${title} · ${t("player", { n: player })}</span><b>${value}</b></div>`;
 
 function showScoreTooltip(target: HTMLElement): void {
   const player: Player = target === scoreTotalEl[1] ? 1 : 2;
   renderScoreTooltipContent(player);
-  scoreTooltipEl.hidden = false;
-  scoreTooltipEl.classList.add("is-visible");
   activeScoreTooltipTarget = target;
-  placeScoreTooltip(target);
+  showTip(scoreTooltipEl, target);
 }
 
 function hideScoreTooltip(): void {
-  scoreTooltipEl.classList.remove("is-visible");
-  scoreTooltipEl.hidden = true;
+  if (!activeScoreTooltipTarget) return;
   activeScoreTooltipTarget = null;
+  fadeTip(scoreTooltipEl);
 }
 
 function bindScoreTooltip(target: HTMLElement): void {
   target.addEventListener("mouseenter", () => showScoreTooltip(target));
-  target.addEventListener("mousemove", () => placeScoreTooltip(target));
   target.addEventListener("mouseleave", hideScoreTooltip);
 }
 
+/** Each of the player's turns: primary and secondary points, and a bar out of the most a turn can score */
 function renderScoreTooltipContent(player: Player): void {
   const { primary, secondary } = game.scoreByTurn[player];
-  scoreTooltipEl.innerHTML = "";
-  const legend = document.createElement("div");
-  legend.className = "score-tooltip__legend";
-  legend.textContent = t("priSecLegend");
-  scoreTooltipEl.appendChild(legend);
-  for (let i = 0; i < MAX_GAME_TURN; i++) {
-    const row = document.createElement("div");
-    row.className = "score-tooltip__row";
-    const isCurrent = i === scoringTurnIdx(player);
-    if (isCurrent) row.classList.add("is-current");
-
-    if (primary[i] === 0 && secondary[i] === 0) row.classList.add("is-empty");
-    const label = document.createElement("span");
-    label.textContent = t("turnN", { n: i + 1 });
-    row.appendChild(label);
-    const value = document.createElement("span");
-    value.className = "score-tooltip__value";
-    value.textContent = `${primary[i]} / ${secondary[i]}`;
-    row.appendChild(value);
-
-    if (isCurrent) {
-      const marker = document.createElement("span");
-      marker.className = "score-tooltip__current-marker";
-      marker.textContent = "←";
-      marker.setAttribute("aria-hidden", "true");
-      row.appendChild(marker);
-    }
-    scoreTooltipEl.appendChild(row);
-  }
-  if (game.endBonus[player] > 0) {
-    const row = document.createElement("div");
-    row.className = "score-tooltip__row";
-    const label = document.createElement("span");
-    label.textContent = t("endBonus");
-    const value = document.createElement("span");
-    value.className = "score-tooltip__value";
-    value.textContent = t("bonusPri", { n: game.endBonus[player] });
-    row.append(label, value);
-    scoreTooltipEl.appendChild(row);
-  }
+  const current = inGame(game) ? scoringTurnIdx(player) : -1;
+  const bar = (points: number, kind: string): string =>
+    `<i class="is-${kind}" style="width:${(points / (MAX_POINTS_PER_TURN * 2)) * 100}%"></i>`;
+  const rows = primary.map((pri, i) => {
+    const sec = secondary[i];
+    const state = i === current ? " is-current" : pri + sec === 0 ? " is-empty" : "";
+    return `<div class="history-tip__row${state}" style="--i:${i}"><span>${t("turnN", { n: i + 1 })}</span><b>${pri}</b><b>${sec}</b><span class="history-tip__bar">${bar(pri, "pri")}${bar(sec, "sec")}</span></div>`;
+  });
+  const extra = (label: string, points: number, i: number): string =>
+    `<div class="history-tip__row is-extra" style="--i:${i}"><span>${label}</span><b>+${points}</b></div>`;
+  scoreTooltipEl.dataset.player = String(player);
+  scoreTooltipEl.innerHTML = `
+    ${tipHead(player, t("score"), scoreOf(player))}
+    <div class="history-tip__cols"><span></span><span>${t("tipPri")}</span><span>${t("tipSec")}</span><span></span></div>
+    ${rows.join("")}
+    ${game.endBonus[player] > 0 ? extra(t("endBonus"), game.endBonus[player], MAX_GAME_TURN) : ""}
+    ${inGame(game) ? extra(t("battleReady"), BATTLE_READY_VP, MAX_GAME_TURN + 1) : ""}`;
 }
 
 function updateVisibleScoreTooltip(): void {
-  if (!activeScoreTooltipTarget || scoreTooltipEl.hidden) return;
+  if (!activeScoreTooltipTarget) return;
   const player: Player = activeScoreTooltipTarget === scoreTotalEl[1] ? 1 : 2;
   renderScoreTooltipContent(player);
-  placeScoreTooltip(activeScoreTooltipTarget);
-}
-
-const cpTooltipEl = document.createElement("div");
-cpTooltipEl.className = "score-tooltip";
-cpTooltipEl.hidden = true;
-document.body.appendChild(cpTooltipEl);
-let activeCpTooltipTarget: HTMLElement | null = null;
-
-function placeCpTooltip(target: HTMLElement): void {
-  const PAD = 8;
-  const GAP = 10;
-  const r = target.getBoundingClientRect();
-  const t = cpTooltipEl.getBoundingClientRect();
-  let left = r.left + r.width / 2 - t.width / 2;
-  left = Math.max(PAD, Math.min(left, window.innerWidth - t.width - PAD));
-  let top = r.top - t.height - GAP;
-  if (top < PAD) top = Math.min(window.innerHeight - t.height - PAD, r.bottom + GAP);
-  cpTooltipEl.style.left = `${left}px`;
-  cpTooltipEl.style.top = `${top}px`;
+  placeTip(scoreTooltipEl, activeScoreTooltipTarget);
 }
 
 function showCpTooltip(target: HTMLElement): void {
   const player: Player = target === p1CpVal ? 1 : 2;
   renderCpTooltipContent(player);
-  cpTooltipEl.hidden = false;
-  cpTooltipEl.classList.add("is-visible");
   activeCpTooltipTarget = target;
-  placeCpTooltip(target);
+  showTip(cpTooltipEl, target);
 }
 
 function hideCpTooltip(): void {
-  cpTooltipEl.classList.remove("is-visible");
-  cpTooltipEl.hidden = true;
+  if (!activeCpTooltipTarget) return;
   activeCpTooltipTarget = null;
+  fadeTip(cpTooltipEl);
 }
 
 function bindCpTooltip(target: HTMLElement): void {
   target.addEventListener("mouseenter", () => showCpTooltip(target));
-  target.addEventListener("mousemove", () => placeCpTooltip(target));
   target.addEventListener("mouseleave", hideCpTooltip);
 }
 
-function formatCpHistoryAddedRemoved(added: number, removed: number): string {
-  return `+${added} / −${removed}`;
-}
-
+/** The CP added and spent by hand, turn by turn, up to the one being played: the turns to come say nothing yet */
 function renderCpTooltipContent(player: Player): void {
-  const { added: addedHist, removed: removedHist } = game.cpHistory[player];
-  cpTooltipEl.innerHTML = "";
-  const legend = document.createElement("div");
-  legend.className = "score-tooltip__legend";
-  legend.textContent = t("cpLegend");
-  cpTooltipEl.appendChild(legend);
-  const matchActive = inGame(game);
-  const curSlot = matchActive ? currentPlayerTurnSlot() : -1;
-  for (let i = 0; i < MAX_PLAYER_TURNS; i++) {
-    const row = document.createElement("div");
-    row.className = "score-tooltip__row";
-    const isCurrent = i === curSlot;
-    if (isCurrent) row.classList.add("is-current");
-
-    const round = Math.floor(i / 2) + 1;
-    const turnOwner: Player = i % 2 === 0 ? 1 : 2;
-    if (addedHist[i] === 0 && removedHist[i] === 0) row.classList.add("is-empty");
-    const label = document.createElement("span");
-    label.textContent = t("cpTurnRow", { round, p: turnOwner });
-    row.appendChild(label);
-    const value = document.createElement("span");
-    value.className = "score-tooltip__value";
-    value.textContent = formatCpHistoryAddedRemoved(addedHist[i], removedHist[i]);
-    row.appendChild(value);
-
-    if (isCurrent) {
-      const marker = document.createElement("span");
-      marker.className = "score-tooltip__current-marker";
-      marker.textContent = "←";
-      marker.setAttribute("aria-hidden", "true");
-      row.appendChild(marker);
-    }
-    cpTooltipEl.appendChild(row);
-  }
+  const { added, removed } = game.cpHistory[player];
+  const current = inGame(game) ? currentPlayerTurnSlot() : -1;
+  const amount = (n: number, sign: string, kind: string): string =>
+    n > 0 ? `<b class="is-${kind}">${sign}${n}</b>` : `<b class="is-zero">·</b>`;
+  const rows = added.slice(0, current + 1).map((gained, i) => {
+    const spent = removed[i];
+    const owner: Player = i % 2 === 0 ? 1 : 2;
+    const state = i === current ? " is-current" : gained + spent === 0 ? " is-empty" : "";
+    return `<div class="history-tip__row${state}" style="--i:${i}"><span>${t("cpTurnRow", { round: Math.floor(i / 2) + 1, p: owner })}</span>${amount(gained, "+", "gain")}${amount(spent, "−", "spend")}</div>`;
+  });
+  cpTooltipEl.dataset.player = String(player);
+  cpTooltipEl.innerHTML = `
+    ${tipHead(player, t("commandPoints"), game.cp[player])}
+    <p class="history-tip__legend">${t("cpLegend")}</p>
+    ${
+      rows.length
+        ? `<div class="history-tip__cols"><span></span><span>${t("tipGained")}</span><span>${t("tipSpent")}</span></div>${rows.join("")}`
+        : `<p class="history-tip__empty">${t("tipEmpty")}</p>`
+    }`;
 }
 
 function updateVisibleCpTooltip(): void {
-  if (!activeCpTooltipTarget || cpTooltipEl.hidden) return;
+  if (!activeCpTooltipTarget) return;
   const player: Player = activeCpTooltipTarget === p1CpVal ? 1 : 2;
   renderCpTooltipContent(player);
-  placeCpTooltip(activeCpTooltipTarget);
+  placeTip(cpTooltipEl, activeCpTooltipTarget);
 }
 
 function activeAbilities(player: Player, kind: AbilityKind): Ability[] {
@@ -1882,9 +3056,9 @@ function startRoundAbilities(): void {
     game.bonusCpGained[player] = false;
     for (const ability of game.abilities[player]) ability.spent = false;
   }
-  // A new round is also the start of Player 1's turn
-  applyAbilityCp(1, ["round-cp", "turn-cp"]);
-  applyAbilityCp(2, ["round-cp"]);
+  // A new round is also the start of the first player's turn
+  applyAbilityCp(game.firstPlayer, ["round-cp", "turn-cp"]);
+  applyAbilityCp(other(game.firstPlayer), ["round-cp"]);
   renderAbilities(1);
   renderAbilities(2);
 }
@@ -2045,6 +3219,7 @@ function spendCpCoin(player: Player, coin: HTMLButtonElement): void {
 }
 
 function openAbilities(player: Player): void {
+  if (!canEdit(player)) return;
   abilitiesPlayer = player;
   abilitiesTitle.textContent = t("abilitiesTitle", { n: player });
   abilitiesTitle.className = `is-p${player}`;
@@ -2130,8 +3305,31 @@ function toggleAbilitySlot(player: Player, slot: AbilitySlot): void {
     game.abilities[player].push({ id: game.nextAbilityId++, kind: slot === "discount" ? "discount" : "turn-cp", lost: false, spent: false });
     revealCpTiming = slot === "cp";
   }
-  renderAbilityList();
+  // The +1 CP timing comes and goes under its tile: the list, and the dialog with it, follow
+  glideHeight(abilityList, renderAbilityList);
   renderAbilities(player);
+}
+
+/** `change` makes `el` taller or shorter: it grows or shrinks to its new height, clipped meanwhile */
+function glideHeight(el: HTMLElement, change: () => void): void {
+  if (prefersReducedMotion() || !el.getClientRects().length) {
+    change();
+    return;
+  }
+  // Mid-way if it was already gliding
+  const from = getComputedStyle(el).height;
+  for (const anim of el.getAnimations()) if (anim.id === GLIDE) anim.cancel();
+  change();
+  const to = getComputedStyle(el).height;
+  if (from === to) return;
+  el.style.overflow = "clip";
+  el.animate([{ height: from }, { height: to }], { duration: SLIDE_MS, easing: "cubic-bezier(0.2, 0.8, 0.2, 1)", id: GLIDE })
+    .finished.then(
+      () => {
+        el.style.overflow = "";
+      },
+      () => {},
+    );
 }
 
 /** Switching the timing keeps the same unit, struck or not */
@@ -2160,7 +3358,7 @@ const WHEN_KEYS = { yours: "whenYours", any: "whenAny", opponent: "whenOpponent"
 
 /**
  * Whose cards are shown, and which: a fresh draw, the secondaries in hand or already scored, the
- * primaries reveal, one player's primary, or what scores at the end of a turn
+ * primaries' VS, one player's primary, or what scores at the end of a turn
  */
 let cardsPlayer: Player | null = null;
 let cardsMode: "draw" | "hand" | "scored" | "primary" | "mission" | "command" | "end-turn" = "hand";
@@ -2174,6 +3372,8 @@ let drawnIds: string[] = [];
 let pendingDraw: { player: Player; drawn: string[] } | null = null;
 
 const CARD_EXIT_MS = 450;
+/** The cards overlay fading out, as in the CSS (.overlay--cards) */
+const CARDS_FADE_MS = 200;
 /** The cards left in the row glide to their new place */
 const CARD_SLIDE_MS = 380;
 
@@ -2192,6 +3392,7 @@ function drawSecondaries(player: Player, count: number): string[] {
   const pile = game.secondaries[player];
   const drawn = pile.deck.splice(0, count);
   pile.hand.push(...drawn);
+  for (const id of drawn) game.cardRounds[player][id] = { drawn: game.round };
   return drawn;
 }
 
@@ -2213,15 +3414,22 @@ function showDraw(player: Player, drawn: string[]): void {
     return;
   }
   if (game.photoBreak) pendingDraw = { player, drawn };
-  else openCards(player, "draw", drawn);
+  else {
+    openCards(player, "draw", drawn);
+    buzz(60);
+  }
 }
 
 function moveSecondary(player: Player, id: string, to: "discard" | "deck"): void {
   const pile = game.secondaries[player];
   pile.hand = pile.hand.filter((cardId) => cardId !== id);
-  if (to === "discard") pile.discard.push(id);
-  // Shuffled back: anywhere in the deck
-  else pile.deck.splice(Math.floor(Math.random() * (pile.deck.length + 1)), 0, id);
+  if (to === "deck") {
+    // Shuffled back: anywhere in the deck
+    pile.deck.splice(Math.floor(Math.random() * (pile.deck.length + 1)), 0, id);
+    return;
+  }
+  pile.discard.push(id);
+  game.cardRounds[player][id] = { ...game.cardRounds[player][id], discarded: game.round };
 }
 
 /** Card points go to the secondary score of the player's turn, within the 15 per turn */
@@ -2240,8 +3448,11 @@ function renderHandButtons(): void {
   for (const player of [1, 2] as const) {
     const button = handButtonEl[player];
     const count = game.secondaries[player].hand.length;
-    cardButtonsEl[player].hidden = !secondaryCardsOn() || !inGame(game);
-    primaryButtonEl[player].hidden = !primaryCard(player);
+    // The missions are dealt before the deployment, to be read from then on; the hand, once the battle starts
+    const dealt = !!primaryCard(player);
+    cardButtonsEl[player].hidden = !secondaryCardsOn() || (!inGame(game) && !dealt);
+    button.hidden = !inGame(game);
+    primaryButtonEl[player].hidden = !dealt;
     button.querySelector(".score-box__hand-count")!.textContent = String(count);
     button.setAttribute("aria-label", t("handAria", { n: count }));
   }
@@ -2264,7 +3475,9 @@ function cardKeyMode(e: KeyboardEvent): "hand" | "mission" | null {
 }
 
 const anyModalOpen = (): boolean =>
-  resultOverlay.classList.contains("is-visible") || turnConfirmOverlay.classList.contains("is-visible");
+  resultOverlay.classList.contains("is-visible") ||
+  turnConfirmOverlay.classList.contains("is-visible") ||
+  timeOutOverlay.classList.contains("is-visible");
 
 /** Card ids of the primary cards, to deal them like the others */
 const primaryCardId = (player: Player): string => `primary-${player}`;
@@ -2277,6 +3490,11 @@ function openCards(player: Player, mode: typeof cardsMode, drawn: string[] = [])
   cardsOverlay.classList.remove("is-closing");
   cardsPlayer = player;
   cardsMode = mode;
+  frontCardKey = null;
+  receiptHold = false;
+  flippedCards.clear();
+  // The opponent's cards, on a player's device: to read
+  cardsOverlay.classList.toggle("is-readonly", !canEdit(player));
   drawnIds = drawn;
   cardsOverlay.classList.remove("is-p1", "is-p2");
   if (mode !== "primary") cardsOverlay.classList.add(`is-p${player}`);
@@ -2289,17 +3507,24 @@ function openCards(player: Player, mode: typeof cardsMode, drawn: string[] = [])
   }
   // Every card that comes on screen is heard: the primaries clash, the others swish in
   const dealt = cardsRow.querySelectorAll(".sec-card.is-dealt").length;
-  if (mode === "primary") playSound("clash");
-  else if (dealt > 0) playSound("draw", dealt);
+  if (mode === "primary") {
+    // The cards meet and the VS slams down on the horns' boom, when the speaker plays it
+    const heardIn = playSound("clash") ?? 0;
+    cardsRow.style.setProperty("--vs-at", `${heardIn + CLASH_BOOM_SEC}s`);
+  } else if (dealt > 0) playSound("draw", dealt);
   cardsOverlay.classList.add("is-visible");
   cardsOverlay.setAttribute("aria-hidden", "false");
   btnCardsClose.focus();
 }
 
-function closeCards(putAway = true): void {
+function closeCards(putAway = true, putAwayElsewhere = false): void {
   if (cardsPlayer === null) return;
   // The draw opens the turn, in its Command phase: once it is put away, the primary scores of that phase come up
   const commandNext = putAway && cardsMode === "draw" && primaryScoresInCommand(cardsPlayer) ? cardsPlayer : null;
+  // Online, the turn-start cards show on the player's phone and the shared screen: put away on one, gone from both
+  if (putAway && !putAwayElsewhere && roomSession() && (cardsMode === "draw" || cardsMode === "command")) {
+    game.cardsPutAway = { player: cardsPlayer, mode: cardsMode, n: game.cardsPutAway.n + 1 };
+  }
   cardsPlayer = null;
   drawnIds = [];
   endTurnKind = null;
@@ -2320,11 +3545,21 @@ function closeCards(putAway = true): void {
 function hideCards(): void {
   if (putAwayTimer !== null) window.clearTimeout(putAwayTimer);
   putAwayTimer = null;
-  // The cards stay put away while the overlay fades out: the next opening resets them
+  // The cards stay put away while the overlay fades out, then leave the page: hidden, they would
+  // go on floating and holding the phone's graphics for nothing. The next opening deals them again
   cardsOverlay.classList.remove("is-visible");
+  window.setTimeout(() => {
+    if (cardsPlayer !== null || cardsOverlay.classList.contains("is-visible")) return;
+    cardsRow.replaceChildren();
+    cardsOverlay.classList.remove("is-closing");
+  }, CARDS_FADE_MS);
   const next = afterPutAway;
   afterPutAway = null;
   next?.();
+  // The first draw put away: the Battle ready points come, once the overlay has faded
+  if (readyPending) readyLater(200, () => {
+    if (cardsPlayer === null) playBattleReady();
+  });
 }
 
 /**
@@ -2364,13 +3599,14 @@ const turnEndCount = (owner: Player): number =>
 
 /** Enter, or the End turn button: the round goes on, or the battle ends after the last turn */
 function requestTurnEnd(): void {
-  if (game.turnPlayer === 1) requestEndTurn("p1-to-p2");
+  if (game.turnPlayer === game.firstPlayer) requestEndTurn("mid-round");
   else requestEndTurn(game.round >= MAX_GAME_TURN ? "finish-game" : "next-round");
 }
 
 /** With the cards, ending a turn first shows what scores now; with nothing to score, the plain confirmation */
 function requestEndTurn(kind: TurnConfirmKind): void {
   endTurnKind = kind;
+  endTurnOrder = {};
   // Online, each phone scores its own cards: the opponent's are on the opponent's phone
   const sides = online ? [online.seat] : [game.turnPlayer, other(game.turnPlayer)];
   endTurnSides = secondaryCardsOn() ? sides.filter((side) => turnEndCount(side) > 0) : [];
@@ -2428,7 +3664,8 @@ function renderCardsSwitch(): void {
     button.type = "button";
     button.className = `cards-switch__side is-p${tab.side}`;
     button.dataset.tab = tab.value;
-    button.disabled = tab.count === 0 && !tab.on;
+    // At a turn end, a side with nothing left to score still shows what it scored
+    button.disabled = tab.count === 0 && !tab.on && !(cardsMode === "end-turn" && endTurnIds(tab.side).length > 0);
     button.setAttribute("aria-pressed", String(tab.on));
     button.innerHTML = `<span></span><span class="cards-switch__count">${tab.count}</span>`;
     button.querySelector("span")!.textContent = tab.label;
@@ -2468,7 +3705,7 @@ function renderCards(dealIds: string[] = []): void {
   const closeLabel: StringKey = waitsForP1
     ? "vsWaitP1"
     : cardsMode === "primary"
-      ? "startGame"
+      ? "tossOpen"
       : cardsMode !== "end-turn"
         ? "continue"
         : endTurnKind === "finish-game"
@@ -2477,6 +3714,7 @@ function renderCards(dealIds: string[] = []): void {
   btnCardsClose.querySelector("span")!.textContent = t(closeLabel);
   btnCardsClose.disabled = waitsForP1;
   renderCardsSwitch();
+  renderCapMeters(player);
   if (cardsMode === "primary") {
     cardsTitle.textContent = t("primaryTitle");
     cardsSub.textContent = "";
@@ -2487,8 +3725,8 @@ function renderCards(dealIds: string[] = []): void {
     versus.innerHTML = "<span class=\"versus__line\"></span><span class=\"versus__text\">VS</span>";
     // On a phone the cards stack around the VS: online, the opponent's on top and short, this
     // phone's player's in full below; on one phone for both players, both short
-    const stacked = !!online || window.matchMedia("(max-width: 640px)").matches;
-    const owners: Player[] = online ? [other(online.seat), online.seat] : [1, 2];
+    const stacked = narrowCards();
+    const owners: Player[] = online?.phone ? [other(online.seat), online.seat] : [1, 2];
     const [first, second] = owners.map((owner, index) => {
       const card = primaryCardEl(owner, index, dealIds.includes(primaryCardId(owner)), false);
       card.classList.toggle("is-compact", stacked && owner !== online?.seat);
@@ -2496,6 +3734,8 @@ function renderCards(dealIds: string[] = []): void {
     });
     cardsRow.classList.toggle("is-stacked", stacked);
     cardsRow.classList.toggle("is-clashing", dealIds.length > 0);
+    keepFlips([first, second]);
+    floatOnClock([first, second]);
     cardsRow.replaceChildren(first, versus, second);
     layoutCardsRow();
     return;
@@ -2509,7 +3749,7 @@ function renderCards(dealIds: string[] = []): void {
         : cardsMode === "scored"
           ? pile.scored.map(({ id }) => id)
           : cardsMode === "end-turn"
-          ? turnEndSecondaries(player)
+          ? endTurnIds(player)
           : [];
   if (cardsMode === "end-turn") {
     cardsTitle.textContent = t("endTurnScoringTitle", { n: game.turnPlayer });
@@ -2531,8 +3771,8 @@ function renderCards(dealIds: string[] = []): void {
   // The primary card stays apart from the hand: on its own, or at a turn end when it scores
   const withPrimary =
     cardsMode === "mission" || cardsMode === "command" || (cardsMode === "end-turn" && primaryScoresAtTurnEnd(player));
-  // Online, the opponent's primary can be read here, not scored
-  const ownCard = !online || player === online.seat;
+  // Before the battle (deployment) the primary is read only; online, the opponent's one too
+  const ownCard = inGame(game) && (!online || player === online.seat);
   const primary = withPrimary && primaryCard(player) ? [primaryCardEl(player, 0, dealIds.includes(primaryCardId(player)), ownCard)] : [];
   const cards = [
     ...primary,
@@ -2545,8 +3785,104 @@ function renderCards(dealIds: string[] = []): void {
     cardsRow.replaceChildren(empty);
     return;
   }
-  cardsRow.replaceChildren(...cards);
+  keepFlips(cards);
+  placeCards(cards, dealIds.length === 0);
   layoutCardsRow();
+  groupEndTurnPile(false);
+}
+
+/**
+ * At a turn end, what the turn already holds out of the 15 points it allows, primary and
+ * secondary apart: the player picks what to score to make the most of it. The meters stay in
+ * place and fill as points come in
+ */
+function renderCapMeters(player: Player): void {
+  // On a phone, right above the button that ends the turn: what the turn still allows sits next
+  // to the decision. Moved only when its place changes, so the bars keep filling smoothly
+  const home = narrowCards() ? cardsActions : cardsStage;
+  if (cardsCap.parentElement !== home) {
+    if (home === cardsActions) cardsActions.prepend(cardsCap);
+    else cardsRow.before(cardsCap);
+  }
+  const shown: ScoreKind[] =
+    cardsMode !== "end-turn"
+      ? []
+      : [
+          ...(primaryScoresAtTurnEnd(player) ? (["primary"] as const) : []),
+          ...(endTurnIds(player).length > 0 ? (["secondary"] as const) : []),
+        ];
+  cardsCap.hidden = shown.length === 0;
+  const turn = scoringTurnIdx(player) + 1;
+  for (const kind of SCORE_KINDS.map(({ kind }) => kind)) {
+    let meter = cardsCap.querySelector<HTMLElement>(`.cap-meter[data-kind="${kind}"]`);
+    if (!meter) {
+      meter = document.createElement("div");
+      meter.className = "cap-meter";
+      meter.dataset.kind = kind;
+      meter.innerHTML = `
+        <span class="cap-meter__label"></span>
+        <span class="cap-meter__bar" aria-hidden="true"><span class="cap-meter__fill"></span></span>
+        <span class="cap-meter__value"><b></b><small>/${MAX_POINTS_PER_TURN}</small></span>`;
+      cardsCap.appendChild(meter);
+    }
+    meter.hidden = !shown.includes(kind);
+    const points = game.scoreByTurn[player][kind][turn - 1];
+    meter.querySelector(".cap-meter__label")!.textContent = t(kind === "primary" ? "capPrimary" : "capSecondary");
+    meter.querySelector(".cap-meter__value b")!.textContent = String(points);
+    meter.style.setProperty("--fill", String(Math.min(1, points / MAX_POINTS_PER_TURN)));
+    meter.classList.toggle("is-full", points >= MAX_POINTS_PER_TURN);
+  }
+}
+
+/**
+ * The cards go on the table. The same cards as already there, none dealt: each keeps its element
+ * and only its content is redone, so it floats and turns on undisturbed. Otherwise new cards, on
+ * the float's clock
+ */
+function placeCards(cards: HTMLElement[], keep: boolean): void {
+  const current = [...cardsRow.children] as HTMLElement[];
+  const same =
+    keep &&
+    current.length === cards.length &&
+    current.every((card, i) => card.classList.contains("sec-card") && cardKey(card) === cardKey(cards[i]));
+  if (same) {
+    current.forEach((card, i) => patchCard(card, cards[i]));
+    return;
+  }
+  floatOnClock(cards);
+  cardsRow.replaceChildren(...cards);
+}
+
+/** A card's text and state redone inside the same elements; an open or fold under way goes on */
+function patchCard(card: HTMLElement, fresh: HTMLElement): void {
+  // An open or fold under way, and its place in a turn end's receipt (groupEndTurnPile), go on
+  const moving = ["is-morphing", "is-folding", "is-opening", "is-turning", "is-receipt", "is-receipt-first", "is-receipt-last"].filter((name) =>
+    card.classList.contains(name),
+  );
+  card.className = fresh.className;
+  card.classList.add(...moving);
+  card.style.setProperty("--i", fresh.style.getPropertyValue("--i"));
+  const face = (el: HTMLElement): HTMLElement => el.querySelector<HTMLElement>(".sec-card__inner")!;
+  face(card).replaceChildren(...face(fresh).childNodes);
+  card.querySelector(".sec-card__back")?.remove();
+  const back = fresh.querySelector(".sec-card__back");
+  if (back) card.querySelector(".sec-card__faces")!.appendChild(back);
+}
+
+/** One idle float of a card, as in the CSS (cardFloat), and how far apart two cards float */
+const CARD_FLOAT_MS = 5000;
+const CARD_FLOAT_STEP_MS = 1700;
+
+/**
+ * New card elements float on the page's clock: they pick it up where the old ones were instead of
+ * starting over. A plain delay in ms, set on each card: no calc() for a browser to read differently
+ */
+function floatOnClock(cards: HTMLElement[]): void {
+  const phase = performance.now() % CARD_FLOAT_MS;
+  for (const card of cards) {
+    const i = Number(card.style.getPropertyValue("--i")) || 0;
+    card.querySelector<HTMLElement>(".sec-card__inner")!.style.animationDelay = `${-Math.round(phase + i * CARD_FLOAT_STEP_MS)}ms`;
+  }
 }
 
 /** Card widths and gap in rem, as in the CSS: the primary, kept all game, is the wider card */
@@ -2554,13 +3890,20 @@ const CARD_REM = 16;
 const PRIMARY_CARD_REM = 20;
 const CARD_GAP_REM = 1.5;
 
+/** A phone, or a window as narrow: no room for the cards side by side */
+const narrowCards = (): boolean => phoneView() || SHEET.matches;
+
 /**
  * Like a hand in a card game: one row, the cards overlapping as much as needed to fit
- * the screen width. The hovered card comes to the front.
+ * the screen width. The hovered card comes to the front, or on a touch screen the tapped one.
+ * Too narrow for a row, they pile up instead, each showing its name, the front one open
  */
 function layoutCardsRow(): void {
+  const piled = cardsMode !== "primary" && narrowCards();
+  cardsRow.classList.toggle("is-piled", piled);
   if (cardsMode === "primary") {
     cardsRow.classList.remove("is-fanned");
+    placeFrontCard();
     return;
   }
   cardsRow.classList.remove("is-clashing");
@@ -2572,11 +3915,70 @@ function layoutCardsRow(): void {
   // Room for the row, in rem of the zoomed stage (its padding taken out)
   const available = ((cardsOverlay.clientWidth - 2 * rootPx) / scale - 2 * rootPx) / rootPx;
   const natural = width + (count - 1) * CARD_GAP_REM;
-  const fanned = count > 1 && natural > available;
+  const fanned = !piled && count > 1 && natural > available;
   cardsRow.classList.toggle("is-fanned", fanned);
   // At least 3rem of each card stays visible, enough to read its name
   const overlap = fanned ? Math.min((width - available) / (count - 1), CARD_REM - 3) : 0;
   cardsRow.style.setProperty("--overlap", `${overlap}rem`);
+  placeFrontCard();
+}
+
+/** The fanned card a tap brought to the front, kept while the cards are re-dealt; the last one until then */
+let frontCardKey: string | null = null;
+/** A card turning over; its sound lands with it (audio.ts) */
+const CARD_TURN_MS = 440;
+/** The cards turned over to their action, kept while the cards are re-dealt */
+const flippedCards = new Set<string>();
+
+/**
+ * A card turned over by hand: it tilts back a little as the fingers take it, then lifts and spins
+ * in one movement that slows down into place, no going past and back. One easing over the whole
+ * turn, and the spin even across the keyframes, so it comes to rest once, smoothly
+ */
+function turnCard(faces: HTMLElement, toBack: boolean): void {
+  const angle = (deg: number): number => (toBack ? deg : 180 - deg);
+  const pose = (deg: number, tilt: number, lift: number): string =>
+    `rotateY(${angle(deg)}deg) rotateX(${tilt}deg) translateZ(${lift}px)`;
+  for (const animation of faces.getAnimations()) animation.cancel();
+  // In 3D for the turn only (style.css): flat again once it lies face up
+  const card = faces.closest<HTMLElement>(".sec-card");
+  card?.classList.add("is-turning");
+  faces
+    .animate(
+      [
+        { offset: 0, transform: pose(0, 0, 0) },
+        { offset: 0.14, transform: pose(-10, 2, 12) },
+        // On the line from −10° to 180°: the spin keeps one speed through it, only the lift peaks
+        { offset: 0.55, transform: pose(81, -3, 40) },
+        { offset: 1, transform: pose(180, 0, 0) },
+      ],
+      { duration: CARD_TURN_MS, easing: "cubic-bezier(0.3, 0, 0.2, 1)" },
+    )
+    .finished.then(
+      () => card?.classList.remove("is-turning"),
+      () => {},
+    );
+}
+
+function keepFlips(cards: HTMLElement[]): void {
+  for (const card of cards) card.classList.toggle("is-flipped", flippedCards.has(cardKey(card)));
+}
+
+function placeFrontCard(): void {
+  const cards = [...cardsRow.querySelectorAll<HTMLElement>(".sec-card")];
+  // Until a tap picks one: the last card still to score, a card already scored has nothing to do
+  const fallback = cards.filter((card) => !card.classList.contains("is-banked")).at(-1) ?? cards.at(-1);
+  const front = cardsRow.matches(".is-fanned, .is-piled")
+    ? (cards.find((card) => cardKey(card) === frontCardKey) ?? fallback)
+    : undefined;
+  for (const card of cards) {
+    card.classList.toggle("is-front", card === front);
+    // Folded into the pile, a card shows its name: it lies face up again
+    if (cardsRow.classList.contains("is-piled") && card !== front && card.classList.contains("is-flipped")) {
+      card.classList.remove("is-flipped");
+      flippedCards.delete(cardKey(card));
+    }
+  }
 }
 
 function repeatTotal(option: HTMLElement): number {
@@ -2594,25 +3996,31 @@ function secondaryCardEl(player: Player, id: string, index: number, deal: boolea
   el.style.setProperty("--i", String(index));
   el.dataset.cardId = id;
   el.innerHTML = `
-    <div class="sec-card__inner">
-      <header class="sec-card__head">
-        <span class="sec-card__kicker"></span>
-        <h3 class="sec-card__name"></h3>
-        <span class="sec-card__when"></span>
-      </header>
-      <p class="sec-card__note"></p>
-      <div class="sec-card__options"></div>
-      <footer class="sec-card__actions"></footer>
+    <div class="sec-card__faces">
+      <div class="sec-card__inner">
+        <header class="sec-card__head">
+          <span class="sec-card__kicker"></span>
+          <h3 class="sec-card__name"></h3>
+          <span class="sec-card__when"></span>
+        </header>
+        <p class="sec-card__note"></p>
+        <div class="sec-card__options"></div>
+        <footer class="sec-card__actions"></footer>
+      </div>
     </div>`;
   el.querySelector(".sec-card__kicker")!.textContent = t("secondaryKicker");
   el.querySelector(".sec-card__name")!.textContent = data.name;
   el.querySelector(".sec-card__when")!.textContent = data.when ? t(WHEN_KEYS[data.when]) : "";
   const note = el.querySelector<HTMLElement>(".sec-card__note")!;
-  note.textContent = data.note ? data.note[lang] : "";
+  setCardText(note, data.note ? data.note[lang] : "");
   note.hidden = !data.note;
 
   const unit = t("vpUnit");
-  const scorable = cardsMode === "hand" || cardsMode === "end-turn";
+  // Scored at this turn end, it stays in view with what it gave
+  const banked = cardsMode === "end-turn" ? game.secondaries[player].scored.find((entry) => entry.id === id) : undefined;
+  el.classList.toggle("is-banked", !!banked);
+  const scorable = (cardsMode === "hand" || cardsMode === "end-turn") && !banked;
+  const room = roomLeft(player, "secondary");
   const options = data.options.map((option) => {
     if ("vp" in option) {
       const button = document.createElement("button");
@@ -2622,7 +4030,8 @@ function secondaryCardEl(player: Player, id: string, index: number, deal: boolea
       button.dataset.action = "score";
       button.dataset.vp = String(option.vp);
       button.innerHTML = `<span class="sec-option__vp">${option.vp}<small>${unit}</small></span><span class="sec-option__label"></span>`;
-      button.querySelector(".sec-option__label")!.textContent = option.label[lang];
+      setCardText(button.querySelector(".sec-option__label")!, option.label[lang]);
+      if (scorable) markOverCap(button, room, option.vp);
       return button;
     }
     // "For each …, up to max": count the things, then score the capped total
@@ -2642,12 +4051,13 @@ function secondaryCardEl(player: Player, id: string, index: number, deal: boolea
         </span>
         <button type="button" class="sec-option__go" data-action="score-repeat"></button>
       </span>`;
-    block.querySelector(".sec-option__label")!.textContent = `${option.label[lang]} · ${t("maxVp", { n: option.max })}`;
+    setCardText(block.querySelector(".sec-option__label")!, `${option.label[lang]} · ${t("maxVp", { n: option.max })}`);
     block.querySelector(".sec-option__go")!.textContent = `${t("scoreIt")} ${repeatTotal(block)} ${unit}`;
     block.querySelector<HTMLElement>(".sec-option__repeat")!.hidden = !scorable;
+    if (scorable) markOverCap(block, room, repeatTotal(block));
     return block;
   });
-  el.querySelector(".sec-card__options")!.replaceChildren(...options);
+  el.querySelector(".sec-card__options")!.replaceChildren(...options.map((line, i) => (data.options[i].action ? withActionTag(line) : line)));
 
   const actions: HTMLElement[] = [];
   if (cardsMode === "draw" && data.redraw && drawnIds.includes(id) && game.secondaries[player].deck.length > 0) {
@@ -2659,6 +4069,21 @@ function secondaryCardEl(player: Player, id: string, index: number, deal: boolea
     redraw.querySelector("span")!.textContent = t("redrawFree");
     redraw.querySelector("small")!.textContent = t("redrawIf", { cond: data.redraw.condition[lang] });
     actions.push(redraw);
+  }
+  if (banked) {
+    // In the head, so it still shows with the card folded in a pile
+    const badge = document.createElement("span");
+    badge.className = "sec-card__banked";
+    badge.classList.toggle("is-cut", !!banked.full);
+    badge.textContent = banked.full ? t("bankedCut", { vp: banked.vp, full: banked.full, unit }) : t("banked", { vp: banked.vp, unit });
+    if (banked.full) badge.title = t("capCut", { vp: banked.vp, full: banked.full, max: MAX_POINTS_PER_TURN });
+    el.querySelector(".sec-card__head")!.appendChild(badge);
+    const undo = document.createElement("button");
+    undo.type = "button";
+    undo.className = "sec-action sec-action--undo";
+    undo.dataset.action = "unscore";
+    undo.textContent = t("unscoreBtn");
+    actions.push(undo);
   }
   const scored = cardsMode === "scored" ? game.secondaries[player].scored.find((entry) => entry.id === id) : undefined;
   if (scored) {
@@ -2681,15 +4106,114 @@ function secondaryCardEl(player: Player, id: string, index: number, deal: boolea
     swapCard.disabled = !canSwapSecondary(player);
     actions.push(swapCard);
   }
+  actions.push(cardFoot(data.url, !!data.action));
+  el.querySelector(".sec-card__actions")!.replaceChildren(...actions);
+  if (data.action) addActionBack(el, data.action, data.name, data.url);
+  return el;
+}
+
+/**
+ * Within, wholly within, not within: the words a mission turns on, set apart wherever they show.
+ * Within range of an objective is a rule of its own, left plain
+ */
+const SPATIAL_WORDS = /(wholly within|not within|within(?! range)|entièrement dans|entièrement hors de|\(même en partie\)|qui touche|à plus de \d+")/;
+
+function setCardText(el: Element, text: string): void {
+  el.replaceChildren(
+    ...text.split(SPATIAL_WORDS).map((part, i) => {
+      if (i % 2 === 0) return document.createTextNode(part);
+      const word = document.createElement("b");
+      word.className = "kw";
+      word.textContent = part;
+      return word;
+    }),
+  );
+}
+
+/** The link to the full card on gdmissions.app, and the way to the card's back when it has one */
+function cardFoot(url: string, back: boolean): HTMLElement {
   const link = document.createElement("a");
   link.className = "sec-action sec-action--link";
-  link.href = data.url;
+  link.href = url;
   link.target = "_blank";
   link.rel = "noopener";
   link.textContent = `${t("fullCard")} ↗`;
-  actions.push(link);
-  el.querySelector(".sec-card__actions")!.replaceChildren(...actions);
-  return el;
+  if (!back) return link;
+  const foot = document.createElement("div");
+  foot.className = "sec-card__foot";
+  foot.append(link, flipButton("sec-flip", `${t("actionTag")} ↻`, t("actionShow")));
+  return foot;
+}
+
+function flipButton(className: string, text: string, label?: string): HTMLButtonElement {
+  const button = document.createElement("button");
+  button.type = "button";
+  button.className = className;
+  button.dataset.flip = "";
+  button.textContent = text;
+  if (label) button.setAttribute("aria-label", label);
+  return button;
+}
+
+/** A line scored through the card's action: its tag turns the card over, to how the action works */
+function withActionTag(line: HTMLElement): HTMLElement {
+  const wrap = document.createElement("div");
+  wrap.className = "sec-option-wrap";
+  wrap.append(line, flipButton("sec-action-tag", t("actionTag"), t("actionShow")));
+  return wrap;
+}
+
+/**
+ * The back of a card with an action, as on the printed card: when a unit starts it, which one,
+ * how often, when it completes and what it does
+ */
+function addActionBack(el: HTMLElement, action: MissionAction, cardName: string, url: string): void {
+  const lang = getLang();
+  const back = document.createElement("div");
+  back.className = "sec-card__back";
+  back.innerHTML = `
+    <header class="sec-card__head">
+      <span class="sec-card__kicker"></span>
+      <h3 class="sec-card__name"></h3>
+      <span class="sec-card__when"></span>
+    </header>
+    <dl class="action-rows"></dl>
+    <footer class="sec-card__actions"></footer>`;
+  back.querySelector(".sec-card__kicker")!.textContent = t("actionTag");
+  back.querySelector(".sec-card__name")!.textContent = action.name;
+  // The card's own name, when the action has another one
+  back.querySelector(".sec-card__when")!.textContent = cardName === action.name ? "" : cardName;
+  const rows: [StringKey, Text | undefined][] = [
+    ["actionStarts", action.starts],
+    ["actionUnits", action.units],
+    ["actionLimit", action.limit],
+    ["actionCompletes", action.completes],
+    ["actionEffect", action.effect],
+    ["actionRestriction", action.restriction],
+  ];
+  back.querySelector(".action-rows")!.replaceChildren(
+    ...rows.flatMap(([key, text]) => {
+      if (!text) return [];
+      const row = document.createElement("div");
+      row.className = "action-row";
+      row.classList.toggle("action-row--effect", key === "actionEffect");
+      row.innerHTML = "<dt></dt><dd></dd>";
+      row.querySelector("dt")!.textContent = t(key);
+      setCardText(row.querySelector("dd")!, text[lang]);
+      return [row];
+    }),
+  );
+  const foot = document.createElement("div");
+  foot.className = "sec-card__foot";
+  const link = document.createElement("a");
+  link.className = "sec-action sec-action--link";
+  link.href = url;
+  link.target = "_blank";
+  link.rel = "noopener";
+  link.textContent = `${t("fullCard")} ↗`;
+  foot.append(link, flipButton("sec-flip", `↺ ${t("actionFront")}`));
+  back.querySelector(".sec-card__actions")!.replaceChildren(foot);
+  el.querySelector(".sec-card__faces")!.appendChild(back);
 }
 
 /** The card leaves with an animation, then the cards are redrawn (`dealIds` flying in) */
@@ -2709,10 +4233,15 @@ function playCardExit(
   // A scored card has its own sound; a discarded or returned one swishes away
   if (exit !== "is-scored") playSound("putAway", 1);
   const done = () => {
-    const before = cardPositions();
     if (dealIds.length > 0) playSound("draw", dealIds.length);
-    renderCards(dealIds);
-    slideCardsFrom(before);
+    // Piled, the gap closes up and the card that comes to the front opens; in a row, they slide over
+    if (cardsRow.classList.contains("is-piled")) {
+      morphCards(() => renderCards(dealIds), cardShowsInFull);
+    } else {
+      const before = cardPositions();
+      renderCards(dealIds);
+      slideCardsFrom(before);
+    }
     renderHandButtons();
   };
   if (prefersReducedMotion()) done();
@@ -2749,13 +4278,218 @@ function slideCardsFrom(before: Map<string, DOMRect>): void {
   });
 }
 
+const MORPH = "morph";
+
+/** Piled, only the front card shows in full; in a row, all do */
+const cardShowsInFull = (card: HTMLElement): boolean =>
+  !cardsRow.classList.contains("is-piled") || card.classList.contains("is-front");
+
+/**
+ * A card opens while another folds, or leaves the pile: each grows or shrinks from the height it
+ * had, a card gone leaves a gap that closes up, and the cards around follow instead of jumping.
+ * `isOpen` tells an open card from a folded one; `change` opens and folds them, or deals them
+ * again (cards are matched by key)
+ */
+function morphCards(change: () => void, isOpen: (card: HTMLElement) => boolean): void {
+  if (prefersReducedMotion()) {
+    change();
+    return;
+  }
+  const rowCards = (): HTMLElement[] => [...cardsRow.querySelectorAll<HTMLElement>(".sec-card")];
+  const face = (card: HTMLElement): HTMLElement => card.querySelector<HTMLElement>(".sec-card__inner")!;
+  const px = (value: string): number => parseFloat(value) || 0;
+  // Computed sizes: in the stage's own pixels, before its zoom; mid-way, where the card is now
+  const size = (card: HTMLElement) => {
+    const style = getComputedStyle(face(card));
+    return {
+      face: { height: style.height, paddingTop: style.paddingTop, paddingBottom: style.paddingBottom },
+      margin: getComputedStyle(card).marginTop,
+      outer: getComputedStyle(card).height,
+    };
+  };
+  const old = rowCards();
+  const before = new Map(
+    old.map((card) => [cardKey(card), { open: isOpen(card) || card.classList.contains("is-folding"), ...size(card) }]),
+  );
+  // A card still on its way starts again from where it is
+  for (const card of old) {
+    for (const anim of [...card.getAnimations(), ...face(card).getAnimations()]) if (anim.id === MORPH) anim.cancel();
+    card.classList.remove("is-morphing", "is-folding", "is-opening");
+  }
+  change();
+  const cards = rowCards();
+  const kept = new Map(cards.map((card) => [cardKey(card), card]));
+  // Piled, the room a card gone took: the next card starts that much lower and rises (a row slides, elsewhere)
+  const gapAbove = new Map<HTMLElement, number>();
+  let gap = 0;
+  let lastKept: HTMLElement | null = null;
+  const piled = cardsRow.classList.contains("is-piled");
+  for (const [key, from] of piled ? before : []) {
+    const card = kept.get(key);
+    if (!card) {
+      gap += px(from.outer) + px(from.margin);
+      continue;
+    }
+    if (gap) gapAbove.set(card, gap);
+    gap = 0;
+    lastKept = card;
+  }
+  // A card dealt in its place takes some of that room back
+  let dealt = 0;
+  for (const card of piled ? cards : []) {
+    if (!before.has(cardKey(card))) {
+      dealt += px(getComputedStyle(card).height) + px(getComputedStyle(card).marginTop);
+      continue;
+    }
+    if (dealt) gapAbove.set(card, (gapAbove.get(card) ?? 0) - dealt);
+    dealt = 0;
+  }
+  gap -= dealt;
+  const timing: KeyframeAnimationOptions = { duration: CARD_SLIDE_MS, easing: "cubic-bezier(0.2, 0.8, 0.2, 1)", id: MORPH };
+  if (gap > 0 && lastKept) {
+    lastKept.animate([{ marginBottom: `${gap}px` }, { marginBottom: getComputedStyle(lastKept).marginBottom }], timing);
+  }
+  for (const card of cards) {
+    const from = before.get(cardKey(card));
+    // A card just dealt flies in on its own
+    if (!from) continue;
+    const to = size(card);
+    const opens = !from.open && isOpen(card);
+    const folds = from.open && !isOpen(card);
+    const margin = `${px(from.margin) + (gapAbove.get(card) ?? 0)}px`;
+    if (!opens && !folds && from.face.height === to.face.height && px(margin) === px(to.margin)) continue;
+    card.classList.add("is-morphing");
+    card.classList.toggle("is-opening", opens);
+    card.classList.toggle("is-folding", folds);
+    card.animate([{ marginTop: margin }, { marginTop: to.margin }], timing);
+    face(card)
+      .animate([from.face, to.face], timing)
+      .finished.then(
+        () => card.classList.remove("is-morphing", "is-folding", "is-opening"),
+        () => {},
+      );
+  }
+}
+
 function scoreSecondary(player: Player, id: string, vp: number, cardEl: HTMLElement): void {
   const turn = scoringTurnIdx(player);
   const added = addSecondaryPoints(player, vp);
   moveSecondary(player, id, "discard");
-  game.secondaries[player].scored.push({ id, vp: added, turn });
+  // Cut short by the 15 a turn allows: the report says so
+  game.secondaries[player].scored.push({ id, vp: added, turn, ...(added < vp ? { full: vp } : {}) });
   playSound("score");
-  playCardExit(cardEl, "is-scored", `+${added}`);
+  if (cardsMode === "end-turn") bankSecondary(player, id, added);
+  else playCardExit(cardEl, "is-scored", `+${added}`);
+}
+
+/**
+ * At a turn end a scored card stays on the table, stamped with what it gave, so the turn's tally
+ * can be read card by card; the next card to score comes forward
+ */
+function bankSecondary(player: Player, id: string, added: number): void {
+  // No secondary left to score: the last card still holding something comes forward (the primary)
+  frontCardKey = endTurnIds(player).find((cardId) => game.secondaries[player].hand.includes(cardId)) ?? null;
+  settleEndTurn();
+  const card = cardsRow.querySelector<HTMLElement>(`.sec-card[data-card-id="${CSS.escape(id)}"]`);
+  if (!card || prefersReducedMotion()) return;
+  const burst = document.createElement("span");
+  burst.className = "sec-card__burst is-banked";
+  burst.textContent = `+${added}`;
+  burst.addEventListener("animationend", () => burst.remove());
+  card.appendChild(burst);
+}
+
+/**
+ * At a turn end on a phone, the cards scored gather at the foot of the pile in one receipt, in
+ * the order they were scored; the cards still to score keep the room above. Only the visual order
+ * changes (flex `order`): the elements stay, so nothing restarts. While a card opens or folds the
+ * receipt holds still, then it gathers, each card gliding to its place
+ */
+let receiptHold = false;
+let regroupTimer: number | null = null;
+
+function groupEndTurnPile(animate: boolean): void {
+  if (receiptHold || cardsPlayer === null) return;
+  const gathered = cardsMode === "end-turn" && cardsRow.classList.contains("is-piled");
+  const cards = [...cardsRow.children].filter((el): el is HTMLElement => el.classList.contains("sec-card"));
+  const scoredOrder = game.secondaries[cardsPlayer].scored.map(({ id }) => id);
+  const receipt = gathered
+    ? cards
+        .filter((card) => card.classList.contains("is-banked"))
+        .sort((a, b) => scoredOrder.indexOf(a.dataset.cardId!) - scoredOrder.indexOf(b.dataset.cardId!))
+    : [];
+  const before = animate ? cardPositions() : null;
+  for (const card of cards) {
+    const at = receipt.indexOf(card);
+    card.style.order = at >= 0 ? String(100 + at) : "";
+    card.classList.toggle("is-receipt", at >= 0);
+    card.classList.toggle("is-receipt-first", at === 0);
+    card.classList.toggle("is-receipt-last", at >= 0 && at === receipt.length - 1);
+    if (at === 0) card.dataset.receiptLabel = t("receiptLabel");
+    else delete card.dataset.receiptLabel;
+  }
+  if (before) slideCardsFrom(before);
+}
+
+/** A card scored or taken back at a turn end: it folds or opens in place, then the receipt gathers */
+function settleEndTurn(): void {
+  receiptHold = true;
+  morphCards(() => renderCards(), cardShowsInFull);
+  if (regroupTimer !== null) window.clearTimeout(regroupTimer);
+  regroupTimer = window.setTimeout(
+    () => {
+      regroupTimer = null;
+      receiptHold = false;
+      groupEndTurnPile(!prefersReducedMotion());
+    },
+    prefersReducedMotion() ? 0 : CARD_SLIDE_MS + 40,
+  );
+}
+
+/**
+ * The cards of this turn end, in the order they came up: first those already scored in the turn
+ * the points go to (from the hand, mid-turn), then those still to score. A card scored here stays
+ * in its place
+ */
+let endTurnOrder: Partial<Record<Player, string[]>> = {};
+
+function endTurnIds(owner: Player): string[] {
+  const pile = game.secondaries[owner];
+  const turn = scoringTurnIdx(owner);
+  const scoredNow = pile.scored.filter((entry) => entry.turn === turn).map(({ id }) => id);
+  const order = (endTurnOrder[owner] ?? []).filter((id) =>
+    pile.hand.includes(id) ? scoresAtTurnEnd(owner, SECONDARY_BY_ID.get(id)!.when) : scoredNow.includes(id),
+  );
+  for (const id of [...scoredNow, ...turnEndSecondaries(owner)]) if (!order.includes(id)) order.push(id);
+  endTurnOrder[owner] = order;
+  return order;
+}
+
+/** Points a turn still allows, for the player's scoring turn */
+const roomLeft = (player: Player, kind: ScoreKind): number =>
+  Math.max(0, MAX_POINTS_PER_TURN - game.scoreByTurn[player][kind][scoringTurnIdx(player)]);
+
+/** Said under a score worth more than the turn still allows: what will count of it */
+function capNote(room: number, vp: number): string {
+  if (vp <= room) return "";
+  return room === 0 ? t("capReached") : t("capCounts", { n: room, unit: t("vpUnit") });
+}
+
+/** A score line, marked when the 15-point cap would cut it */
+function markOverCap(line: HTMLElement, room: number, vp: number): void {
+  const note = capNote(room, vp);
+  line.classList.toggle("is-over-cap", note !== "");
+  let small = line.querySelector<HTMLElement>(":scope > .sec-option__cap");
+  if (!note) {
+    small?.remove();
+    return;
+  }
+  if (!small) {
+    small = document.createElement("small");
+    small.className = "sec-option__cap";
+    line.appendChild(small);
+  }
+  small.textContent = note;
 }
 
 /** Pending undo, until the player confirms it */
@@ -2775,11 +4509,18 @@ function restoreSecondary(player: Player, id: string): void {
   pile.scored = pile.scored.filter((entry) => entry !== scored);
   pile.discard = pile.discard.filter((cardId) => cardId !== id);
   pile.hand.push(id);
+  delete game.cardRounds[player][id]?.discarded;
   const turns = game.scoreByTurn[player].secondary;
   turns[scored.turn] = Math.max(0, turns[scored.turn] - scored.vp);
   playSound("undo");
   renderMiniCounters();
   if (cardsPlayer !== player) return;
+  // At a turn end the card opens where it was, then leaves the receipt for the cards to score
+  if (cardsMode === "end-turn") {
+    frontCardKey = id;
+    settleEndTurn();
+    return;
+  }
   // Back to the hand, where the card is dealt in again
   cardsMode = "hand";
   cardsOverlay.dataset.mode = "hand";
@@ -2824,22 +4565,18 @@ function redrawSecondary(player: Player, id: string, cardEl: HTMLElement): void 
 /** With the cards on, the game starts by choosing force dispositions */
 function requestStart(): void {
   if (secondaryCardsOn()) chooseDispositions();
-  else openTurnConfirmModal("start-game");
+  else openChooserToss();
 }
 
-/** Online, the choice opens on both phones, empty: each player picks theirs, in secret */
+/** In a room, the choice opens on every screen: whoever picks, everyone sees it as it is made */
 function chooseDispositions(): void {
-  if (online) {
+  if (roomSession()) {
     game.choosing = true;
     game.dispositions = { 1: null, 2: null };
     game.primaries = { 1: null, 2: null };
-    dispoPick = null;
   }
   openDispositions();
 }
-
-/** Online, the disposition this phone's player is about to lock in */
-let dispoPick: Disposition | null = null;
 
 function openDispositions(): void {
   renderDispositions();
@@ -2856,76 +4593,51 @@ function closeDispositions(): void {
 function renderDispositions(): void {
   const lang = getLang();
   const seat = online?.seat;
-  const locked = !!seat && !!game.dispositions[seat];
-  // Online, only this phone's column shows: the opponent's choice stays hidden until the reveal
-  const shown = (player: Player): Disposition | null =>
-    !seat ? game.dispositions[player] : player !== seat ? null : locked ? game.dispositions[seat] : dispoPick;
+  // Nothing is hidden in this game: both choices show on every screen. A phone picks for its own player
   dispoOverlay.querySelectorAll<HTMLElement>(".dispo-options").forEach((group) => {
     const player = Number(group.dataset.player) as Player;
     group.querySelectorAll<HTMLButtonElement>(".dispo-option").forEach((option) => {
       const data = DISPOSITIONS.find(({ id }) => id === option.dataset.value)!;
-      option.setAttribute("aria-pressed", String(shown(player) === data.id));
-      option.disabled = locked;
+      option.setAttribute("aria-pressed", String(game.dispositions[player] === data.id));
+      option.disabled = !!seat && player !== seat;
       option.querySelector(".dispo-option__hint")!.textContent = data.hint[lang];
     });
   });
   dispoIntro.textContent = t(seat ? "dispoYourIntro" : "dispoIntro");
-  btnDispoOk.querySelector("span")!.textContent = t(seat ? "dispoLock" : "revealPrimaries");
-  btnDispoOk.disabled = seat ? locked || !dispoPick : !game.dispositions[1] || !game.dispositions[2];
-  dispoStatus.hidden = !seat;
-  if (seat) {
-    const them = other(seat);
-    dispoStatus.textContent = t(game.dispositions[them] ? "dispoChosen" : "onlineWaiting", { n: them });
-  }
+  btnDispoOk.querySelector("span")!.textContent = t("dispoConfirm");
+  btnDispoOk.disabled = !game.dispositions[1] || !game.dispositions[2];
+  // In a room, the player still to choose, once the other has
+  const waiting = ([1, 2] as const).filter((player) => !game.dispositions[player]);
+  const status = roomSession() && waiting.length === 1 ? t("onlineWaiting", { n: waiting[0] }) : null;
+  dispoStatus.hidden = !status;
+  if (status) dispoStatus.textContent = status;
 }
 
-/** Reveal, or online, lock in this phone's choice: the reveal comes once both are in */
+/** Both dispositions in: each player gets the card of their deck facing the other's, on every screen */
 function confirmDispositions(): void {
-  if (!online) {
-    revealPrimaries();
-    return;
-  }
-  if (!dispoPick || game.dispositions[online.seat]) return;
-  game.dispositions[online.seat] = dispoPick;
-  if (!maybeReveal()) renderDispositions();
-}
-
-function cancelDispositions(): void {
-  if (online) {
-    game.choosing = false;
-    game.dispositions[online.seat] = null;
-  }
-  closeDispositions();
-}
-
-/** Online, both choices in: the phone that sees it first deals the primaries, both show the VS */
-function maybeReveal(): boolean {
   const [first, second] = [game.dispositions[1], game.dispositions[2]];
-  if (!online || !game.choosing || !first || !second) return false;
+  if (!first || !second) return;
   game.choosing = false;
   game.primaries = { 1: primaryFor(first, second).id, 2: primaryFor(second, first).id };
   game.primaryScored = { 1: {}, 2: {} };
-  showReveal();
-  return true;
+  game.primaryFull = { 1: {}, 2: {} };
+  showPrimaries();
 }
 
-function showReveal(): void {
+function cancelDispositions(): void {
+  // In a room, called off on every screen
+  if (roomSession()) game.choosing = false;
   closeDispositions();
-  setBattleMusic(true);
-  openCards(online?.seat ?? 1, "primary");
 }
 
-/** Both dispositions known: each player gets the card of their deck facing the other's */
-function revealPrimaries(): void {
-  const mine = game.dispositions[1];
-  const theirs = game.dispositions[2];
-  if (!mine || !theirs) return;
-  game.primaries = { 1: primaryFor(mine, theirs).id, 2: primaryFor(theirs, mine).id };
-  game.primaryScored = { 1: {}, 2: {} };
+/** The two primary missions face off on the VS */
+function showPrimaries(): void {
   closeDispositions();
+  // From now on each player's mission can be read from the board, through the deployment too
+  renderHandButtons();
   // The battle music rises with the VS
   setBattleMusic(true);
-  openCards(1, "primary");
+  openCards(online?.seat ?? 1, "primary");
 }
 
 function sectionTurnKey(player: Player, section: PrimarySection): string {
@@ -2978,25 +4690,29 @@ function primaryCardEl(player: Player, index: number, deal: boolean, scorable: b
   el.style.setProperty("--i", String(index));
   el.dataset.primaryPlayer = String(player);
   el.innerHTML = `
-    <div class="sec-card__inner">
-      <header class="sec-card__head">
-        <span class="sec-card__kicker"></span>
-        <h3 class="sec-card__name"></h3>
-        <span class="sec-card__when"></span>
-      </header>
-      <p class="sec-card__note"></p>
-      <div class="pri-sections"></div>
-      <footer class="sec-card__actions"></footer>
+    <div class="sec-card__faces">
+      <div class="sec-card__inner">
+        <header class="sec-card__head">
+          <span class="sec-card__kicker"></span>
+          <h3 class="sec-card__name"></h3>
+          <span class="sec-card__when"></span>
+        </header>
+        <p class="sec-card__note"></p>
+        <div class="pri-sections"></div>
+        <footer class="sec-card__actions"></footer>
+      </div>
     </div>`;
   el.querySelector(".sec-card__kicker")!.textContent = `${t("primaryKicker")} · ${t("player", { n: player })}`;
   el.querySelector(".sec-card__name")!.textContent = data.name;
   // The force disposition this card belongs to
   el.querySelector(".sec-card__when")!.textContent = DISPOSITIONS.find(({ id }) => id === data.deck)!.name;
   const note = el.querySelector<HTMLElement>(".sec-card__note")!;
-  note.textContent = data.note ? data.note[lang] : "";
+  setCardText(note, data.note ? data.note[lang] : "");
   note.hidden = !data.note;
 
   const scored = game.primaryScored[player];
+  // The end bonus is apart: only the turn's lines count toward its 15
+  const primaryRoom = roomLeft(player, "primary");
   const sections = data.sections.map((section, s) => {
     const turnKey = sectionTurnKey(player, section);
     // At a turn end, only what scores at that moment: a Command phase line waits for the next turn
@@ -3004,7 +4720,7 @@ function primaryCardEl(player: Player, index: number, deal: boolean, scorable: b
     const open = scorable && scoresNow;
     const block = document.createElement("section");
     block.className = "pri-section";
-    // Dimmed out of its rounds while playing; on the reveal the whole card reads at full strength
+    // Dimmed out of its rounds while playing; on the VS the whole card reads at full strength
     block.classList.toggle("is-closed", scorable && !scoresNow);
     const whenKey = PRIMARY_WHEN_KEYS[section.when];
     block.innerHTML = `
@@ -3037,9 +4753,14 @@ function primaryCardEl(player: Player, index: number, deal: boolean, scorable: b
         button.setAttribute("aria-pressed", String(done !== undefined));
         if (done !== undefined) button.title = t("scoredUndo");
         const shown = done ?? ("vp" in item ? item.vp : 0);
-        button.innerHTML = `<span class="sec-option__vp">${done !== undefined ? "✓" : ""}${shown}<small>${unit}</small></span><span class="sec-option__label"></span>`;
-        button.querySelector(".sec-option__label")!.textContent = item.label[lang];
-        block.appendChild(button);
+        // Cut short by the turn's 15: what counted / what the line was worth
+        const cutFrom = done !== undefined ? game.primaryFull?.[player]?.[key] : undefined;
+        button.classList.toggle("is-cut", cutFrom !== undefined);
+        if (cutFrom !== undefined) button.title = `${t("capCut", { vp: shown, full: cutFrom, max: MAX_POINTS_PER_TURN })} · ${t("scoredUndo")}`;
+        button.innerHTML = `<span class="sec-option__vp">${done !== undefined ? "✓" : ""}${shown}${cutFrom !== undefined ? `<span class="sec-option__full">/${cutFrom}</span>` : ""}<small>${unit}</small></span><span class="sec-option__label"></span>`;
+        setCardText(button.querySelector(".sec-option__label")!, item.label[lang]);
+        if (!blocked && done === undefined && turnKey !== "end" && "vp" in item) markOverCap(button, primaryRoom, item.vp);
+        block.appendChild(item.action ? withActionTag(button) : button);
         return;
       }
       // Counted scores: how many things, then score the total
@@ -3058,12 +4779,15 @@ function primaryCardEl(player: Player, index: number, deal: boolean, scorable: b
           ${stepperHtml("count", Number(row.dataset.count))}
           <button type="button" class="sec-option__go" data-action="pri-score"></button>
         </span>`;
-      row.querySelector(".sec-option__label")!.textContent = "per" in item ? item.label[lang] : `${item.label[lang]} · +${item.plus.per} ${item.plus.label[lang]}`;
+      setCardText(
+        row.querySelector(".sec-option__label")!,
+        "per" in item ? item.label[lang] : `${item.label[lang]} · +${item.plus.per} ${item.plus.label[lang]}`,
+      );
       if ("per" in item && extra) {
         const bonus = document.createElement("span");
         bonus.className = "sec-option__bonus";
         bonus.innerHTML = `<span class="sec-option__bonus-label"></span>${stepperHtml("bonus", 0)}`;
-        bonus.querySelector(".sec-option__bonus-label")!.textContent = `+${extra.per} · ${extra.label[lang]}`;
+        setCardText(bonus.querySelector(".sec-option__bonus-label")!, `+${extra.per} · ${extra.label[lang]}`);
         row.insertBefore(bonus, row.querySelector(".sec-option__repeat"));
       }
       const go = row.querySelector<HTMLButtonElement>(".sec-option__go")!;
@@ -3074,19 +4798,15 @@ function primaryCardEl(player: Player, index: number, deal: boolean, scorable: b
         button.disabled = blocked;
       });
       row.querySelector<HTMLElement>(".sec-option__repeat")!.hidden = !scorable;
-      block.appendChild(row);
+      if (!blocked && turnKey !== "end") markOverCap(row, primaryRoom, itemTotal(item, row));
+      block.appendChild(item.action ? withActionTag(row) : row);
     });
     return block;
   });
   el.querySelector(".pri-sections")!.replaceChildren(...sections);
 
-  const link = document.createElement("a");
-  link.className = "sec-action sec-action--link";
-  link.href = data.url;
-  link.target = "_blank";
-  link.rel = "noopener";
-  link.textContent = `${t("fullCard")} ↗`;
-  el.querySelector(".sec-card__actions")!.replaceChildren(link);
+  el.querySelector(".sec-card__actions")!.replaceChildren(cardFoot(data.url, !!data.action));
+  if (data.action) addActionBack(el, data.action, data.name, data.url);
   return el;
 }
 
@@ -3098,10 +4818,14 @@ function togglePrimaryScore(player: Player, s: number, i: number, vp: number): v
   const turnKey = sectionTurnKey(player, section);
   const key = `${turnKey}|${s}|${i}`;
   const scored = game.primaryScored[player];
+  // States from before the cap was recorded have no such field
+  game.primaryFull ??= { 1: {}, 2: {} };
+  const full = game.primaryFull[player];
   const done = scored[key];
   // The points of a line leave the turn, or the end bonus, they went to
   const takeBack = (lineKey: string, points: number): void => {
     delete scored[lineKey];
+    delete full[lineKey];
     if (turnKey === "end") game.endBonus[player] = Math.max(0, game.endBonus[player] - points);
     else {
       const turns = game.scoreByTurn[player].primary;
@@ -3130,20 +4854,24 @@ function togglePrimaryScore(player: Player, s: number, i: number, vp: number): v
       turns[turnIdx] += added;
     }
     scored[key] = added;
+    // Cut short by the 15 a turn allows: the card and the report say so
+    if (added < vp) full[key] = vp;
     playSound("score");
   }
   renderMiniCounters();
-  renderCards();
+  // A counted line becomes a one-line ✓ and back: the card shrinks or grows to it
+  morphCards(() => renderCards(), cardShowsInFull);
 }
 
 function adjustScore(player: Player, kind: ScoreKind, delta: 1 | -1): void {
+  if (!canEdit(player)) return;
   const turns = game.scoreByTurn[player][kind];
   const turnIdx = scoringTurnIdx(player);
   if (delta > 0) {
     if (turns[turnIdx] >= MAX_POINTS_PER_TURN) return;
     turns[turnIdx] += 1;
   } else {
-    // The counter shows this turn only, so a minus can only take back this turn's points
+    // The −/+ work on this turn's points: a minus never takes back an earlier turn's
     if (turns[turnIdx] === 0) return;
     turns[turnIdx] -= 1;
   }
@@ -3162,7 +4890,7 @@ function recordCpManualAdjust(player: Player, slot: number, applied: number): vo
 }
 
 function adjustCp(player: Player, delta: number): void {
-  if (delta === 0) return;
+  if (delta === 0 || !canEdit(player)) return;
   const current = game.cp[player];
   const next = clampCp(current + delta);
   const applied = next - current;
@@ -3170,6 +4898,40 @@ function adjustCp(player: Player, delta: number): void {
   game.cp[player] = next;
   if (inGame(game)) recordCpManualAdjust(player, currentPlayerTurnSlot(), applied);
   renderMiniCounters();
+  if (applied < 0 && inGame(game)) burnCp(player, -applied);
+}
+
+const cpBurnEl = app.querySelector<HTMLElement>("#cp-burn")!;
+const CP_SPARKS = 26;
+/** The longest spark, after the burst */
+const CP_BURN_TAIL_MS = 1100;
+let cpBurnTimer = 0;
+
+/** A command point spent: it catches fire in the player's color and bursts on the sound's impact, over everything, stopping nothing */
+function burnCp(player: Player, spent: number): void {
+  const burstAt = (playSound("cpBurn") ?? 0) + CP_BURST_SEC;
+  buzz([40, 30, 90]);
+  cpBurnEl.style.setProperty("--burn", `var(--p${player})`);
+  cpBurnEl.style.setProperty("--burst-at", `${burstAt}s`);
+  cpBurnEl.querySelector(".cp-burn__n")!.textContent = String(spent);
+  const sparks = Array.from({ length: CP_SPARKS }, (_, i) => {
+    const spark = document.createElement("i");
+    // Thrown all around, and carried up by the heat
+    const angle = (i / CP_SPARKS) * Math.PI * 2 + Math.random() * 0.35;
+    const reach = 14 + Math.random() * 22;
+    spark.style.setProperty("--dx", `${Math.cos(angle) * reach}vmin`);
+    spark.style.setProperty("--dy", `${Math.sin(angle) * reach * 0.6 - 8 - Math.random() * 12}vmin`);
+    spark.style.setProperty("--life", `${0.6 + Math.random() * 0.5}s`);
+    spark.style.setProperty("--size", `${0.35 + Math.random() * 0.4}rem`);
+    return spark;
+  });
+  cpBurnEl.querySelector(".cp-burn__sparks")!.replaceChildren(...sparks);
+  // A second one in a row starts over
+  cpBurnEl.classList.remove("is-burning");
+  void cpBurnEl.offsetWidth;
+  cpBurnEl.classList.add("is-burning");
+  window.clearTimeout(cpBurnTimer);
+  cpBurnTimer = window.setTimeout(() => cpBurnEl.classList.remove("is-burning"), burstAt * 1000 + CP_BURN_TAIL_MS);
 }
 
 /**
@@ -3183,6 +4945,7 @@ function gainCpBothPlayers(): void {
 }
 
 function adjustEndBonus(player: Player, delta: 1 | -1): void {
+  if (!canEdit(player)) return;
   game.endBonus[player] = Math.max(0, game.endBonus[player] + delta);
   renderMiniCounters();
 }
@@ -3241,20 +5004,24 @@ cardsSwitch.addEventListener("click", (e) => {
   const tab = (e.target as HTMLElement).closest<HTMLButtonElement>("[data-tab]");
   if (tab && !tab.disabled) showCardsTab(tab.dataset.tab!);
 });
-/** Continue: after the primaries reveal, the game starts */
+/** Continue: after the primaries' VS, the game starts */
 function continueCards(): void {
   if (cardsPlayer === null || btnCardsClose.disabled) return;
   const startsGame = cardsMode === "primary";
   const turnEnd = cardsMode === "end-turn" ? endTurnKind : null;
+  // The VS stays up behind the coin toss: cancelling it goes back to the missions
+  if (startsGame) {
+    openChooserToss();
+    return;
+  }
   closeCards();
-  if (startsGame) start();
   if (turnEnd) applyConfirmed(turnEnd);
 }
 
 btnCardsClose.addEventListener("click", continueCards);
 // The board behind is out of reach; a click beside the cards goes back to it, as Escape does.
 // Not the second click of a double-click: that one would close what the first click opened.
-// Not on the primaries reveal either: the game starts from there, a stray click must not cancel it
+// Not on the primaries' VS either: the game starts from there, a stray click must not cancel it
 cardsOverlay.addEventListener("click", (e) => {
   if (cardsPlayer === null || cardsMode === "primary" || e.detail > 1) return;
   if ((e.target as HTMLElement).closest(".sec-card, button, a")) return;
@@ -3264,9 +5031,8 @@ dispoOverlay.addEventListener("click", (e) => {
   const option = (e.target as HTMLElement).closest<HTMLButtonElement>(".dispo-option");
   if (!option || option.disabled) return;
   const player = Number(option.closest<HTMLElement>(".dispo-options")!.dataset.player) as Player;
-  if (online) {
-    if (player === online.seat) dispoPick = option.dataset.value as Disposition;
-  } else game.dispositions[player] = option.dataset.value as Disposition;
+  if (online && player !== online.seat) return;
+  game.dispositions[player] = option.dataset.value as Disposition;
   renderDispositions();
 });
 btnDispoOk.addEventListener("click", confirmDispositions);
@@ -3279,7 +5045,71 @@ secondaryCardsToggle.addEventListener("change", () => {
   secondaryCardsToggle.blur();
   renderHandButtons();
 });
+let touchedCards = false;
+cardsRow.addEventListener("pointerdown", (e) => {
+  touchedCards = e.pointerType !== "mouse";
+});
+// A card under others, piled or fanned under a finger that has no hover: the first tap only
+// brings it to the front, never presses the button or the link half hidden where it landed
+cardsRow.addEventListener(
+  "click",
+  (e) => {
+    const touch = touchedCards;
+    touchedCards = false;
+    const card = (e.target as HTMLElement).closest<HTMLElement>(".sec-card");
+    const piled = cardsRow.classList.contains("is-piled");
+    const covered = piled || (touch && cardsRow.classList.contains("is-fanned"));
+    if (!card || !covered || card.classList.contains("is-front")) return;
+    e.preventDefault();
+    e.stopPropagation();
+    frontCardKey = cardKey(card);
+    if (!piled) {
+      placeFrontCard();
+      return;
+    }
+    // Pulled out of the pile: it opens where it was as the open one folds back, then it comes into view
+    morphCards(placeFrontCard, cardShowsInFull);
+    window.setTimeout(() => {
+      card.scrollIntoView({ block: "nearest", behavior: prefersReducedMotion() ? "auto" : "smooth" });
+    }, CARD_SLIDE_MS);
+  },
+  true,
+);
+// The card turns over to its action and back: on every screen, the opponent's cards too
 cardsRow.addEventListener("click", (e) => {
+  const card = (e.target as HTMLElement).closest("[data-flip]")?.closest<HTMLElement>(".sec-card");
+  if (!card) return;
+  e.stopImmediatePropagation();
+  playSound("flip");
+  const flipped = card.classList.toggle("is-flipped");
+  if (!prefersReducedMotion()) turnCard(card.querySelector<HTMLElement>(".sec-card__faces")!, flipped);
+  if (flipped) flippedCards.add(cardKey(card));
+  else flippedCards.delete(cardKey(card));
+});
+// The VS on a phone shows one mission in full: a tap on the short one opens it and folds the other
+cardsRow.addEventListener("click", (e) => {
+  const short = (e.target as HTMLElement).closest<HTMLElement>(".sec-card--primary.is-compact");
+  if (cardsMode !== "primary" || !short) return;
+  e.stopImmediatePropagation();
+  // One grows as the other shrinks, the VS carried between them
+  morphCards(
+    () => {
+      for (const card of cardsRow.querySelectorAll<HTMLElement>(".sec-card--primary")) {
+        const folds = card !== short;
+        card.classList.toggle("is-compact", folds);
+        // Folded, a card shows its name: turned to its action, it would show nothing at all
+        if (folds && card.classList.contains("is-flipped")) {
+          card.classList.remove("is-flipped");
+          flippedCards.delete(cardKey(card));
+        }
+      }
+    },
+    (card) => !card.classList.contains("is-compact"),
+  );
+  playSound("draw");
+});
+cardsRow.addEventListener("click", (e) => {
+  if (cardsPlayer !== null && !canEdit(cardsPlayer)) return;
   const target = e.target as HTMLElement;
   const scoredCard = cardsMode === "scored" && !target.closest("a") ? target.closest<HTMLElement>(".sec-card") : null;
   if (scoredCard && cardsPlayer !== null) {
@@ -3290,7 +5120,7 @@ cardsRow.addEventListener("click", (e) => {
   const cardEl = button?.closest<HTMLElement>(".sec-card");
   if (button && cardEl?.dataset.primaryPlayer && ["mission", "command", "end-turn"].includes(cardsMode)) {
     const owner = Number(cardEl.dataset.primaryPlayer) as Player;
-    if (online && owner !== online.seat) return;
+    if (!inGame(game) || (online && owner !== online.seat)) return;
     const card = primaryCard(owner);
     const s = Number(button.dataset.section ?? button.closest<HTMLElement>(".sec-option--repeat")?.dataset.section);
     const row = button.closest<HTMLElement>(".sec-option--repeat");
@@ -3309,6 +5139,7 @@ cardsRow.addEventListener("click", (e) => {
         span.textContent = row.dataset[span.dataset.value === "bonus" ? "bonus" : "count"] ?? "0";
       });
       row.querySelector(".sec-option__go")!.textContent = `${t("scoreIt")} ${itemTotal(item, row)} ${t("vpUnit")}`;
+      if (card.sections[s].rounds !== "end") markOverCap(row, roomLeft(owner, "primary"), itemTotal(item, row));
       return;
     }
     if (button.dataset.action === "pri-score") togglePrimaryScore(owner, s, i, row ? itemTotal(item, row) : "vp" in item ? item.vp : 0);
@@ -3317,6 +5148,12 @@ cardsRow.addEventListener("click", (e) => {
   if (!button || !cardEl || cardsPlayer === null || cardEl.matches(".is-scored, .is-discarded")) return;
   const player = cardsPlayer;
   const id = cardEl.dataset.cardId!;
+  // A card scored at this turn end, taken back: asked first, as from the scored cards
+  if (button.dataset.action === "unscore") {
+    askUnscore(player, id);
+    return;
+  }
+  if (cardEl.matches(".is-banked")) return;
   const option = button.closest<HTMLElement>(".sec-option--repeat");
   const scoring = ["score", "less", "more", "score-repeat"].includes(button.dataset.action ?? "");
   if (scoring && cardsMode !== "hand" && cardsMode !== "end-turn") return;
@@ -3334,6 +5171,7 @@ cardsRow.addEventListener("click", (e) => {
       option.dataset.count = String(count);
       option.querySelector(".sec-option__count")!.textContent = String(count);
       option.querySelector(".sec-option__go")!.textContent = `${t("scoreIt")} ${repeatTotal(option)} ${t("vpUnit")}`;
+      markOverCap(option, roomLeft(player, "secondary"), repeatTotal(option));
       break;
     }
     case "score-repeat":
@@ -3374,12 +5212,13 @@ function advanceGameTurn(): void {
   if (game.round >= MAX_GAME_TURN) return;
   game.round += 1;
   renderMiniCounters();
-  setActiveClock(game.clock, 1);
-  game.turnPlayer = 1;
+  logClock("turn", { player: game.firstPlayer });
+  handClock(game.firstPlayer);
+  game.turnPlayer = game.firstPlayer;
   gainCpBothPlayers();
   startRoundAbilities();
   lastSpaceTime = 0;
-  activeBeforeSpaceSequence = 1;
+  activeBeforeSpaceSequence = game.firstPlayer;
   setActivePanels();
   renderTurnDots();
 }
@@ -3395,10 +5234,10 @@ function toggleFullscreen(): void {
 function resume(): void {
   if (isRunning()) return;
   hideResultOverlay();
-  if (timeLeft(1) <= 0 || timeLeft(2) <= 0) return;
   lastSpaceTime = 0;
   game.phase = "running";
-  if (!game.photoBreak) runClock(game.clock);
+  logClock("resume");
+  handClock(game.clock.active);
   setInputsEnabled(false);
   setActivePanels();
   applyTimesToDisplay();
@@ -3415,7 +5254,42 @@ btnFullscreen.addEventListener("click", toggleFullscreen);
 btnTurnConfirmOk.addEventListener("click", applyTurnConfirm);
 btnTurnConfirmCancel.addEventListener("click", hideTurnConfirmModal);
 btnResultDismiss.addEventListener("click", hideResultOverlay);
+btnJudge.addEventListener("click", callJudge);
+app.querySelector("#btn-judge-resume")!.addEventListener("click", endJudgeCall);
+for (const id of ["#btn-judge-log", "#btn-result-log"]) app.querySelector(id)!.addEventListener("click", openClockLog);
+app.querySelector("#btn-log-close")!.addEventListener("click", closeClockLog);
+app.querySelector("#btn-log-copy")!.addEventListener("click", copyClockLog);
+app.querySelector("#btn-result-export")!.addEventListener("click", () => void exportBattleReport());
+app.querySelector("#btn-toss-start")!.addEventListener("click", startBattle);
+app.querySelector("#btn-toss-cancel")!.addEventListener("click", cancelToss);
+app.querySelector("#btn-toss-fix")!.addEventListener("click", correctFirstToss);
+app.querySelector("#toss-choices")!.addEventListener("click", (e) => {
+  const choice = (e.target as HTMLElement).closest<HTMLElement>("[data-deploy-first]");
+  if (choice) startDeployment(choice.dataset.deployFirst === "2" ? 2 : 1);
+});
+deployClockToggle.addEventListener("change", () => {
+  game.options.deployClock = deployClockToggle.checked;
+  deployClockToggle.blur();
+});
+judgeOverlay.addEventListener("click", (e) => {
+  const button = (e.target as HTMLElement).closest<HTMLElement>("[data-judge-player]");
+  if (!button) return;
+  adjustTime(button.dataset.judgePlayer === "2" ? 2 : 1, Number(button.dataset.judgeSeconds));
+});
 btnPhotoResume.addEventListener("click", endPhotoBreak);
+for (const id of ["#btn-photo-take", "#btn-photo-retake"]) app.querySelector(id)!.addEventListener("click", () => photoInput.click());
+app.querySelector("#btn-photo-skip")!.addEventListener("click", endPhotoBreak);
+// The camera closes on its own once the photo is taken, and hands it back here
+photoInput.addEventListener("change", () => {
+  const file = photoInput.files?.[0];
+  photoInput.value = "";
+  // The break may have ended on the other phone while this one was in the camera
+  if (file && game.photoBreak) showPhotoShot(file);
+});
+// Saved, the clocks go again; a share sheet closed without saving stays on the photo
+app.querySelector("#btn-photo-save")!.addEventListener("click", async () => {
+  if (photoShotFile && (await savePhotoShot(photoShotFile))) endPhotoBreak();
+});
 // A focused checkbox would swallow Enter / Space, the game shortcuts
 photoBreaksToggle.addEventListener("change", () => {
   game.options.photoBreaks = photoBreaksToggle.checked;
@@ -3438,6 +5312,8 @@ function isTypingTarget(el: EventTarget | null): boolean {
 
 function shouldIgnoreSpaceLike(el: EventTarget | null): boolean {
   if (!(el instanceof HTMLElement)) return false;
+  // The display menu opened during a game: the space bar still passes the clock from there
+  if (el.closest(".settings__panel")) return false;
   if (el.closest(".mini-counter")) return true;
   if (el.closest(".panel-corner")) return true;
   return isTypingTarget(el);
@@ -3449,6 +5325,11 @@ function isButtonTarget(el: EventTarget | null): boolean {
 
 /** Space bar and taps on the timer area (same behavior) */
 function handleSpaceLikeInput(): void {
+  if (game.judgeCall !== null) return;
+  if (isDeploying()) {
+    passDeployment();
+    return;
+  }
   if (!isRunning()) {
     if (isOver()) return;
     if (isStopped(game)) resume();
@@ -3459,6 +5340,7 @@ function handleSpaceLikeInput(): void {
   if (online && game.clock.active !== online.seat) return;
   const now = performance.now();
   if (lastSpaceTime > 0 && now - lastSpaceTime < DOUBLE_SPACE_MS) {
+    delete game.clockLog[lastSwitchLog];
     setActiveClock(game.clock, activeBeforeSpaceSequence);
     pause();
     return;
@@ -3472,6 +5354,37 @@ window.addEventListener("keydown", (e) => {
   if (e.code === MUTE_KEY_CODE && !e.repeat && !e.metaKey && !e.ctrlKey && !e.altKey && !isTypingTarget(e.target)) {
     e.preventDefault();
     toggleMute();
+    return;
+  }
+  if (logOverlay.classList.contains("is-visible")) {
+    if (e.key === "Escape") {
+      e.preventDefault();
+      closeClockLog();
+    }
+    return;
+  }
+  // A judge at the table: only the judge's screen answers, so no key restarts a clock by mistake
+  if (judgeOverlay.classList.contains("is-visible")) return;
+  // Over everything else on screen: the clock out of time is handed over first
+  if (timeOutOverlay.classList.contains("is-visible")) {
+    if ((e.code === "Space" || e.code === "Enter") && !e.repeat) {
+      e.preventDefault();
+      btnTimeOut.click();
+    } else if (e.key === "Escape") {
+      e.preventDefault();
+      hideTimeOut();
+    }
+    return;
+  }
+  if (tossOverlay.classList.contains("is-visible")) {
+    if (e.key === "Escape") cancelToss();
+    else if (e.code === "Enter" && !e.repeat && game.preBattle?.step === "first") startBattle();
+    if (e.key === "Escape" || e.code === "Enter" || e.code === "Space") e.preventDefault();
+    return;
+  }
+  if (e.code === JUDGE_KEY_CODE && !e.repeat && !e.metaKey && !e.ctrlKey && !e.altKey && !isTypingTarget(e.target) && inGame(game) && !isOver()) {
+    e.preventDefault();
+    callJudge();
     return;
   }
   if (onlineOverlay.classList.contains("is-visible")) {
@@ -3586,6 +5499,11 @@ window.addEventListener("keydown", (e) => {
   }
   if (e.code === "Enter" && !e.repeat) {
     if (shouldIgnoreSpaceLike(e.target)) return;
+    if (isDeploying()) {
+      e.preventDefault();
+      requestDeploymentEnd();
+      return;
+    }
     if (!isRunning()) {
       e.preventDefault();
       if (isOver()) return;
@@ -3668,6 +5586,7 @@ timePicker.addEventListener("mouseenter", () => {
 });
 
 onSegmentedPick(themeOptions, applyTheme);
+app.querySelector("#faction-swap")!.addEventListener("click", swapFactions);
 for (const picker of factionPickers) {
   const button = pickerButton(picker);
   button.addEventListener("click", () => (openPicker === picker ? closePicker(true) : openPickerList(picker)));
@@ -3688,7 +5607,11 @@ document.addEventListener("pointerdown", (e) => {
   if (openPicker && !openPicker.root.contains(e.target as Node)) closePicker();
 });
 onSegmentedPick(uiSizeOptions, applyUiSize);
-onSegmentedPick(sfxOptions, applySounds);
+sfxToggle.addEventListener("change", () => {
+  applySounds(sfxToggle.checked ? "on" : "off");
+  // Enter and Space stay the game's: a focused switch would take them
+  sfxToggle.blur();
+});
 // A tick when a switch or an option is set, brighter when it turns on.
 // Not the card scores nor the card tabs: they have their own sounds
 app.addEventListener("click", (e) => {
@@ -3699,17 +5622,43 @@ app.addEventListener("click", (e) => {
 app.addEventListener("change", (e) => {
   if (e.target instanceof HTMLInputElement && e.target.type === "checkbox") playSound(e.target.checked ? "checkOn" : "checkOff");
 });
-onSegmentedPick(musicOptions, applyMusic);
+onSegmentedPick(musicOptions, (value) => {
+  applyMusic(value);
+  previewMusic();
+  // A track picked is a track to hear, even after the music was muted. Only the new one:
+  // the track fading out stays silent
+  applyMusicMuted(false);
+});
 volumeInput.addEventListener("input", () => applyVolume(Number(volumeInput.value)));
 // Browsers hold audio back until the page gets a click or a key
 window.addEventListener("pointerdown", unlockAudio);
 window.addEventListener("keydown", unlockAudio);
 onSegmentedPick(layoutOptions, applyLayout);
-onSegmentedPick(langOptions, applyLang);
+onSegmentedPick(langOptions, (value) => applyLang(value, true));
 
 btnSettings.addEventListener("click", () => togglePopover(btnSettings, settingsPanel));
+seatSettings.addEventListener("click", () => togglePopover(seatSettings, settingsPanel));
+stripSettings.addEventListener("click", () => togglePopover(stripSettings, settingsPanel));
+seatMute.addEventListener("click", () => {
+  if (sfxToggle.checked) {
+    toggleMute();
+    return;
+  }
+  applySounds("on");
+  setMuted(false);
+  showToast(t("soundOn"));
+  renderSeatSound();
+});
+seatMusic.addEventListener("click", toggleMusicMute);
+// A touch screen has no hover to unfold the times: a tap opens them, another tap or a pick closes them
+btnTime.addEventListener("click", () => {
+  const open = !timePicker.classList.contains("is-open");
+  closePopovers();
+  timePicker.classList.toggle("is-open", open);
+  if (open) timePicker.classList.remove("is-folded");
+});
 document.addEventListener("pointerdown", (e) => {
-  if (!(e.target as HTMLElement).closest(".popover-anchor")) closePopovers();
+  if (!(e.target as HTMLElement).closest(".popover-anchor, .time-picker")) closePopovers();
 });
 
 /* ---------- Online: one game on two phones ---------- */
@@ -3724,6 +5673,8 @@ let pushing = false;
 const ONLINE_STORAGE_KEY = "warhammerClock.online";
 /** As in room.ts, which loads only once a game goes online */
 const ONLINE_CODE_LENGTH = 5;
+/** A room created or joined in a few hundred milliseconds; once it hung for half a minute */
+const ROOM_TIMEOUT_MS = 10000;
 
 const packState = ({ rev, json }: Synced): string => `${rev}|${json}`;
 
@@ -3734,7 +5685,7 @@ function unpackState(stored: string): Synced {
 
 /** Sends this phone's changes. What the other phone changed meanwhile is kept, field by field */
 async function pushState(): Promise<void> {
-  const room = online?.room;
+  const room = roomSession()?.room;
   // Joining: nothing is sent before the room's game has come in
   if (!room || pushing || synced.rev === 0) return;
   const local = JSON.stringify(game);
@@ -3747,7 +5698,7 @@ async function pushState(): Promise<void> {
       const current = remote === null ? base : unpackState(remote);
       return packState({ rev: current.rev + 1, json: merge(current.json, base.json, local) });
     });
-    if (online?.room !== room) return;
+    if (roomSession()?.room !== room) return;
     synced = unpackState(stored);
     sent = true;
     // Changes made here while the write was on its way go on top of what the server kept
@@ -3794,21 +5745,41 @@ const cardsData = (state: GameState, player: Player): string =>
 function renderState(prev: GameState, joining: boolean): void {
   photoBreaksToggle.checked = game.options.photoBreaks;
   secondaryCardsToggle.checked = game.options.cards;
+  deployClockToggle.checked = deploymentTimed();
+  const pre = game.preBattle;
+  const prevPre = prev.preBattle;
+  if (!inGame(game)) {
+    if (pre?.step === "chooser" && pre.at !== prevPre?.at) showToss();
+    else if (pre?.step === "first" && pre.toss && pre.toss.at !== prevPre?.toss?.at) showToss();
+    else if (!pre || pre.step === "deployment") hideToss();
+    else renderToss();
+    if (pre?.step === "deployment" && prevPre?.step !== "deployment" && cardsPlayer !== null) closeCards(false);
+    if (prevPre?.step === "deployment" && pre?.step !== "deployment" && turnConfirmKind === "deploy-end") hideTurnConfirmModal();
+  }
+  if (game.judgeCall !== null && prev.judgeCall === null) {
+    stopLoop();
+    showJudgeCall();
+  } else if (game.judgeCall === null && prev.judgeCall !== null) hideJudgeCall();
+  else if (game.judgeCall !== null) renderJudgeCall();
+  if (logOverlay.classList.contains("is-visible")) renderClockLog();
   const wasInGame = inGame(prev);
   if (game.phase === "setup" && wasInGame) resetScreen();
-  if (game.choosing && !prev.choosing) {
-    dispoPick = null;
-    openDispositions();
-  } else if (!game.choosing && prev.choosing && !game.primaries[1]) closeDispositions();
-  if (game.phase === "setup" && game.primaries[1] && !prev.primaries[1]) showReveal();
-  else maybeReveal();
+  // The game moved on from a phone: the shared screen's dialog would keep its keyboard from it
+  if ((game.choosing && !prev.choosing) || (!!game.preBattle && !prev.preBattle) || (!wasInGame && inGame(game))) closeOnlineDialog();
+  if (game.choosing && !prev.choosing) openDispositions();
+  else if (!game.choosing && prev.choosing && !game.primaries[1]) closeDispositions();
+  if (game.phase === "setup" && game.primaries[1] && !prev.primaries[1]) showPrimaries();
   if (!wasInGame && inGame(game)) {
+    hideToss();
     if (cardsPlayer !== null && cardsMode === "primary") closeCards(false);
     closePopovers();
     closeDispositions();
     hideTurnConfirmModal();
     hideResultOverlay();
-    if (!joining) turnSound("start");
+    if (!joining) {
+      turnSound("start");
+      celebrateBattleReady();
+    }
     setBattleMusic(true);
   }
   if (game.phase === "over" && prev.phase !== "over") showGameOverScreen();
@@ -3817,24 +5788,35 @@ function renderState(prev: GameState, joining: boolean): void {
     else if (prev.clock.active !== game.clock.active) playSound("switch");
   }
 
-  if (isRunning() && game.clock.since !== null) {
+  if (clockTicks() && game.clock.since !== null) {
     startLoop();
     void tryAcquireWakeLock();
   } else {
     stopLoop();
-    if (!isRunning()) void releaseWakeLock();
+    if (!clockTicks()) void releaseWakeLock();
   }
   if (!isRunning()) syncInputsFromState();
   if (game.phase === "setup") syncPresetSelectFromState();
-  setInputsEnabled(!isRunning());
+  setInputsEnabled(!isRunning() && !inPreBattle());
   if (game.photoBreak && !prev.photoBreak) showPhotoBreak();
   else if (!game.photoBreak && prev.photoBreak) hidePhotoBreak();
   const seat = online?.seat;
+  // The clock comes back to this phone: a buzz, for a player looking at the table (not on iPhone)
+  if (!joining && seat && isRunning() && game.clock.active === seat && prev.clock.active !== seat) buzz([120, 60, 120]);
   if (!joining && seat && game.cpNotice[seat].n !== prev.cpNotice[seat].n) sayCp(seat, game.cpNotice[seat].gained);
+  // The shared screen shows a command point spent on a phone, big, with its sound
+  if (!joining && table && inGame(game) && inGame(prev)) {
+    for (const player of [1, 2] as const) if (game.cp[player] < prev.cp[player]) burnCp(player, prev.cp[player] - game.cp[player]);
+  }
+  if (!joining && game.cardsPutAway.n !== prev.cardsPutAway.n) {
+    const { player, mode } = game.cardsPutAway;
+    if (cardsPlayer === player && cardsMode === mode) closeCards(true, true);
+  }
+  // A draw made on another device: on the drawing player's phone, and on the shared screen as without phones
   if (!joining && game.lastDraw.n !== prev.lastDraw.n) {
     const { player, ids } = game.lastDraw;
     if (game.photoBreak) {
-      if (online?.seat === player) pendingDraw = { player, drawn: ids };
+      if (!online || online.seat === player) pendingDraw = { player, drawn: ids };
     } else showDraw(player, ids);
   }
 
@@ -3847,18 +5829,22 @@ function renderState(prev: GameState, joining: boolean): void {
   renderAbilities(2);
   renderDispositions();
   if (abilitiesPlayer !== null) renderAbilityList();
-  if (cardsPlayer !== null && cardsMode !== "primary" && cardsData(prev, cardsPlayer) !== cardsData(game, cardsPlayer)) renderCards();
-  renderSeat();
+  if (cardsPlayer !== null && cardsMode !== "primary" && cardsData(prev, cardsPlayer) !== cardsData(game, cardsPlayer)) {
+    morphCards(() => renderCards(), cardShowsInFull);
+  }
+  renderHandButtons();
 }
 
 /** The other phone reset the game */
 function resetScreen(): void {
+  stopBattleReady();
   setBattleMusic(false);
   lastSpaceTime = 0;
   void releaseWakeLock();
   stopLoop();
   hideTurnConfirmModal();
   hideResultOverlay();
+  closeClockLog();
   pendingDraw = null;
   afterPutAway = null;
   hidePhotoBreak();
@@ -3874,64 +5860,101 @@ function showGameOverScreen(): void {
   hideTurnConfirmModal();
   setBattleMusic(false);
   playSound("victory");
-  const flagged = ([1, 2] as const).find((player) => timeLeft(player) <= 0);
-  if (flagged) {
-    const winner = other(flagged);
-    showResultOverlay(t("wins", { n: winner }), t("ranOutOfTime", { n: flagged }), winner);
-    (flagged === 1 ? panel1 : panel2).classList.add("is-flag");
-    return;
-  }
-  const [total1, total2] = [scoreOf(1), scoreOf(2)];
-  if (total1 > total2) showResultOverlay(t("wins", { n: 1 }), t("wonOnPoints"), 1);
-  else if (total2 > total1) showResultOverlay(t("wins", { n: 2 }), t("wonOnPoints"), 2);
-  else showResultOverlay(t("draw"), t("tiedOnPoints"), null);
+  showResultOverlay();
 }
 
-/** Creates a room with this game (no code), or joins one; this phone takes `seat` */
-async function connectRoom(seat: Player, code?: string): Promise<void> {
-  const { createRoom, joinRoom } = await import("./room");
+/** Creates a room with this game (no code), or joins one; this device takes `seat` (see joinRoom for `preferFree`) */
+async function connectRoom(seat: Seat, code?: string, preferFree = false): Promise<void> {
   leaveRoom();
-  online = { seat, room: null, connected: true, seats: { 1: false, 2: false } };
+  // A room being created holds this device alone; a room joined tells who is in it
+  const seats: Seats | null = code ? null : { 1: seat === 1, 2: seat === 2, board: seat === "board", away: { 1: false, 2: false } };
+  const session: RoomSession = { room: null, connected: true, seats };
+  if (seat === "board") table = session;
+  else {
+    online = Object.assign(session, { seat, phone: PHONE.matches });
+    // This phone's screen at once: the board for two would flash while the room answers
+    if (online.phone) document.documentElement.dataset.seat = String(seat);
+  }
+  renderMe();
+  renderSeat();
+  renderOnlineDialog();
   const events: RoomEvents = {
     onState: (stored) => receiveState(unpackState(stored)),
     onConnection: (connected) => {
-      if (!online) return;
-      online.connected = connected;
+      if (roomSession() !== session) return;
+      session.connected = connected;
       renderSeat();
+      renderOnlineButton();
     },
     onSeats: (seats) => {
-      if (!online) return;
-      online.seats = seats;
+      if (roomSession() !== session) return;
+      const before = session.seats;
+      // Someone comes in: a phone sees its opponent, the shared screen both players
+      const watched: Player[] = online ? [other(online.seat)] : [1, 2];
+      const arrived = watched.filter((player) => before && !before[player] && seats[player]);
+      for (const player of arrived) showToast(t("onlineReady", { n: player }));
+      if (arrived.length > 0 && table) playSound("joined");
+      if (online && seats.board && !before?.board) showToast(t("onlineBoardJoined"));
+      session.seats = seats;
+      setMusicElsewhere(phoneView() && seats.board);
       renderSeat();
       renderOnlineDialog();
     },
+    onEnded: () => {
+      if (roomSession() !== session) return;
+      leaveRoom();
+      // A phone has no board to go on with: back to its home screen, as when it leaves
+      if (PHONE.matches && inGame(game)) reset();
+      closeOnlineDialog();
+      renderAll();
+      showToast(t("onlineEnded"), true);
+    },
   };
+  let room: Room;
   try {
+    const { createRoom, joinRoom } = await import("./room");
     if (code) {
       synced = { rev: 0, json: "" };
-      online.room = await joinRoom(code, seat, events);
+      room = await joinRoom(code, seat, events, preferFree);
     } else {
       synced = { rev: 1, json: JSON.stringify(game) };
-      online.room = await createRoom(seat, packState(synced), events);
+      room = await createRoom(seat, packState(synced), events);
     }
   } catch (error) {
-    leaveRoom();
+    if (roomSession() === session) leaveRoom();
     throw error;
   }
-  store(ONLINE_STORAGE_KEY, JSON.stringify({ code: online.room.code, seat }));
-  document.documentElement.dataset.seat = String(seat);
+  // Given up or left while the room answered: this device is no longer in it
+  if (roomSession() !== session) {
+    room.leave();
+    return;
+  }
+  session.room = room;
+  if (online && room.seat !== "board" && room.seat !== online.seat) {
+    online.seat = room.seat;
+    pickedSeat = room.seat;
+    if (online.phone) document.documentElement.dataset.seat = String(room.seat);
+    renderMe();
+    showToast(t("onlineSeatSwitched", { n: room.seat }), true);
+  }
+  store(ONLINE_STORAGE_KEY, JSON.stringify({ code: room.code, seat: room.seat }));
   renderSeat();
+  renderOnlineDialog();
 }
 
 /** Back to one screen for both players, with the game as it stands */
 function leaveRoom(): void {
-  online?.room?.leave();
+  roomSession()?.room?.leave();
   online = null;
+  table = null;
+  setMusicElsewhere(false);
   synced = { rev: 0, json: "" };
   latestRemote = null;
   forget(ONLINE_STORAGE_KEY);
   delete document.documentElement.dataset.seat;
+  renderMe();
   renderSeat();
+  renderOnlineButton();
 }
 
 // Each tap or key may have changed the game: it is sent right after, and a timer catches the rest
@@ -3939,7 +5962,7 @@ for (const type of ["pointerdown", "click", "keydown", "input", "change"]) {
   window.addEventListener(
     type,
     () => {
-      if (online) window.setTimeout(() => void pushState(), 0);
+      if (roomSession()) window.setTimeout(() => void pushState(), 0);
     },
     true,
   );
@@ -3959,21 +5982,86 @@ const seatCpCard = app.querySelector<HTMLElement>(".seat-cp")!;
 
 /** The two clocks, every frame: this phone's large, the opponent's small */
 function renderSeatTimes(): void {
-  if (!online) return;
+  if (!online?.phone) return;
   renderTime(seatTime, timeLeft(online.seat));
   seatOppTime.textContent = formatTime(timeLeft(other(online.seat)));
 }
 
+/**
+ * A full-width row that comes and goes (End turn, Deployment done, the invite) slides open or
+ * shut, and the clock sharing the screen with it grows or shrinks along instead of jumping by its
+ * height. In a flex column or a wrapped row whose gap sits above it
+ */
+function slideRow(el: HTMLElement, show: boolean): void {
+  const was = slidShown.get(el);
+  slidShown.set(el, show);
+  if (was === show) return;
+  const running = el.getAnimations().filter((anim) => anim.id === SLIDE);
+  if (was === undefined || prefersReducedMotion() || !el.parentElement?.getClientRects().length) {
+    running.forEach((anim) => anim.cancel());
+    el.style.overflow = "";
+    el.hidden = !show;
+    return;
+  }
+  const read = (): Keyframe => {
+    const style = getComputedStyle(el);
+    return Object.fromEntries(SLIDE_PROPS.map((prop) => [prop, style[prop]]));
+  };
+  // Where it is now, mid-way if it was already sliding
+  const from = el.hidden ? null : read();
+  running.forEach((anim) => anim.cancel());
+  el.hidden = false;
+  // Shut, it takes no room, the row gap above it included
+  const gap = parseFloat(getComputedStyle(el.parentElement).rowGap) || 0;
+  const shut: Keyframe = {
+    height: "0px",
+    minHeight: "0px",
+    paddingTop: "0px",
+    paddingBottom: "0px",
+    borderTopWidth: "0px",
+    borderBottomWidth: "0px",
+    marginTop: `${-gap}px`,
+    opacity: 0,
+  };
+  const open = read();
+  el.style.overflow = "hidden";
+  el.animate([from ?? shut, show ? open : shut], { duration: SLIDE_MS, easing: "cubic-bezier(0.2, 0.8, 0.2, 1)", id: SLIDE })
+    .finished.then(
+      () => {
+        el.style.overflow = "";
+        el.hidden = !show;
+      },
+      () => {},
+    );
+}
+
 function renderSeat(): void {
   for (const player of [1, 2] as const) {
-    const inSeat = online?.seat === player;
+    const inSeat = phoneView() && online?.seat === player;
     const home = inSeat ? seatAbilities : abilitiesHome[player];
     if (abilitiesEl[player].parentElement !== home) home.append(abilitiesEl[player]);
     const toastHome = inSeat ? seatCpCard : cpToastHome[player];
     if (cpToastEl[player].parentElement !== toastHome) toastHome.append(cpToastEl[player]);
   }
-  if (!online) return;
+  renderPhoneHome();
+  // A phone's own screen has no setup bar: the menu and the game setup move into it. The board
+  // hides its bar during a game: the menu opens from the strip then, over the board, unscaled
+  const panelHome = phoneView() ? seatSettingsAnchor : inGame(game) ? gameSettingsAnchor : btnSettings.parentElement!;
+  if (settingsPanel.parentElement !== panelHome) panelHome.append(settingsPanel);
+  if (phoneView() && setupGroup.parentElement !== seatSetup) seatSetup.append(setupGroup, btnStart);
+  else if (!phoneView() && setupGroup.parentElement === seatSetup) {
+    toolbar.prepend(setupGroup);
+    toolbarEnd.append(btnStart);
+  }
+  if (!online?.phone) return;
+  seatSetup.hidden = inGame(game) || inPreBattle();
   const me = online.seat;
+  // Before the battle, on the player's own screen: the moment to say which units generate CP
+  const cpInvite = !seatSetup.hidden && game.abilities[me].length === 0;
+  const cpButton = app.querySelector<HTMLElement>("#seat-abilities-btn")!;
+  cpButton.classList.toggle("is-invited", cpInvite);
+  cpButton.dataset.i18n = cpInvite ? "abilitiesInvite" : "abilities";
+  cpButton.textContent = t(cpInvite ? "abilitiesInvite" : "abilities");
   const them = other(me);
   const running = isRunning();
   const mine = running && game.clock.active === me;
@@ -3981,30 +6069,44 @@ function renderSeat(): void {
   room.classList.toggle("is-offline", !online.connected);
   room.title = online.connected ? "" : t("onlineOffline");
   seatText("seat-code", online.room?.code ?? t("onlineConnecting"));
+  renderSeatInvite(them);
   seatText("seat-round", inGame(game) ? `${t("round")} ${game.round}` : "");
   seatText("seat-opp-name", t("player", { n: them }));
-  seatText("seat-opp-score", String(scoreOf(them)));
+  seatText("seat-opp-score", String(shownScore(them)));
   app.querySelector("#seat-opp")!.classList.toggle("is-running", running && game.clock.active === them);
-  const turn = inGame(game) ? ` · ${t(game.turnPlayer === me ? "seatYourTurn" : "seatTheirTurn")}` : "";
+  app.querySelector("#seat-opp")!.classList.toggle("is-flag", inGame(game) && timeLeft(them) <= 0);
+  const deploying = isDeploying();
+  const myDeploy = deploying && game.clock.active === me;
+  const turn = deploying
+    ? ` · ${t(myDeploy ? "seatYourDeploy" : "seatTheirDeploy")}`
+    : inGame(game)
+      ? ` · ${t(game.turnPlayer === me ? "seatYourTurn" : "seatTheirTurn")}`
+      : "";
   seatText("seat-who", `${t("player", { n: me })}${turn}`);
-  const hint = !inGame(game)
-    ? t("seatSetup")
+  const hint = deploying
+    ? t(myDeploy ? "seatDeployHint" : "seatTheirDeployHint")
+    : !inGame(game)
+      ? t("seatSetup")
     : isOver()
       ? t("gameOver")
       : !running
         ? t("paused")
-        : t(mine ? "seatTapToPass" : "seatTheirClock");
+        : mine && timeLeft(me) <= 0
+          ? t("seatTimeOut")
+          : t(mine ? "seatTapToPass" : "seatTheirClock");
   seatText("seat-hint", hint);
-  seatClock.classList.toggle("is-running", mine);
-  seatClock.setAttribute("aria-disabled", String(!mine));
+  seatClock.classList.toggle("is-running", mine || (myDeploy && deploymentTimed()));
+  slideRow(app.querySelector<HTMLElement>("#seat-deploy-done")!, deploying);
+  seatClock.classList.toggle("is-flag", inGame(game) && timeLeft(me) <= 0);
+  seatClock.setAttribute("aria-disabled", String(!mine && !myDeploy));
   renderSeatTimes();
 
   const turnIdx = scoringTurnIdx(me);
-  seatText("seat-score", String(scoreOf(me)));
+  seatText("seat-score", String(shownScore(me)));
   seatText("seat-turn", inGame(game) ? t("turnN", { n: turnIdx + 1 }) : "");
   for (const { kind } of SCORE_KINDS) {
     const points = game.scoreByTurn[me][kind][turnIdx];
-    seatText(`seat-${kind}`, String(points));
+    seatText(`seat-${kind}`, String(gameScore(me, kind)));
     app.querySelector<HTMLButtonElement>(`#seat-${kind}-plus`)!.disabled = !inGame(game) || points >= MAX_POINTS_PER_TURN;
     app.querySelector<HTMLButtonElement>(`#seat-${kind}-minus`)!.disabled = !inGame(game) || points === 0;
   }
@@ -4014,17 +6116,22 @@ function renderSeat(): void {
   seatText("seat-hand-count", String(game.secondaries[me].hand.length));
   const playing = inGame(game) && !isOver();
   app.querySelector<HTMLElement>("#seat-hand")!.hidden = !secondaryCardsOn() || !inGame(game);
-  app.querySelector<HTMLElement>("#seat-mission")!.hidden = !secondaryCardsOn() || !inGame(game) || !primaryCard(me);
+  app.querySelector<HTMLElement>("#seat-mission")!.hidden = !secondaryCardsOn() || !primaryCard(me);
   app.querySelector<HTMLElement>("#seat-opp-primary")!.hidden = !secondaryCardsOn() || !primaryCard(them);
   const pauseBtn = app.querySelector<HTMLButtonElement>("#seat-pause")!;
   pauseBtn.hidden = !playing;
   pauseBtn.textContent = t(running ? "seatPause" : "seatResume");
-  app.querySelector<HTMLElement>("#seat-end")!.hidden = !running || game.turnPlayer !== me;
+  app.querySelector<HTMLElement>("#seat-judge")!.hidden = !playing;
+  slideRow(app.querySelector<HTMLElement>("#seat-end")!, running && game.turnPlayer === me);
   app.querySelector<HTMLElement>("#seat-reset")!.hidden = !inGame(game);
 }
 
 /** A tap on this phone's own running clock passes it to the opponent */
 seatClock.addEventListener("click", () => {
+  if (isDeploying()) {
+    passDeployment();
+    return;
+  }
   if (!online || !isRunning() || game.clock.active !== online.seat) return;
   switchTurn();
   renderSeat();
@@ -4059,10 +6166,13 @@ const seatActions: [string, (me: Player) => void][] = [
   [
     "seat-reset",
     () => {
+      closePopovers();
       if (inGame(game)) openTurnConfirmModal("reset");
     },
   ],
   ["seat-room", () => openOnlineDialog()],
+  ["seat-judge", () => callJudge()],
+  ["seat-deploy-done", () => requestDeploymentEnd()],
 ];
 for (const [id, action] of seatActions) {
   app.querySelector<HTMLButtonElement>(`#${id}`)!.addEventListener("click", () => {
@@ -4074,9 +6184,11 @@ for (const [id, action] of seatActions) {
 
 /* ---------- Online: the dialog to create or join a game ---------- */
 
-/** The seat picked in the dialog, before going online */
+/** The player picked on a phone, before going online. A PC or a tablet is the shared screen */
 let pickedSeat: Player = 1;
+const screenSeat = (): Seat => (PHONE.matches ? pickedSeat : "board");
 let shownQrCode = "";
+let shownBoardQrCode = "";
 
 const shareLink = (code: string, seat: Player): string =>
   `${location.origin}${location.pathname}?room=${code}&seat=${seat}`;
@@ -4087,25 +6199,185 @@ function showOnlineError(text: string | null): void {
 }
 
 function renderOnlineDialog(): void {
-  const room = online?.room ?? null;
-  app.querySelector<HTMLElement>("#online-start")!.hidden = !!online;
-  app.querySelector<HTMLElement>("#online-room")!.hidden = !online;
-  app.querySelector<HTMLElement>("#online-leave")!.hidden = !online;
+  renderOnlineButton();
+  const session = roomSession();
+  const room = session?.room ?? null;
+  app.querySelector<HTMLElement>("#online-start")!.hidden = !!session;
+  app.querySelector<HTMLElement>("#online-room")!.hidden = !session;
+  // A phone leaves alone, its game kept in the room. A PC ends the game online for every device
+  const ends = !!session && !online?.phone;
+  const leave = app.querySelector<HTMLElement>("#online-leave")!;
+  leave.hidden = !session;
+  leave.classList.toggle("is-danger", ends);
+  leave.textContent = t(ends ? "onlineEnd" : "onlineLeave");
+  // Nothing done yet: backing out is a cancel. In a game, the dialog only shows it and closes
+  const close = app.querySelector<HTMLElement>("#online-close")!;
+  // A PC playing apart has the link to copy as its main button: closing stays secondary
+  const closeLeads = !!session && !(online && !online.phone);
+  close.classList.toggle("btn-primary", closeLeads);
+  close.classList.toggle("btn-secondary", !closeLeads);
+  close.querySelector("span")!.textContent = t(session ? "close" : "cancel");
+  // On a PC or a tablet, no player to pick: it shows the players' codes, each may scan theirs (style.css)
+  seatText("online-intro", t(PHONE.matches ? "onlineIntro" : "onlineBoardIntro"));
+  seatText("online-create", t(PHONE.matches ? "onlineCreate" : "onlineShowQr"));
   setSegmentedValue(onlineSeatPicker, String(pickedSeat));
+  app.querySelector<HTMLElement>("#online-qrs")!.hidden = !table;
+  app.querySelector<HTMLElement>("#online-qr")!.hidden = !online?.phone;
+  if (table) {
+    seatText("online-room-code", room?.code ?? t("onlineConnecting"));
+    seatText("online-scan", room ? t("onlineScanBoth") : "");
+    seatText("online-status", "");
+    app.querySelector<HTMLElement>("#online-share")!.hidden = true;
+    for (const player of [1, 2] as const) {
+      const joined = !!room && seatHere(table.seats, player);
+      // A phone in: its code is done with, the player's mark takes its place. Its phone gone, the
+      // code comes back, to take the seat again with this phone or another
+      const dropped = !!room && !joined && !!table.seats?.away[player];
+      app.querySelector("#online-seat-" + player)!.classList.toggle("is-joined", joined);
+      seatText(`online-status-${player}`, room ? t(joined ? "onlineReady" : dropped ? "onlineDropped" : "onlineOnBoard", { n: player }) : "");
+    }
+    if (room) renderBoardQrs(room.code);
+    return;
+  }
   if (!online) return;
   const them = other(online.seat);
+  // A shared screen at the table: the opponent takes their code there, or plays on it. This
+  // phone shows no code and no link, nobody has to be invited from it
+  const shared = !!online.seats?.board;
+  app.querySelector<HTMLElement>("#online-qr")!.hidden = !online.phone || shared;
   seatText("online-room-code", room?.code ?? t("onlineConnecting"));
-  seatText("online-scan", room ? t("onlineScan", { n: them }) : "");
-  seatText("online-status", room ? t(online.seats[them] ? "onlineReady" : "onlineWaiting", { n: them }) : "");
-  app.querySelector<HTMLElement>("#online-share")!.hidden = !room;
-  if (room && shownQrCode !== room.code) {
-    shownQrCode = room.code;
-    void import("qrcode-generator").then(({ default: qrcode }) => {
+  // A phone's opponent scans its code at the table; a PC's is elsewhere, the link goes to them
+  seatText("online-scan", room ? t(shared ? "onlineScanShared" : online.phone ? "onlineScan" : "onlineSendLink", { n: them }) : "");
+  // Once the game is on, nobody is awaited: the opponent may simply play without a phone
+  const started = inGame(game) || inPreBattle();
+  const absent = shared ? "onlineOnShared" : started ? (online.phone ? "onlineNoPhone" : "onlineAway") : "onlineWaiting";
+  seatText("online-status", room ? t(seatHere(online.seats, them) ? "onlineReady" : absent, { n: them }) : "");
+  const share = app.querySelector<HTMLElement>("#online-share")!;
+  share.hidden = !room || shared;
+  // On a PC, the link is what the player came for: the main button, right under the code
+  share.classList.toggle("btn-primary", !online.phone);
+  share.classList.toggle("btn-secondary", online.phone);
+  if (!share.classList.contains("is-copied")) share.textContent = t(online.phone ? "onlineShare" : "onlineCopyLink");
+  if (room && online.phone && !shared) renderRoomQr(room.code, them);
+}
+
+/** Until the opponent takes their seat, the code to join stays on this phone's screen */
+function renderSeatInvite(them: Player): void {
+  const invite = app.querySelector<HTMLElement>("#seat-invite")!;
+  const room = online?.room ?? null;
+  // With a shared screen, the opponent may play on it: nobody to wait for. In the battle, their
+  // phone dropping out is only said on their strip: the code is in the room button
+  const away = !!online?.seats && !seatHere(online.seats, them) && !online.seats.board;
+  app.querySelector<HTMLElement>("#seat-opp-away")!.hidden = !away || !inGame(game);
+  // The opponent joins: the invite folds away, the clock and the rest rise into its room
+  const inviting = away && !inGame(game);
+  slideRow(invite, inviting);
+  if (!inviting) return;
+  seatText("seat-invite-title", t("onlineWaiting", { n: them }));
+  seatText("seat-invite-code", room?.code ?? t("onlineConnecting"));
+  seatText("seat-invite-hint", t("onlineScan", { n: them }));
+  app.querySelector<HTMLButtonElement>("#seat-invite-share")!.disabled = !room;
+  if (room) renderRoomQr(room.code, them);
+}
+
+/** The code the opponent scans: in the dialog, and on this phone's screen while their seat is empty */
+function renderRoomQr(code: string, them: Player): void {
+  if (shownQrCode === code) return;
+  shownQrCode = code;
+  void import("qrcode-generator").then(({ default: qrcode }) => {
+    const qr = qrcode(0, "M");
+    qr.addData(shareLink(code, them));
+    qr.make();
+    const svg = qr.createSvgTag({ cellSize: 4, margin: 2, scalable: true });
+    for (const id of ["online-qr", "seat-invite-qr"]) app.querySelector<HTMLElement>(`#${id}`)!.innerHTML = svg;
+  });
+}
+
+/** The shared screen: one code per player, each phone scans its own and lands in its seat */
+function renderBoardQrs(code: string): void {
+  if (shownBoardQrCode === code) return;
+  shownBoardQrCode = code;
+  void import("qrcode-generator").then(({ default: qrcode }) => {
+    for (const player of [1, 2] as const) {
       const qr = qrcode(0, "M");
-      qr.addData(shareLink(room.code, them));
+      qr.addData(shareLink(code, player));
       qr.make();
-      app.querySelector<HTMLElement>("#online-qr")!.innerHTML = qr.createSvgTag({ cellSize: 4, margin: 2, scalable: true });
-    });
+      app.querySelector<HTMLElement>(`#online-qr-${player}`)!.innerHTML = qr.createSvgTag({ cellSize: 4, margin: 2, scalable: true });
+    }
+  });
+}
+
+/** In the shared screen's bar, the room's code: what the players type, and whether the network holds */
+function renderOnlineButton(): void {
+  const label = app.querySelector<HTMLElement>("#online-label")!;
+  // A PC in a game, shared screen or player: the code in its bar
+  const session = online?.phone ? null : roomSession();
+  label.textContent = session ? (session.room?.code ?? t("onlineConnecting")) : t("online");
+  btnOnline.classList.toggle("is-live", !!session);
+  btnOnline.classList.toggle("is-offline", !!session && !session.connected);
+  // The bar is gone during the game: the strip keeps a way to the codes, for a phone that dropped out
+  stripRoom.hidden = !session;
+  stripRoom.classList.toggle("is-offline", !!session && !session.connected);
+  const roomLabel = t("onlineRoomAria", { code: session?.room?.code ?? "" });
+  stripRoom.title = roomLabel;
+  stripRoom.setAttribute("aria-label", roomLabel);
+}
+
+function shareRoomLink(button: HTMLElement): void {
+  const code = online?.room?.code;
+  if (!online || !code) return;
+  const url = shareLink(code, other(online.seat));
+  // A phone shares it to a nearby phone; a PC copies it, to send in a chat
+  if (navigator.share && online.phone) {
+    void navigator.share({ title: t("onlineTitle"), url }).catch(() => undefined);
+    return;
+  }
+  void copyText(url).then((copied) => {
+    // Said on the button itself, where the eyes are
+    button.dataset.label ??= button.textContent ?? "";
+    button.textContent = t(copied ? "onlineCopied" : "onlineCopyFailed");
+    button.classList.add("is-copied");
+    window.clearTimeout(Number(button.dataset.timer));
+    button.dataset.timer = String(
+      window.setTimeout(() => {
+        button.textContent = button.dataset.label ?? "";
+        button.classList.remove("is-copied");
+        delete button.dataset.label;
+      }, 2200),
+    );
+  });
+}
+
+/** Through the clipboard, or the older way where the browser refuses it (an insecure page, a webview) */
+async function copyText(text: string): Promise<boolean> {
+  try {
+    await navigator.clipboard.writeText(text);
+    return true;
+  } catch {
+    const field = document.createElement("textarea");
+    field.value = text;
+    field.readOnly = true;
+    field.style.position = "fixed";
+    field.style.opacity = "0";
+    document.body.append(field);
+    field.select();
+    const copied = document.execCommand("copy");
+    field.remove();
+    return copied;
+  }
+}
+
+/**
+ * A phone outside a game has no use for a board made for two: its home creates or joins one,
+ * with the start of the online dialog
+ */
+function renderPhoneHome(): void {
+  const home = PHONE.matches && !roomSession() && !inGame(game);
+  document.documentElement.toggleAttribute("data-home", home);
+  if (home && onlineStart.parentElement !== phoneHomeStart) phoneHomeStart.append(onlineStart, onlineError);
+  else if (!home && onlineStart.parentElement === phoneHomeStart) {
+    onlineRoomSection.before(onlineStart);
+    onlineRoomSection.after(onlineError);
   }
 }
 
@@ -4113,6 +6385,8 @@ function openOnlineDialog(code = ""): void {
   closePopovers();
   if (code) onlineCodeInput.value = code;
   showOnlineError(null);
+  // On a phone's home, the start is on screen already
+  if (document.documentElement.hasAttribute("data-home")) return;
   renderOnlineDialog();
   onlineOverlay.classList.add("is-visible");
   onlineOverlay.setAttribute("aria-hidden", "false");
@@ -4128,16 +6402,39 @@ function roomErrorText(error: unknown): string {
   return t(error instanceof Error && error.message === "not-found" ? "onlineNotFound" : "onlineUnavailable");
 }
 
-async function goOnline(seat: Player, code?: string): Promise<void> {
+/** A PC joining with a code: the player still missing, the opponent having sent it; or a shared screen */
+async function pcSeatIn(code: string): Promise<Seat> {
+  const { peekSeats } = await import("./room");
+  const seats = await peekSeats(code);
+  if (seats.board || (seats[1] && seats[2])) return "board";
+  return seats[1] ? 2 : 1;
+}
+
+async function goOnline(seat: Seat, code?: string): Promise<void> {
   showOnlineError(null);
+  // Creating on a phone: straight to its screen, where the code waits for the opponent. A PC
+  // keeps the dialog: the codes to scan, or the link to send, are in it
+  if (!code && seat !== "board" && PHONE.matches) closeOnlineDialog();
+  // A room that doesn't answer is given up: trying again usually goes through
+  let timer = 0;
+  const timeout = new Promise<never>((_, reject) => {
+    timer = window.setTimeout(() => reject(new Error("unavailable")), ROOM_TIMEOUT_MS);
+  });
   try {
-    await connectRoom(seat, code);
-    renderOnlineDialog();
-    // Joining: straight to the game. Creating: the code stays up for the opponent
-    if (code) closeOnlineDialog();
+    // A code typed by hand may come with the wrong player picked
+    const join = async (): Promise<Seat> => {
+      const taken = code && seat === "board" ? await pcSeatIn(code) : seat;
+      await connectRoom(taken, code, !!code);
+      return taken;
+    };
+    const taken = await Promise.race([join(), timeout]);
+    if (code || (taken !== "board" && PHONE.matches)) closeOnlineDialog();
   } catch (error) {
+    leaveRoom();
+    openOnlineDialog(code);
     showOnlineError(roomErrorText(error));
-    renderOnlineDialog();
+  } finally {
+    window.clearTimeout(timer);
   }
 }
 
@@ -4145,59 +6442,77 @@ onSegmentedPick(onlineSeatPicker, (value) => {
   pickedSeat = value === "2" ? 2 : 1;
   setSegmentedValue(onlineSeatPicker, value);
 });
+// Apart, the one who creates the game plays player 1, the one who joins it player 2
+app.querySelector("#online-remote-create")!.addEventListener("click", () => void goOnline(1));
 btnOnline.addEventListener("click", () => openOnlineDialog());
-app.querySelector("#online-create")!.addEventListener("click", () => void goOnline(pickedSeat));
+stripRoom.addEventListener("click", () => openOnlineDialog());
+app.querySelector("#online-create")!.addEventListener("click", () => void goOnline(screenSeat()));
 app.querySelector("#online-join")!.addEventListener("click", () => {
   const code = onlineCodeInput.value.trim().toUpperCase();
   if (code.length !== ONLINE_CODE_LENGTH) {
     showOnlineError(t("onlineNotFound"));
     return;
   }
-  void goOnline(pickedSeat, code);
+  void goOnline(screenSeat(), code);
 });
 onlineCodeInput.addEventListener("keydown", (e) => {
   e.stopPropagation();
   if (e.key === "Enter") app.querySelector<HTMLButtonElement>("#online-join")!.click();
 });
-app.querySelector("#online-share")!.addEventListener("click", () => {
-  const code = online?.room?.code;
-  if (!online || !code) return;
-  const url = shareLink(code, other(online.seat));
-  if (navigator.share) {
-    void navigator.share({ title: t("onlineTitle"), url }).catch(() => undefined);
-    return;
-  }
-  void navigator.clipboard?.writeText(url).then(() => showToast(t("onlineCopied")));
+for (const id of ["online-share", "seat-invite-share"]) {
+  const button = app.querySelector<HTMLElement>(`#${id}`)!;
+  button.addEventListener("click", () => shareRoomLink(button));
+}
+// On a PC, the code is part of the link block: a click on it copies the link too
+app.querySelector("#online-room-code")!.addEventListener("click", () => {
+  if (online && !online.phone && online.room) shareRoomLink(app.querySelector<HTMLElement>("#online-share")!);
 });
 app.querySelector("#online-leave")!.addEventListener("click", () => {
+  const ends = !online?.phone;
+  if (ends) roomSession()?.room?.end();
   leaveRoom();
+  if (ends) showToast(t("onlineEndedHere"));
+  // A phone has no board to go on with: the game stays in the room, to join again with its code
+  if (PHONE.matches && inGame(game)) reset();
   renderOnlineDialog();
   closeOnlineDialog();
   renderAll();
 });
 app.querySelector("#online-close")!.addEventListener("click", closeOnlineDialog);
+onlineOverlay.addEventListener("click", (e) => {
+  if (e.target === onlineOverlay) closeOnlineDialog();
+});
+// A phone picks its player, a wider screen is the shared one: the dialog and the bar follow
+PHONE.addEventListener("change", () => {
+  renderPhoneHome();
+  renderOnlineDialog();
+});
 
-/** Back in the game this phone was in, or the one a shared link points to */
+const parseSeat = (value: unknown): Seat | null =>
+  value === 1 || value === "1" ? 1 : value === 2 || value === "2" ? 2 : value === "board" ? "board" : null;
+
+/** Back in the game this device was in, or the one a shared link points to */
 function resumeOnline(): void {
   const params = new URLSearchParams(location.search);
   const linkCode = params.get("room")?.trim().toUpperCase() ?? "";
-  const linkSeat = Number(params.get("seat"));
+  const linkSeat = parseSeat(params.get("seat"));
   if (linkCode) history.replaceState(null, "", location.pathname);
-  let target: { code: string; seat: Player } | null = null;
-  if (linkCode && (linkSeat === 1 || linkSeat === 2)) target = { code: linkCode, seat: linkSeat };
+  let target: { code: string; seat: Seat } | null = null;
+  if (linkCode && linkSeat) target = { code: linkCode, seat: linkSeat };
   else if (linkCode) {
     openOnlineDialog(linkCode);
     return;
   } else {
     try {
-      const saved = JSON.parse(stored(ONLINE_STORAGE_KEY) ?? "null") as { code?: string; seat?: number } | null;
-      if (saved?.code && (saved.seat === 1 || saved.seat === 2)) target = { code: saved.code, seat: saved.seat };
+      const saved = JSON.parse(stored(ONLINE_STORAGE_KEY) ?? "null") as { code?: string; seat?: unknown } | null;
+      const seat = parseSeat(saved?.seat);
+      if (saved?.code && seat) target = { code: saved.code, seat };
     } catch {
       /* nothing saved */
     }
   }
   if (!target) return;
-  pickedSeat = target.seat;
+  if (target.seat !== "board") pickedSeat = target.seat;
   const { code, seat } = target;
   connectRoom(seat, code).catch((error: unknown) => {
     openOnlineDialog(code);
@@ -4218,9 +6533,8 @@ function renderAll(): void {
 }
 
 btnStart.addEventListener("click", () => {
-  if (inGame(game)) return;
-  if (secondaryCardsOn()) chooseDispositions();
-  else start();
+  if (isDeploying()) requestDeploymentEnd();
+  else if (!inGame(game)) requestStart();
 });
 
 setTimePreset(String(DEFAULT_TIME_SEC));
@@ -4267,3 +6581,35 @@ window.addEventListener("pageshow", (e) => {
 // Paused or over still counts as a game: its board stays until a reset
 setupPwa(() => inGame(game));
 resumeOnline();
+
+// A phone's browser often brings back a tab opened before this device joined its game: the game
+// it is in comes back on that tab too
+document.addEventListener("visibilitychange", () => {
+  if (document.visibilityState === "visible" && !roomSession()) resumeOnline();
+});
+
+/*
+ * In a game, a phone's back gesture would leave it, and close a tab a QR code opened: a first
+ * one only warns, a second one in a row leaves. The extra history step is added on a tap, as
+ * browsers skip the ones a page adds by itself
+ */
+const BACK_AGAIN_MS = 2500;
+let backWarnedAt = -Infinity;
+const guardsBack = (): boolean => !!roomSession() || inGame(game);
+window.addEventListener(
+  "pointerdown",
+  () => {
+    if (guardsBack() && !(history.state as { guard?: boolean } | null)?.guard) history.pushState({ guard: true }, "");
+  },
+  true,
+);
+window.addEventListener("popstate", () => {
+  if (!guardsBack()) return;
+  if (performance.now() - backWarnedAt < BACK_AGAIN_MS) {
+    history.back();
+    return;
+  }
+  backWarnedAt = performance.now();
+  showToast(t("backAgainToLeave"), true);
+  history.pushState({ guard: true }, "");
+});

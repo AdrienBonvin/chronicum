@@ -15,6 +15,8 @@ export const MAX_PLAYER_TURNS = MAX_GAME_TURN * 2;
 /** Mission rule: at most 15 primary and 15 secondary points per player turn */
 export const MAX_POINTS_PER_TURN = 15;
 export const MAX_PANEL_CP = 30;
+/** A painted army is "Battle ready": 10 points every army has, from the start of the battle */
+export const BATTLE_READY_VP = 10;
 export const DEFAULT_TIME_SEC = 7200;
 
 export type ScoreKind = "primary" | "secondary";
@@ -31,9 +33,13 @@ export type Ability = {
   spent: boolean;
 };
 
-/** A scored card keeps what it gave and when, so a misclick can be undone */
-export type ScoredSecondary = { id: string; vp: number; turn: number };
+/**
+ * A scored card keeps what it gave and when, so a misclick can be undone. `full`: what it was
+ * worth, when the 15 points a turn allows let only `vp` of it count
+ */
+export type ScoredSecondary = { id: string; vp: number; turn: number; full?: number };
 export type SecondaryPile = { deck: string[]; hand: string[]; discard: string[]; scored: ScoredSecondary[] };
+export type CardRounds = { drawn?: number; discarded?: number };
 
 /**
  * setup: the clocks are being set. running: a clock runs. paused: stopped mid-game.
@@ -50,17 +56,70 @@ export type Clock = {
   since: number | null;
 };
 
+export type ClockEventKind =
+  | "chooser"
+  | "deploy"
+  | "deployEnd"
+  | "first"
+  | "start"
+  | "switch"
+  | "turn"
+  | "pause"
+  | "resume"
+  | "judge"
+  | "judgeEnd"
+  | "adjust"
+  | "timeOut"
+  | "end";
+
+/**
+ * Before the battle, once the missions are known. chooser: a first toss, whose winner picks who
+ * deploys first. deployment: the players place a unit each in turn. first: a second toss says
+ * who takes the first turn, no choice there
+ */
+export type PreBattle = {
+  step: "chooser" | "deployment" | "first";
+  /** When the first toss was made: the other phone plays it too */
+  at: number;
+  chooser: Player;
+  deployFirst: Player | null;
+  toss: { at: number; result: Player; corrected: boolean } | null;
+};
+
+/** One line of the clock log: what happened, when, and both clocks right after */
+export type ClockEvent = {
+  at: number;
+  kind: ClockEventKind;
+  round: number;
+  /** The clock handed over, the new turn, the judge's caller, the time adjusted or run out */
+  player?: Player;
+  /** Seconds: added to a clock, or how long the judge call lasted */
+  seconds?: number;
+  left: Record<Player, number>;
+};
+
 export type GameState = {
   phase: Phase;
   clock: Clock;
   /** Whose player turn it is. Only the end of a turn changes it; switching the clock doesn't */
   turnPlayer: Player;
-  /** Current battle round (1–5): Player 1's turn, then Player 2's */
+  /** Takes the first player turn of every round: the coin toss before the game decides */
+  firstPlayer: Player;
+  /** The tosses and the deployment, then kept for the battle report */
+  preBattle: PreBattle | null;
+  /** Current battle round (1–5): the first player's turn, then the other's */
   round: number;
   /** Clocks frozen while players photograph the table between two player turns */
   photoBreak: boolean;
-  /** Chosen before the game, fixed during it */
-  options: { photoBreaks: boolean; cards: boolean };
+  /** Chosen before the game, fixed during it. Untimed deployment: the clocks start with the first turn */
+  options: { photoBreaks: boolean; cards: boolean; deployClock: boolean };
+  /** A judge called to the table: both clocks frozen since then (wall-clock ms) */
+  judgeCall: number | null;
+  /**
+   * What happened to the clocks, to settle a dispute. Keyed rather than listed: two phones
+   * logging at once both keep their line
+   */
+  clockLog: Record<string, ClockEvent>;
   cp: Record<Player, number>;
   /** CP added and removed by hand, per player-turn slot. Not the automatic +1 per turn */
   cpHistory: Record<Player, { added: number[]; removed: number[] }>;
@@ -73,6 +132,8 @@ export type GameState = {
   /** On top of the Command phase CP, a player gains at most 1 CP per battle round (11th edition) */
   bonusCpGained: Record<Player, boolean>;
   secondaries: Record<Player, SecondaryPile>;
+  /** The round each card came into the hand and left it for the discard: the battle report shows them */
+  cardRounds: Record<Player, Record<string, CardRounds>>;
   /** Swapping a card for a new one (−1 CP) is allowed once per battle */
   newCardUsed: Record<Player, boolean>;
   /** Online, each player is picking a force disposition on their own phone */
@@ -82,8 +143,12 @@ export type GameState = {
   primaries: Record<Player, string | null>;
   /** Points scored by each primary line and turn ("turn|section|item"): a second click undoes it */
   primaryScored: Record<Player, Record<string, number>>;
+  /** What a primary line was worth, for the lines the 15 points a turn allows cut short (same keys) */
+  primaryFull: Record<Player, Record<string, number>>;
   /** The latest draw at the start of a turn: the drawing player's phone shows it, whoever made it */
   lastDraw: { player: Player; ids: string[]; n: number };
+  /** The latest turn-start cards put away (the draw, then the Command phase scores): every screen showing them puts them away */
+  cardsPutAway: { player: Player; mode: "draw" | "command"; n: number };
   /** The latest +1 CP from a unit, or the cap that stopped it: the player's own phone says it */
   cpNotice: Record<Player, { gained: boolean; n: number }>;
 };
@@ -119,10 +184,14 @@ export function newGame(seconds: number = DEFAULT_TIME_SEC): GameState {
     phase: "setup",
     clock: { left: { 1: seconds, 2: seconds }, active: 1, since: null },
     turnPlayer: 1,
+    firstPlayer: 1,
+    preBattle: null,
     round: 1,
     photoBreak: false,
-    options: { photoBreaks: false, cards: true },
-    cp: { 1: 1, 2: 1 },
+    options: { photoBreaks: false, cards: true, deployClock: true },
+    judgeCall: null,
+    clockLog: {},
+    cp: { 1: 0, 2: 0 },
     cpHistory: { 1: emptyCpHistory(), 2: emptyCpHistory() },
     scoreByTurn: { 1: emptyTurnScores(), 2: emptyTurnScores() },
     endBonus: { 1: 0, 2: 0 },
@@ -130,12 +199,15 @@ export function newGame(seconds: number = DEFAULT_TIME_SEC): GameState {
     nextAbilityId: 1,
     bonusCpGained: { 1: false, 2: false },
     secondaries: { 1: newSecondaryPile(), 2: newSecondaryPile() },
+    cardRounds: { 1: {}, 2: {} },
     newCardUsed: { 1: false, 2: false },
     choosing: false,
     dispositions: { 1: null, 2: null },
     primaries: { 1: null, 2: null },
     primaryScored: { 1: {}, 2: {} },
+    primaryFull: { 1: {}, 2: {} },
     lastDraw: { player: 1, ids: [], n: 0 },
+    cardsPutAway: { player: 1, mode: "draw", n: 0 },
     cpNotice: { 1: { gained: false, n: 0 }, 2: { gained: false, n: 0 } },
   };
 }
@@ -196,15 +268,16 @@ export function scoreOf(game: GameState, player: Player, kind?: ScoreKind): numb
   const primary = sum(turns.primary) + game.endBonus[player];
   if (kind === "primary") return primary;
   if (kind === "secondary") return sum(turns.secondary);
-  return primary + sum(turns.secondary);
+  return primary + sum(turns.secondary) + (inGame(game) ? BATTLE_READY_VP : 0);
 }
 
 /**
- * Points count for the scorer's latest own turn: an action started in Player 2's turn 2
- * that completes during Player 1's turn 3 still scores for Player 2's turn 2.
+ * Points count for the scorer's latest own turn: an action started in the second player's turn 2
+ * that completes during the first player's turn 3 still scores for the second player's turn 2.
  */
 export function scoringTurnIdx(game: GameState, player: Player): number {
-  const ownTurn = player === 1 || game.turnPlayer === 2 ? game.round : game.round - 1;
+  const second = game.turnPlayer !== game.firstPlayer;
+  const ownTurn = player === game.firstPlayer || second ? game.round : game.round - 1;
   return Math.max(0, Math.min(MAX_GAME_TURN - 1, ownTurn - 1));
 }
 
