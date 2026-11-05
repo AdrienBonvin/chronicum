@@ -189,7 +189,7 @@ export function setActiveClock(clock: Clock, player: Player, now = nowMs()): voi
 
 /* ---------- Scores ---------- */
 
-const sum = (values: number[]): number => values.reduce((total, n) => total + n, 0);
+export const sum = (values: number[]): number => values.reduce((total, n) => total + n, 0);
 
 export function scoreOf(game: GameState, player: Player, kind?: ScoreKind): number {
   const turns = game.scoreByTurn[player];
