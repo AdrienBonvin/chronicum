@@ -19,6 +19,9 @@ export const DEFAULT_TIME_SEC = 7200;
 
 export type ScoreKind = "primary" | "secondary";
 
+/** The three ways a player turn ends: Player 2's turn next, the next round, or the end of the battle */
+export type TurnEndKind = "p1-to-p2" | "next-round" | "finish-game";
+
 /** CP effects given by a unit or a character */
 export type AbilityKind = "discount" | "round-cp" | "turn-cp";
 
@@ -86,6 +89,11 @@ export type GameState = {
   lastDraw: { player: Player; ids: string[]; n: number };
   /** The latest +1 CP from a unit, or the cap that stopped it: the player's own phone says it */
   cpNotice: Record<Player, { gained: boolean; n: number }>;
+  /**
+   * Online, a turn that waits for the opponent's phone: it has cards to score at this turn end.
+   * The turn passes once they are scored there, or when the player whose turn it is stops waiting
+   */
+  turnEnd: { kind: TurnEndKind; scorer: Player } | null;
 };
 
 export const other = (player: Player): Player => (player === 1 ? 2 : 1);
@@ -137,6 +145,7 @@ export function newGame(seconds: number = DEFAULT_TIME_SEC): GameState {
     primaryScored: { 1: {}, 2: {} },
     lastDraw: { player: 1, ids: [], n: 0 },
     cpNotice: { 1: { gained: false, n: 0 }, 2: { gained: false, n: 0 } },
+    turnEnd: null,
   };
 }
 

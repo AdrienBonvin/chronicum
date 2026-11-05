@@ -31,6 +31,7 @@ import {
   type GameState,
   type Player,
   type ScoreKind,
+  type TurnEndKind,
 } from "./game";
 import {
   isMuted,
@@ -442,7 +443,6 @@ app.innerHTML = `
     <div class="seat-stats">
       <div class="seat-card seat-score">
         <div class="seat-card__head"><span data-i18n="score"></span><b id="seat-score">0</b></div>
-        <span class="seat-card__sub" id="seat-turn"></span>
         ${SCORE_KINDS.map(
           ({ kind, label }) => `
         <div class="seat-row">
@@ -450,6 +450,7 @@ app.innerHTML = `
           <button type="button" class="mini-counter__btn" id="seat-${kind}-minus" aria-label="−">−</button>
           <b id="seat-${kind}">0</b>
           <button type="button" class="mini-counter__btn" id="seat-${kind}-plus" aria-label="+">+</button>
+          ${capGaugeHtml(`seat-${kind}-cap`)}
         </div>`,
         ).join("")}
         <div class="seat-row" id="seat-bonus-row" hidden>
@@ -469,6 +470,10 @@ app.innerHTML = `
         <button type="button" class="abilities-btn" id="seat-abilities-btn" data-i18n="abilities"></button>
         <div class="seat-abilities" id="seat-abilities"></div>
       </div>
+    </div>
+    <div class="seat-banner" id="seat-banner" hidden>
+      <span class="seat-banner__text" id="seat-banner-text"></span>
+      <button type="button" class="seat-banner__btn" id="seat-banner-btn"></button>
     </div>
     <nav class="seat-actions">
       <button type="button" class="btn-secondary" id="seat-hand"><span data-i18n="secondaryHand"></span> <span class="seat-count" id="seat-hand-count">0</span></button>
@@ -863,7 +868,85 @@ function applyTurnConfirm(): void {
   if (turnConfirmKind === null) return;
   const kind = turnConfirmKind;
   hideTurnConfirmModal();
+  if (isTurnEndKind(kind)) endTurn(kind);
+  else applyConfirmed(kind);
+}
+
+const isTurnEndKind = (kind: TurnConfirmKind | null): kind is TurnEndKind =>
+  kind === "p1-to-p2" || kind === "next-round" || kind === "finish-game";
+
+/**
+ * Online, the turn ends on the phone of the player whose turn it is, while the opponent's
+ * end-of-turn cards are on the other phone: when it has some, the turn waits for it. That phone
+ * opens them, and the turn passes once they are scored there. `force`: the player whose turn it is
+ * stops waiting (the other phone is away)
+ */
+function endTurn(kind: TurnEndKind, force = false): void {
+  const opponent = other(game.turnPlayer);
+  const waits =
+    !force &&
+    !!online &&
+    game.turnEnd === null &&
+    online.seat !== opponent &&
+    online.seats[opponent] &&
+    secondaryCardsOn() &&
+    turnEndCountAt(opponent, kind) > 0;
+  if (waits) {
+    game.turnEnd = { kind, scorer: opponent };
+    renderSeat();
+    return;
+  }
+  game.turnEnd = null;
   applyConfirmed(kind);
+}
+
+/** What a player has to score at a turn end of this kind (the end of the battle adds its own) */
+function turnEndCountAt(owner: Player, kind: TurnEndKind): number {
+  const before = endTurnKind;
+  endTurnKind = kind;
+  const count = turnEndCount(owner);
+  endTurnKind = before;
+  return count;
+}
+
+/** On the opponent's phone: the cards that score at the end of the turn that waits for them */
+function openTurnEndScoring(): void {
+  const pending = game.turnEnd;
+  if (!online || pending?.scorer !== online.seat) return;
+  endTurnKind = pending.kind;
+  endTurnSides = [online.seat];
+  openCards(online.seat, "end-turn");
+  navigator.vibrate?.([120, 80, 120]);
+}
+
+/**
+ * The line above the actions on a phone: during the opponent's turn, what this player can score
+ * when it ends; then, the turn end waiting for this phone, or the wait for the other one
+ */
+function renderSeatBanner(me: Player): void {
+  const banner = app.querySelector<HTMLElement>("#seat-banner")!;
+  const pending = game.turnEnd;
+  const due = inGame(game) && !isOver() && secondaryCardsOn() && me !== game.turnPlayer ? turnEndCount(me) : 0;
+  let state = "";
+  let text = "";
+  let action = "";
+  if (pending?.scorer === me) {
+    state = "score";
+    text = t("seatScoreNow", { n: game.turnPlayer });
+    action = t("seatScoreBtn");
+  } else if (pending) {
+    state = "wait";
+    text = t("seatWaiting", { n: pending.scorer });
+    action = t("seatEndAnyway");
+  } else if (due > 0) {
+    state = "alert";
+    text = t("turnEndAlert", { n: due });
+    action = t("seatSee");
+  }
+  banner.hidden = state === "";
+  banner.dataset.state = state;
+  app.querySelector<HTMLElement>("#seat-banner-text")!.textContent = text;
+  app.querySelector<HTMLElement>("#seat-banner-btn")!.textContent = action;
 }
 
 function applyConfirmed(kind: TurnConfirmKind): void {
@@ -1682,6 +1765,7 @@ function reset(): void {
   afterPutAway = null;
   closeCards(false);
   game.choosing = false;
+  game.turnEnd = null;
   game.primaries = { 1: null, 2: null };
   game.primaryScored = { 1: {}, 2: {} };
   game.secondaries = { 1: newSecondaryPile(), 2: newSecondaryPile() };
@@ -3389,7 +3473,7 @@ function continueCards(): void {
   const turnEnd = cardsMode === "end-turn" ? endTurnKind : null;
   closeCards();
   if (startsGame) start();
-  if (turnEnd) applyConfirmed(turnEnd);
+  if (isTurnEndKind(turnEnd)) endTurn(turnEnd);
 }
 
 btnCardsClose.addEventListener("click", continueCards);
@@ -3973,6 +4057,11 @@ function renderState(prev: GameState, joining: boolean): void {
   else if (!game.photoBreak && prev.photoBreak) hidePhotoBreak();
   const seat = online?.seat;
   if (!joining && seat && game.cpNotice[seat].n !== prev.cpNotice[seat].n) sayCp(seat, game.cpNotice[seat].gained);
+  // The other phone ended its turn and waits for this one's end-of-turn scores, or stopped waiting
+  if (seat && game.turnEnd?.scorer === seat && (joining || prev.turnEnd?.scorer !== seat)) openTurnEndScoring();
+  else if (seat && !game.turnEnd && prev.turnEnd?.scorer === seat && cardsPlayer === seat && cardsMode === "end-turn") {
+    closeCards(false);
+  }
   if (!joining && game.lastDraw.n !== prev.lastDraw.n) {
     const { player, ids } = game.lastDraw;
     if (game.photoBreak) {
@@ -4141,16 +4230,19 @@ function renderSeat(): void {
   seatClock.setAttribute("aria-disabled", String(!mine));
   renderSeatTimes();
 
+  // The game totals, as on the board; the gauges show this turn against its 15
   const turnIdx = scoringTurnIdx(me);
+  const turns = game.scoreByTurn[me];
   seatText("seat-score", String(scoreOf(me)));
-  seatText("seat-turn", inGame(game) ? t("turnN", { n: turnIdx + 1 }) : "");
   for (const { kind } of SCORE_KINDS) {
-    const points = game.scoreByTurn[me][kind][turnIdx];
-    seatText(`seat-${kind}`, String(points));
+    const points = turns[kind][turnIdx];
+    seatText(`seat-${kind}`, String(sum(turns[kind])));
+    setCapGauge(app.querySelector<HTMLElement>(`#seat-${kind}-cap`)!, points, turnIdx, true);
     app.querySelector<HTMLButtonElement>(`#seat-${kind}-plus`)!.disabled = !inGame(game) || points >= MAX_POINTS_PER_TURN;
     app.querySelector<HTMLButtonElement>(`#seat-${kind}-minus`)!.disabled = !inGame(game) || points === 0;
   }
-  app.querySelector<HTMLElement>("#seat-bonus-row")!.hidden = !inGame(game) || turnIdx !== MAX_GAME_TURN - 1;
+  app.querySelector<HTMLElement>("#seat-bonus-row")!.hidden =
+    game.endBonus[me] === 0 && (!inGame(game) || turnIdx !== MAX_GAME_TURN - 1);
   seatText("seat-bonus", String(game.endBonus[me]));
   seatText("seat-cp", String(game.cp[me]));
   seatText("seat-hand-count", String(game.secondaries[me].hand.length));
@@ -4161,7 +4253,8 @@ function renderSeat(): void {
   const pauseBtn = app.querySelector<HTMLButtonElement>("#seat-pause")!;
   pauseBtn.hidden = !playing;
   pauseBtn.textContent = t(running ? "seatPause" : "seatResume");
-  app.querySelector<HTMLElement>("#seat-end")!.hidden = !running || game.turnPlayer !== me;
+  app.querySelector<HTMLElement>("#seat-end")!.hidden = !running || game.turnPlayer !== me || game.turnEnd !== null;
+  renderSeatBanner(me);
   app.querySelector<HTMLElement>("#seat-reset")!.hidden = !inGame(game);
 }
 
@@ -4205,6 +4298,15 @@ const seatActions: [string, (me: Player) => void][] = [
     },
   ],
   ["seat-room", () => openOnlineDialog()],
+  [
+    "seat-banner-btn",
+    (me) => {
+      const pending = game.turnEnd;
+      if (pending?.scorer === me) openTurnEndScoring();
+      else if (pending) endTurn(pending.kind, true);
+      else openCards(me, "hand");
+    },
+  ],
 ];
 for (const [id, action] of seatActions) {
   app.querySelector<HTMLButtonElement>(`#${id}`)!.addEventListener("click", () => {
