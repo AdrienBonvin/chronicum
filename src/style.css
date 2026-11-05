@@ -14,8 +14,6 @@
   --muted: #7f8a99;
   --faint: #3d4552;
   --danger: #ff5f5f;
-  /* Near the 15 points of a turn */
-  --warn: #f2b705;
   /* Current round, chosen option, primary button */
   --accent: var(--text);
   --on-accent: var(--bg);
@@ -1732,6 +1730,14 @@ kbd {
   color: var(--text);
 }
 
+.score-box__turn {
+  font-size: 0.56rem;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.16em;
+  color: var(--muted);
+}
+
 .score-box__row {
   display: grid;
   grid-template-columns: 1fr auto auto auto;
@@ -1747,126 +1753,6 @@ kbd {
 
 .score-box__row[hidden] {
   display: none;
-}
-
-/* This turn against the 15 allowed: a thin bar under the game total of the row */
-.score-box__row .cap-gauge {
-  grid-column: 1 / -1;
-  margin-top: -0.1rem;
-}
-
-.cap-gauge {
-  display: flex;
-  align-items: center;
-  gap: 0.45rem;
-  min-width: 0;
-  cursor: help;
-}
-
-.cap-gauge__bar {
-  position: relative;
-  flex: 1;
-  min-width: 2.5rem;
-  height: 4px;
-  border-radius: 2px;
-  background: var(--line-strong);
-  overflow: hidden;
-}
-
-.cap-gauge__fill {
-  display: block;
-  width: calc(var(--fill, 0) * 100%);
-  height: 100%;
-  background: var(--pc, var(--text));
-  transition: width 0.3s ease, background 0.2s ease;
-}
-
-/* Marks every 5 points */
-.cap-gauge__bar::after {
-  content: "";
-  position: absolute;
-  inset: 0;
-  background: linear-gradient(
-    90deg,
-    transparent calc(100% / 3 - 1px),
-    var(--surface) calc(100% / 3 - 1px) calc(100% / 3),
-    transparent calc(100% / 3) calc(200% / 3 - 1px),
-    var(--surface) calc(200% / 3 - 1px) calc(200% / 3),
-    transparent calc(200% / 3)
-  );
-}
-
-.cap-gauge__text {
-  font-family: var(--font-num);
-  font-variant-numeric: tabular-nums;
-  font-size: 0.56rem;
-  font-weight: 600;
-  white-space: nowrap;
-  color: var(--muted);
-}
-
-.cap-gauge.is-near .cap-gauge__fill {
-  background: var(--warn);
-}
-
-.cap-gauge.is-near .cap-gauge__text {
-  color: var(--warn);
-}
-
-.cap-gauge.is-full .cap-gauge__fill {
-  background: var(--danger);
-}
-
-.cap-gauge.is-full .cap-gauge__text {
-  color: var(--danger);
-}
-
-/* On the opponent's box during the turn: what they can score when it ends */
-.score-box__alert {
-  display: flex;
-  align-items: center;
-  gap: 0.45rem;
-  margin-top: 0.35rem;
-  padding: 0.35rem 0.5rem;
-  border: 1px solid var(--pc);
-  border-radius: 4px;
-  background: color-mix(in srgb, var(--pc) 14%, var(--surface));
-  color: var(--text);
-  font-size: 0.58rem;
-  font-weight: 700;
-  text-transform: uppercase;
-  letter-spacing: 0.1em;
-  text-align: left;
-}
-
-.score-box__alert::before {
-  content: "";
-  flex: none;
-  width: 0.45rem;
-  height: 0.45rem;
-  border-radius: 50%;
-  background: var(--pc);
-  animation: alertPulse 1.6s ease-in-out infinite;
-}
-
-.score-box__alert:hover {
-  background: color-mix(in srgb, var(--pc) 26%, var(--surface));
-}
-
-.score-box__alert[hidden] {
-  display: none;
-}
-
-@keyframes alertPulse {
-  50% {
-    opacity: 0.25;
-  }
-}
-
-@media (prefers-reduced-motion: reduce) {
-  .score-box__alert::before {
-    animation: none;
-  }
 }
 
 /* Last turn only: mission bonus, set apart from the capped per-turn points */
@@ -2688,60 +2574,6 @@ kbd {
   padding: 0.6rem 1rem 0;
 }
 
-/* Where the screen sits in the game, in the color of the player whose turn it is */
-.cards-kicker {
-  margin: 0;
-  font-size: 0.66rem;
-  font-weight: 700;
-  text-transform: uppercase;
-  letter-spacing: 0.16em;
-  color: var(--muted);
-  text-shadow: 0 1px 8px rgba(0, 0, 0, 0.8);
-}
-
-.cards-kicker.is-p1 {
-  color: var(--p1);
-}
-
-.cards-kicker.is-p2 {
-  color: var(--p2);
-}
-
-.cards-kicker[hidden],
-.cards-caps[hidden] {
-  display: none;
-}
-
-/* This turn's points of the cards' owner, against the 15 allowed */
-.cards-caps {
-  display: flex;
-  flex-wrap: wrap;
-  justify-content: center;
-  align-items: center;
-  gap: 0.5rem 1.1rem;
-  margin: -0.5rem 0 0.9rem;
-  font-size: 0.62rem;
-  font-weight: 600;
-  text-transform: uppercase;
-  letter-spacing: 0.12em;
-  color: var(--muted);
-}
-
-.cards-caps__item {
-  display: flex;
-  align-items: center;
-  gap: 0.5rem;
-}
-
-.cards-caps .cap-gauge__bar {
-  width: 5rem;
-  flex: none;
-}
-
-.cards-caps .cap-gauge__text {
-  font-size: 0.7rem;
-}
-
 .cards-title {
   margin: 0;
   font-size: 1.5rem;
@@ -3078,21 +2910,6 @@ kbd {
   color: var(--muted);
 }
 
-/* At a turn end: the moment that makes the card score now */
-.sec-card__when.is-now {
-  align-self: flex-start;
-  padding: 0.1rem 0.5rem;
-  border: 1px solid var(--pc);
-  border-radius: 999px;
-  background: var(--pc-soft);
-  color: var(--text);
-  font-weight: 600;
-}
-
-.sec-card__when.is-now:empty {
-  display: none;
-}
-
 .sec-card__note {
   margin: 0;
   padding: 0.4rem 0.55rem;
@@ -3150,23 +2967,6 @@ button.sec-option:hover:not(:disabled) {
   font-weight: 700;
   line-height: 1;
   color: var(--pc);
-}
-
-/* Cut by the 15 per turn: the full value struck out, small, above what counts */
-.sec-option__vp s {
-  display: block;
-  font-size: 0.6rem;
-  font-weight: 600;
-  color: var(--muted);
-}
-
-.sec-option.is-capped .sec-option__vp,
-.sec-option__go.is-capped {
-  color: var(--warn);
-}
-
-.sec-option__go s {
-  opacity: 0.6;
 }
 
 .sec-option__vp small {
@@ -3416,7 +3216,8 @@ button.sec-option:hover:not(:disabled) {
   --pc-line: var(--p2-line);
 }
 
-.overlay--cards[data-mode="primary"] .cards-title {
+.overlay--cards[data-mode="primary"] .cards-title,
+.overlay--cards[data-mode="end-turn"] .cards-title {
   color: var(--text);
 }
 
@@ -4340,4 +4141,612 @@ button.sec-option:hover:not(:disabled) {
   .toolbar {
     flex-direction: column;
   }
+}
+
+/* ---------- Online: one phone per player ---------- */
+
+.btn-online {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.45rem;
+  padding: 0.35rem 0.7rem;
+  border: 1px solid var(--line-strong);
+  border-radius: 5px;
+  background: var(--surface);
+  color: var(--muted);
+  font-size: 0.75rem;
+}
+
+.btn-online:hover {
+  color: var(--text);
+}
+
+:root[data-seat] .btn-online {
+  color: var(--text);
+  border-color: var(--me);
+}
+
+/* This phone's player: their color leads, the opponent's only marks their strip */
+:root[data-seat="1"] {
+  --me: var(--p1);
+  --me-time: var(--p1-time);
+  --me-glow: var(--p1-glow);
+  --them: var(--p2);
+}
+
+:root[data-seat="2"] {
+  --me: var(--p2);
+  --me-time: var(--p2-time);
+  --me-glow: var(--p2-glow);
+  --them: var(--p1);
+}
+
+.seat {
+  display: none;
+}
+
+:root[data-seat] .board {
+  display: none;
+}
+
+:root[data-seat] .seat {
+  --pc: var(--me);
+  --pc-soft: color-mix(in srgb, var(--me) 8%, transparent);
+  --pc-line: color-mix(in srgb, var(--me) 50%, transparent);
+  flex: 1 1 auto;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 0.7rem;
+  width: 100%;
+  max-width: 34rem;
+  margin: 0 auto;
+  padding: 0.75rem max(1rem, env(safe-area-inset-right, 0px)) max(0.9rem, env(safe-area-inset-bottom, 0px))
+    max(1rem, env(safe-area-inset-left, 0px));
+  overflow-y: auto;
+}
+
+.seat-bar {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 1rem;
+}
+
+.seat-room {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.5rem;
+  padding: 0.3rem 0.75rem;
+  border: 1px solid var(--line-strong);
+  border-radius: 999px;
+  background: var(--surface);
+  color: var(--text);
+  font-family: var(--font-num);
+  font-size: 0.8rem;
+  letter-spacing: 0.2em;
+}
+
+.seat-room__dot {
+  width: 0.5rem;
+  height: 0.5rem;
+  border-radius: 50%;
+  background: #3ecf8e;
+}
+
+.seat-room.is-offline .seat-room__dot {
+  background: var(--danger);
+}
+
+.seat-bar__round {
+  color: var(--muted);
+  font-size: 0.7rem;
+  font-weight: 600;
+  letter-spacing: 0.18em;
+  text-transform: uppercase;
+}
+
+/* The opponent: one discreet line */
+.seat-opp {
+  display: flex;
+  align-items: baseline;
+  gap: 0.9rem;
+  padding: 0.55rem 0.85rem;
+  border: 1px solid var(--line);
+  border-left: 3px solid var(--them);
+  border-radius: 6px;
+  background: var(--surface);
+  color: var(--muted);
+}
+
+.seat-opp__name {
+  flex: 1;
+  color: var(--them);
+  font-size: 0.7rem;
+  font-weight: 600;
+  letter-spacing: 0.16em;
+  text-transform: uppercase;
+}
+
+.seat-opp__score {
+  color: var(--text);
+  font-family: var(--font-num);
+  font-size: 1.05rem;
+  font-weight: 700;
+}
+
+.seat-opp__score small {
+  color: var(--muted);
+  font-size: 0.7rem;
+  font-weight: 600;
+}
+
+.seat-opp__time {
+  font-family: var(--font-num);
+  font-size: 0.9rem;
+  font-variant-numeric: tabular-nums;
+}
+
+.seat-opp.is-running .seat-opp__time {
+  color: var(--text);
+}
+
+.seat-opp.is-running .seat-opp__time::before {
+  content: "";
+  display: inline-block;
+  width: 0.45rem;
+  height: 0.45rem;
+  margin-right: 0.4rem;
+  border-radius: 50%;
+  background: var(--them);
+  vertical-align: 0.1em;
+}
+
+/* This phone's clock: the whole block is the button that passes it */
+.seat-clock {
+  flex: 1 0 9rem;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 0.6rem;
+  padding: 1rem;
+  border: 1px solid var(--line);
+  border-radius: 10px;
+  background: var(--surface);
+  color: var(--muted);
+  touch-action: manipulation;
+  user-select: none;
+}
+
+.seat-clock[aria-disabled="true"] {
+  cursor: default;
+}
+
+.seat-clock[aria-disabled="true"]:active {
+  transform: none;
+}
+
+.seat-clock.is-running {
+  border-color: var(--me);
+  box-shadow:
+    inset 0 0 0 1px var(--me),
+    0 0 48px -12px var(--me-glow);
+  color: var(--text);
+}
+
+.seat-clock__who {
+  color: var(--me);
+  font-size: 0.72rem;
+  font-weight: 600;
+  letter-spacing: 0.18em;
+  text-transform: uppercase;
+}
+
+.seat-clock__time.time {
+  font-size: clamp(3.2rem, 17vw, 6.5rem);
+  color: var(--me-time);
+  opacity: 0.5;
+}
+
+.seat-clock.is-running .seat-clock__time {
+  opacity: 1;
+  text-shadow: 0 0 40px var(--me-glow);
+}
+
+.seat-clock__hint {
+  font-size: 0.78rem;
+  letter-spacing: 0.04em;
+}
+
+.seat-stats {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 0.7rem;
+}
+
+.seat-card {
+  display: flex;
+  flex-direction: column;
+  gap: 0.45rem;
+  min-width: 0;
+  padding: 0.7rem 0.75rem;
+  border: 1px solid var(--line);
+  border-top: 2px solid var(--me);
+  border-radius: 6px;
+  background: var(--surface);
+}
+
+.seat-card__head {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 0.5rem;
+  color: var(--muted);
+  font-size: 0.62rem;
+  font-weight: 600;
+  letter-spacing: 0.14em;
+  text-transform: uppercase;
+}
+
+.seat-card__head b {
+  color: var(--text);
+  font-family: var(--font-num);
+  font-size: 1.7rem;
+  letter-spacing: 0;
+  line-height: 1;
+}
+
+.seat-card__sub {
+  color: var(--muted);
+  font-size: 0.62rem;
+  letter-spacing: 0.14em;
+  text-transform: uppercase;
+}
+
+.seat-card__sub:empty {
+  display: none;
+}
+
+/* The label on top, then − value +: fits the narrowest phones */
+.seat-row {
+  display: grid;
+  grid-template-columns: auto 1fr auto;
+  align-items: center;
+  justify-items: center;
+  gap: 0.2rem 0.3rem;
+  color: var(--muted);
+  font-size: 0.6rem;
+  font-weight: 600;
+  letter-spacing: 0.1em;
+  text-transform: uppercase;
+}
+
+.seat-row[hidden] {
+  display: none;
+}
+
+.seat-row > span {
+  grid-column: 1 / -1;
+  justify-self: start;
+}
+
+.seat-row b,
+.seat-cp__row b {
+  min-width: 1.8ch;
+  color: var(--text);
+  font-family: var(--font-num);
+  font-size: 1.1rem;
+  text-align: center;
+}
+
+.seat .mini-counter__btn {
+  width: 2.25rem;
+  height: 2.25rem;
+}
+
+/* With the cards, points come from scoring them, as on the board */
+#app.uses-secondary-cards .seat-score .mini-counter__btn {
+  visibility: hidden;
+}
+
+/* The +1 CP news shows over the card, as it does over the CP box on the board */
+.seat-cp {
+  position: relative;
+}
+
+.seat-cp .cp-toast {
+  top: auto;
+  bottom: calc(100% + 0.4rem);
+  transform: translateY(0.4rem);
+}
+
+.seat-cp .cp-toast.is-visible {
+  transform: none;
+}
+
+.seat-cp__row {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 0.75rem;
+}
+
+.seat-cp__row b {
+  font-size: 2rem;
+}
+
+.seat-abilities .abilities {
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: center;
+  gap: 0.5rem;
+}
+
+.seat-actions {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 0.5rem;
+}
+
+.seat-actions button {
+  min-height: 3rem;
+}
+
+.seat-actions button[hidden] {
+  display: none;
+}
+
+#seat-end {
+  grid-column: 1 / -1;
+  min-height: 3.4rem;
+  font-size: 1rem;
+  background: var(--me);
+  color: var(--bg);
+}
+
+.seat-count {
+  display: inline-block;
+  min-width: 1.6em;
+  margin-left: 0.3rem;
+  padding: 0.05rem 0.35rem;
+  border-radius: 999px;
+  background: var(--me);
+  color: var(--bg);
+  font-family: var(--font-num);
+  font-size: 0.75rem;
+}
+
+.seat-foot {
+  display: flex;
+  justify-content: center;
+}
+
+.seat-foot button[hidden] {
+  display: none;
+}
+
+/* ---------- Online dialog ---------- */
+
+.online-seat {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 1rem;
+  margin-top: 1.25rem;
+}
+
+.online-seat__label {
+  color: var(--muted);
+  font-size: 0.75rem;
+  font-weight: 600;
+  letter-spacing: 0.12em;
+  text-transform: uppercase;
+}
+
+.online-seat .segmented__option.is-p1[aria-pressed="true"] {
+  background: var(--p1);
+  color: var(--bg);
+}
+
+.online-seat .segmented__option.is-p2[aria-pressed="true"] {
+  background: var(--p2);
+  color: var(--bg);
+}
+
+.online-create {
+  width: 100%;
+  min-height: 2.8rem;
+  margin-top: 1rem;
+}
+
+.overlay-inner p.online-or {
+  margin-top: 1.1rem;
+  font-size: 0.8rem;
+  text-align: center;
+}
+
+.online-join {
+  display: flex;
+  gap: 0.5rem;
+  margin-top: 0.5rem;
+}
+
+.online-join input {
+  flex: 1;
+  min-width: 0;
+  padding: 0.5rem 0.75rem;
+  border: 1px solid var(--line-strong);
+  border-radius: 4px;
+  background: var(--bg);
+  color: var(--text);
+  font-family: var(--font-num);
+  font-size: 1.1rem;
+  letter-spacing: 0.3em;
+  text-transform: uppercase;
+}
+
+.online-room {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  text-align: center;
+}
+
+.online-room[hidden],
+.online-start[hidden] {
+  display: none;
+}
+
+.overlay-inner p.online-code {
+  margin-top: 1rem;
+  color: var(--text);
+  font-family: var(--font-num);
+  font-size: 2.4rem;
+  font-weight: 700;
+  letter-spacing: 0.3em;
+}
+
+.online-qr {
+  width: 11rem;
+  margin-top: 0.75rem;
+  padding: 0.4rem;
+  border-radius: 6px;
+  background: #fff;
+}
+
+.online-qr:empty {
+  display: none;
+}
+
+.online-qr svg {
+  display: block;
+  width: 100%;
+  height: auto;
+}
+
+.overlay-inner p.online-status {
+  color: var(--text);
+  font-weight: 600;
+}
+
+.online-room button {
+  margin-top: 1rem;
+}
+
+.overlay-inner p.online-error {
+  color: var(--danger);
+}
+
+.online-error[hidden],
+#online-leave[hidden],
+#online-share[hidden] {
+  display: none;
+}
+
+/* ---------- Primaries reveal on a phone ---------- */
+
+/* The two missions stack around the VS instead of facing off across the width */
+.overlay--cards[data-mode="primary"] .cards-row.is-stacked {
+  flex-direction: column;
+  align-items: stretch;
+  gap: 0.6rem;
+  /* The stage is zoomed by the interface size: the width is set before the zoom */
+  width: min(22rem, calc((100vw - 2rem) / var(--ui-scale)));
+}
+
+.cards-row.is-stacked .sec-card--primary {
+  width: 100%;
+}
+
+.cards-row.is-stacked .versus {
+  align-self: auto;
+  width: 100%;
+  height: 4rem;
+}
+
+.cards-row.is-stacked .versus__line {
+  top: 50%;
+  bottom: auto;
+  left: 6%;
+  right: 6%;
+  width: auto;
+  height: 2px;
+  background: linear-gradient(90deg, transparent, var(--p1) 25%, var(--p2) 75%, transparent);
+  transform: translateY(-50%);
+}
+
+.cards-row.is-stacked.is-clashing .versus__line {
+  animation-name: versusLineAcross;
+}
+
+@keyframes versusLineAcross {
+  from {
+    opacity: 0;
+    transform: translateY(-50%) scaleX(0);
+  }
+}
+
+.cards-row.is-stacked .versus__text {
+  width: 3.6rem;
+  height: 3.6rem;
+  font-size: 1.35rem;
+}
+
+/* A short card: the mission's name and deck only, the full card is a tap away in the game */
+.sec-card--primary.is-compact .sec-card__inner {
+  min-height: 0;
+}
+
+.sec-card--primary.is-compact :is(.sec-card__note, .pri-sections, .sec-card__actions) {
+  display: none;
+}
+
+/* ---------- Force dispositions, one player per phone ---------- */
+
+:root[data-seat] .overlay--dispo .dispo-grid {
+  grid-template-columns: 1fr;
+}
+
+:root[data-seat="1"] .overlay--dispo .dispo-column.is-p2,
+:root[data-seat="2"] .overlay--dispo .dispo-column.is-p1 {
+  display: none;
+}
+
+.overlay-inner p.dispo-status {
+  margin-top: 1rem;
+  color: var(--text);
+  font-weight: 600;
+}
+
+.dispo-status[hidden] {
+  display: none;
+}
+
+/* The opponent's primary: a small target at the end of their strip */
+.seat-opp__primary {
+  display: inline-grid;
+  place-items: center;
+  align-self: center;
+  width: 2rem;
+  height: 2rem;
+  padding: 0;
+  border: 1px solid var(--line);
+  border-radius: 50%;
+  background: transparent;
+  color: var(--them);
+}
+
+.seat-opp__primary[hidden] {
+  display: none;
+}
+
+.seat-opp__primary .icon {
+  width: 1.1rem;
+  height: 1.1rem;
+}
+
+/* Online, Player 2 waits for Player 1 to start: no key to press */
+#btn-cards-close:disabled kbd {
+  display: none;
 }

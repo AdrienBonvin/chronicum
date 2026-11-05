@@ -1,7 +1,36 @@
 import "./style.css";
 import { getLang, setLang, t, type Lang, type StringKey } from "./i18n";
-import { SECONDARY_BY_ID, SECONDARY_CARDS, type SecondaryCard, type Text } from "./secondaries";
+import { SECONDARY_BY_ID, type SecondaryCard, type Text } from "./secondaries";
 import { FACTION_BY_ID, FACTIONS, SPACE_MARINES, SPACE_MARINES_NAME, type FactionGroup } from "./factions";
+import { applyUpdateIfIdle, setupPwa } from "./pwa";
+import type { Room, RoomEvents } from "./room";
+import { merge } from "./sync";
+import {
+  DEFAULT_TIME_SEC,
+  MAX_GAME_TURN,
+  MAX_PLAYER_TURNS,
+  MAX_POINTS_PER_TURN,
+  clampCp,
+  emptyCpHistory,
+  emptyTurnScores,
+  inGame,
+  isStopped,
+  newGame,
+  newSecondaryPile,
+  other,
+  playerTurnSlot,
+  runClock,
+  scoreOf as scoreOfGame,
+  scoringTurnIdx as scoringTurnIdxOf,
+  secondsLeft,
+  setActiveClock,
+  stopClock,
+  type Ability,
+  type AbilityKind,
+  type GameState,
+  type Player,
+  type ScoreKind,
+} from "./game";
 import {
   isMuted,
   playSound,
@@ -15,14 +44,13 @@ import {
 } from "./audio";
 import {
   DISPOSITIONS,
+  PRIMARY_BY_ID,
   primaryFor,
   type Disposition,
   type PrimaryCard,
   type PrimaryItem,
   type PrimarySection,
 } from "./primaries";
-
-type Player = 1 | 2;
 
 const PRESETS = [
   { label: "1h30", sec: 5400 },
@@ -33,12 +61,6 @@ const PRESETS = [
 ] as const;
 
 const CUSTOM_PRESET_VALUE = "custom";
-const DEFAULT_TIME_SEC = 7200;
-
-type ScoreKind = "primary" | "secondary";
-
-/** Mission rule: at most 15 primary and 15 secondary points per player turn */
-const MAX_POINTS_PER_TURN = 15;
 
 /** Open the hand (S) and the primary (P) of the player whose clock runs; physical keys, the same on AZERTY */
 const HAND_KEY = "S";
@@ -53,22 +75,10 @@ const SCORE_KINDS: { kind: ScoreKind; label: StringKey; ariaMinus: StringKey; ar
   { kind: "secondary", label: "secondary", ariaMinus: "ariaSecondaryMinus", ariaPlus: "ariaSecondaryPlus" },
 ];
 
-/** CP effects given by a unit or a character */
-type AbilityKind = "discount" | "round-cp" | "turn-cp";
-
 const ABILITY_KINDS: Record<AbilityKind, { title: StringKey; hint: StringKey; short: StringKey }> = {
   discount: { title: "discountTitle", hint: "discountHint", short: "discountShort" },
   "round-cp": { title: "roundCpTitle", hint: "roundCpHint", short: "roundCpShort" },
   "turn-cp": { title: "turnCpTitle", hint: "turnCpHint", short: "turnCpShort" },
-};
-
-type Ability = {
-  id: number;
-  kind: AbilityKind;
-  /** Its character is gone; a reset brings it back for the next game */
-  lost: boolean;
-  /** Discount only: already used this battle round */
-  spent: boolean;
 };
 
 /** Key kept from the former "Counters" setting so saved choices survive the rename */
@@ -141,6 +151,7 @@ const ICON_SLIDERS = svgIcon(
 );
 const ICON_CHECK = svgIcon('<path d="M5 12.5l4.5 4.5L19 7.5" />');
 const ICON_CHEVRON = svgIcon('<path d="M7 10l5 5 5-5" />');
+const ICON_ONLINE = svgIcon('<rect x="2.5" y="5" width="7" height="14" rx="1.5" /><rect x="14.5" y="5" width="7" height="14" rx="1.5" /><path d="M9.5 12h5" />');
 const ICON_RESET = svgIcon('<path d="M4 12a8 8 0 1 0 2.4-5.7M4 4v4h4" />');
 const ICON_ROWS = svgIcon('<rect x="2" y="2" width="24" height="7" rx="1" /><rect x="2" y="11" width="24" height="7" rx="1" />', "0 0 28 20");
 const ICON_COLUMNS = svgIcon('<rect x="2" y="2" width="11" height="16" rx="1" /><rect x="15" y="2" width="11" height="16" rx="1" />', "0 0 28 20");
@@ -157,7 +168,6 @@ function scoreCounterHtml(player: Player, corner: "tl" | "bl"): string {
           <button type="button" class="mini-counter__btn" id="p${player}-${kind}-minus" data-i18n-aria="${ariaMinus}" data-v-n="${player}">−</button>
           <span class="mini-counter__val" id="p${player}-${kind}-val">0</span>
           <button type="button" class="mini-counter__btn" id="p${player}-${kind}-plus" data-i18n-aria="${ariaPlus}" data-v-n="${player}">+</button>
-          ${capGaugeHtml(`p${player}-${kind}-cap`)}
         </div>`,
   ).join("");
   return `
@@ -166,7 +176,7 @@ function scoreCounterHtml(player: Player, corner: "tl" | "bl"): string {
           <span class="mini-counter__label" data-i18n="score"></span>
           <span class="score-box__total" id="p${player}-score-total">0</span>
         </div>
-        ${rows}
+        <span class="score-box__turn" id="p${player}-score-turn"></span>${rows}
         <div class="score-box__row score-box__row--bonus" id="p${player}-bonus-row" hidden data-i18n-title="endBonusTitle" data-v-max="${MAX_POINTS_PER_TURN}">
           <span class="score-box__kind" data-i18n="endBonus"></span>
           <button type="button" class="mini-counter__btn" id="p${player}-bonus-minus" data-i18n-aria="ariaBonusMinus" data-v-n="${player}">−</button>
@@ -185,56 +195,7 @@ function scoreCounterHtml(player: Player, corner: "tl" | "bl"): string {
             <kbd>${HAND_KEY}</kbd>
           </button>
         </div>
-        <button type="button" class="score-box__alert" id="p${player}-turn-end-alert" data-i18n-aria="turnEndAlertAria" data-v-n="${player}" hidden></button>
       </div>`;
-}
-
-/** This turn's points against the 15 allowed: a bar that warns near the cap and locks at it */
-function capGaugeHtml(id = ""): string {
-  return `<span class="cap-gauge"${id ? ` id="${id}"` : ""}><span class="cap-gauge__bar"><span class="cap-gauge__fill"></span></span><span class="cap-gauge__text"></span></span>`;
-}
-
-/** Near the cap: 3 points or fewer left */
-const CAP_NEAR = MAX_POINTS_PER_TURN - 3;
-
-function setCapGauge(gauge: HTMLElement, points: number, turnIdx: number, suffix: boolean): void {
-  gauge.style.setProperty("--fill", String(Math.min(1, points / MAX_POINTS_PER_TURN)));
-  gauge.classList.toggle("is-near", points >= CAP_NEAR && points < MAX_POINTS_PER_TURN);
-  gauge.classList.toggle("is-full", points >= MAX_POINTS_PER_TURN);
-  gauge.querySelector(".cap-gauge__text")!.textContent = suffix
-    ? t("capThisTurn", { n: points, max: MAX_POINTS_PER_TURN })
-    : `${points}/${MAX_POINTS_PER_TURN}`;
-  gauge.title = t("capTitle", { t: turnIdx + 1, n: points, max: MAX_POINTS_PER_TURN });
-}
-
-/** Points left under the 15 of this turn; the end-of-battle bonus has no cap */
-function roomThisTurn(player: Player, kind: ScoreKind): number {
-  return MAX_POINTS_PER_TURN - scoreByTurn[player][kind][scoringTurnIdx(player)];
-}
-
-/** Points shown on a scoring button: when the cap cuts them, the full value struck out above what counts */
-function vpHtml(vp: number, room: number): string {
-  const unit = t("vpUnit");
-  if (vp <= room) return `${vp}<small>${unit}</small>`;
-  return `<s>${vp}</s>${Math.max(0, room)}<small>${unit}</small>`;
-}
-
-/** "Score 6 VP", or "Score <s>6</s> 3 VP" when the cap cuts it */
-function goHtml(total: number, room: number): string {
-  const counted = Math.max(0, Math.min(total, room));
-  const struck = total > counted ? `<s>${total}</s> ` : "";
-  return `${t("scoreIt")} ${struck}${counted} ${t("vpUnit")}`;
-}
-
-function setGoButton(go: HTMLElement, total: number, room: number): void {
-  go.innerHTML = goHtml(total, room);
-  markCapped(go, total, room);
-}
-
-function markCapped(el: HTMLElement, vp: number, room: number): void {
-  const capped = vp > room;
-  el.classList.toggle("is-capped", capped);
-  el.title = capped ? t("cappedTitle", { max: MAX_POINTS_PER_TURN, n: Math.max(0, room), unit: t("vpUnit") }) : "";
 }
 
 function cpCornerHtml(player: Player, corner: "tr" | "br"): string {
@@ -309,6 +270,7 @@ app.innerHTML = `
       </label>
     </div>
     <div class="toolbar__group toolbar__group--end">
+      <button type="button" class="btn-online" id="btn-online">${ICON_ONLINE}<span data-i18n="online"></span></button>
       <div class="popover-anchor">
         <button type="button" class="btn-icon" id="btn-settings" aria-expanded="false" aria-controls="settings-panel" data-i18n-aria="display" data-i18n-title="display">${ICON_SLIDERS}</button>
         <div class="popover popover--end settings__panel" id="settings-panel" hidden>
@@ -410,6 +372,63 @@ app.innerHTML = `
     </div>
     ${panelHtml(2)}
   </div>
+  <section class="seat" id="seat" aria-live="polite">
+    <header class="seat-bar">
+      <button type="button" class="seat-room" id="seat-room"><span class="seat-room__dot" aria-hidden="true"></span><span id="seat-code"></span></button>
+      <span class="seat-bar__round" id="seat-round"></span>
+    </header>
+    <div class="seat-opp" id="seat-opp">
+      <span class="seat-opp__name" id="seat-opp-name"></span>
+      <span class="seat-opp__score"><span id="seat-opp-score">0</span> <small data-i18n="vpUnit"></small></span>
+      <span class="seat-opp__time" id="seat-opp-time"></span>
+      <button type="button" class="seat-opp__primary" id="seat-opp-primary" data-i18n-aria="oppPrimary" data-i18n-title="oppPrimary">${ICON_TARGET}</button>
+    </div>
+    <button type="button" class="seat-clock" id="seat-clock">
+      <span class="seat-clock__who" id="seat-who"></span>
+      <span class="time seat-clock__time" id="seat-time"></span>
+      <span class="seat-clock__hint" id="seat-hint"></span>
+    </button>
+    <div class="seat-stats">
+      <div class="seat-card seat-score">
+        <div class="seat-card__head"><span data-i18n="score"></span><b id="seat-score">0</b></div>
+        <span class="seat-card__sub" id="seat-turn"></span>
+        ${SCORE_KINDS.map(
+          ({ kind, label }) => `
+        <div class="seat-row">
+          <span data-i18n="${label}"></span>
+          <button type="button" class="mini-counter__btn" id="seat-${kind}-minus" aria-label="−">−</button>
+          <b id="seat-${kind}">0</b>
+          <button type="button" class="mini-counter__btn" id="seat-${kind}-plus" aria-label="+">+</button>
+        </div>`,
+        ).join("")}
+        <div class="seat-row" id="seat-bonus-row" hidden>
+          <span data-i18n="endBonus"></span>
+          <button type="button" class="mini-counter__btn" id="seat-bonus-minus" aria-label="−">−</button>
+          <b id="seat-bonus">0</b>
+          <button type="button" class="mini-counter__btn" id="seat-bonus-plus" aria-label="+">+</button>
+        </div>
+      </div>
+      <div class="seat-card seat-cp">
+        <div class="seat-card__head"><span data-i18n="commandPoints"></span></div>
+        <div class="seat-cp__row">
+          <button type="button" class="mini-counter__btn" id="seat-cp-minus" aria-label="−">−</button>
+          <b id="seat-cp">1</b>
+          <button type="button" class="mini-counter__btn" id="seat-cp-plus" aria-label="+">+</button>
+        </div>
+        <button type="button" class="abilities-btn" id="seat-abilities-btn" data-i18n="abilities"></button>
+        <div class="seat-abilities" id="seat-abilities"></div>
+      </div>
+    </div>
+    <nav class="seat-actions">
+      <button type="button" class="btn-secondary" id="seat-hand"><span data-i18n="secondaryHand"></span> <span class="seat-count" id="seat-hand-count">0</span></button>
+      <button type="button" class="btn-secondary" id="seat-mission" data-i18n="primaryCard"></button>
+      <button type="button" class="btn-secondary" id="seat-pause"></button>
+      <button type="button" class="btn-primary" id="seat-end" data-i18n="seatEndTurn"></button>
+    </nav>
+    <div class="seat-foot">
+      <button type="button" class="btn-ghost strip-reset" id="seat-reset">${ICON_RESET}<span data-i18n="reset"></span></button>
+    </div>
+  </section>
   <div class="overlay overlay--turn-confirm" id="turn-confirm-overlay" role="dialog" aria-modal="true" aria-labelledby="turn-confirm-title" aria-hidden="true">
     <div class="overlay-inner">
       <h2 id="turn-confirm-title"></h2>
@@ -449,13 +468,8 @@ app.innerHTML = `
   <div class="sound-toast" id="sound-toast" role="status"></div>
   <div class="overlay overlay--cards" id="cards-overlay" role="dialog" aria-modal="true" aria-labelledby="cards-title" aria-hidden="true">
     <div class="cards-stage">
-      <p class="cards-kicker" id="cards-kicker"></p>
       <h2 class="cards-title" id="cards-title"></h2>
       <p class="cards-sub" id="cards-sub"></p>
-      <div class="cards-caps" id="cards-caps" hidden>
-        <span class="cards-caps__label" data-i18n="thisTurn"></span>
-        ${SCORE_KINDS.map(({ kind, label }) => `<span class="cards-caps__item" data-kind="${kind}"><span data-i18n="${label}"></span>${capGaugeHtml()}</span>`).join("")}
-      </div>
       <div class="cards-row" id="cards-row"></div>
       <div class="overlay-actions cards-actions">
         <div class="cards-switch" id="cards-switch" role="group" data-i18n-aria="switchSideAria" hidden></div>
@@ -466,7 +480,7 @@ app.innerHTML = `
   <div class="overlay overlay--dispo" id="dispo-overlay" role="dialog" aria-modal="true" aria-labelledby="dispo-title" aria-hidden="true">
     <div class="overlay-inner">
       <h2 id="dispo-title" data-i18n="dispoTitle"></h2>
-      <p class="overlay-msg" data-i18n="dispoIntro"></p>
+      <p class="overlay-msg" id="dispo-intro"></p>
       <div class="dispo-grid">
         ${([1, 2] as const)
           .map(
@@ -483,9 +497,10 @@ app.innerHTML = `
           )
           .join("")}
       </div>
+      <p class="overlay-msg dispo-status" id="dispo-status" hidden></p>
       <div class="overlay-actions">
         <button type="button" class="btn-secondary" id="btn-dispo-cancel"><span data-i18n="cancel"></span> <kbd data-i18n="keyEsc"></kbd></button>
-        <button type="button" class="btn-primary" id="btn-dispo-ok" disabled><span data-i18n="revealPrimaries"></span> <kbd data-i18n="keyEnter"></kbd></button>
+        <button type="button" class="btn-primary" id="btn-dispo-ok" disabled><span></span> <kbd data-i18n="keyEnter"></kbd></button>
       </div>
     </div>
   </div>
@@ -495,6 +510,39 @@ app.innerHTML = `
       <ul class="ability-list" id="ability-list"></ul>
       <div class="overlay-actions">
         <button type="button" class="btn-primary" id="btn-abilities-close"><span data-i18n="done"></span> <kbd data-i18n="keyEsc"></kbd></button>
+      </div>
+    </div>
+  </div>
+  <div class="overlay overlay--online" id="online-overlay" role="dialog" aria-modal="true" aria-labelledby="online-title" aria-hidden="true">
+    <div class="overlay-inner">
+      <h2 id="online-title" data-i18n="onlineTitle"></h2>
+      <div class="online-start" id="online-start">
+        <p class="overlay-msg" data-i18n="onlineIntro"></p>
+        <div class="online-seat">
+          <span class="online-seat__label" data-i18n="onlinePlayAs"></span>
+          <div class="segmented" id="online-seat" role="group" data-i18n-aria="onlinePlayAs">
+            <button type="button" class="segmented__option is-p1" data-value="1" data-i18n="player" data-v-n="1"></button>
+            <button type="button" class="segmented__option is-p2" data-value="2" data-i18n="player" data-v-n="2"></button>
+          </div>
+        </div>
+        <button type="button" class="btn-primary online-create" id="online-create" data-i18n="onlineCreate"></button>
+        <p class="online-or" data-i18n="onlineOr"></p>
+        <div class="online-join">
+          <input id="online-code" type="text" maxlength="5" autocomplete="off" autocapitalize="characters" spellcheck="false" data-i18n-placeholder="onlineCode" />
+          <button type="button" class="btn-secondary" id="online-join" data-i18n="onlineJoin"></button>
+        </div>
+      </div>
+      <div class="online-room" id="online-room" hidden>
+        <p class="online-code" id="online-room-code"></p>
+        <div class="online-qr" id="online-qr"></div>
+        <p class="overlay-msg" id="online-scan"></p>
+        <p class="online-status" id="online-status"></p>
+        <button type="button" class="btn-secondary" id="online-share" data-i18n="onlineShare"></button>
+      </div>
+      <p class="online-error" id="online-error" role="alert" hidden></p>
+      <div class="overlay-actions">
+        <button type="button" class="btn-ghost" id="online-leave" data-i18n="onlineLeave" hidden></button>
+        <button type="button" class="btn-primary" id="online-close"><span data-i18n="done"></span> <kbd data-i18n="keyEsc"></kbd></button>
       </div>
     </div>
   </div>
@@ -566,8 +614,6 @@ const cardButtonsEl: Record<Player, HTMLElement> = {
   2: app.querySelector<HTMLElement>("#p2-card-btns")!,
 };
 const cardsSwitch = app.querySelector<HTMLElement>("#cards-switch")!;
-const cardsKicker = app.querySelector<HTMLElement>("#cards-kicker")!;
-const cardsCaps = app.querySelector<HTMLElement>("#cards-caps")!;
 const cardsOverlay = app.querySelector<HTMLElement>("#cards-overlay")!;
 const cardsTitle = app.querySelector<HTMLElement>("#cards-title")!;
 const cardsSub = app.querySelector<HTMLElement>("#cards-sub")!;
@@ -576,10 +622,8 @@ const btnCardsClose = app.querySelector<HTMLButtonElement>("#btn-cards-close")!;
 const dispoOverlay = app.querySelector<HTMLElement>("#dispo-overlay")!;
 const btnDispoOk = app.querySelector<HTMLButtonElement>("#btn-dispo-ok")!;
 const btnDispoCancel = app.querySelector<HTMLButtonElement>("#btn-dispo-cancel")!;
-const turnEndAlertEl: Record<Player, HTMLButtonElement> = {
-  1: app.querySelector<HTMLButtonElement>("#p1-turn-end-alert")!,
-  2: app.querySelector<HTMLButtonElement>("#p2-turn-end-alert")!,
-};
+const dispoIntro = app.querySelector<HTMLElement>("#dispo-intro")!;
+const dispoStatus = app.querySelector<HTMLElement>("#dispo-status")!;
 const scoreTotalEl: Record<Player, HTMLElement> = {
   1: app.querySelector<HTMLElement>("#p1-score-total")!,
   2: app.querySelector<HTMLElement>("#p2-score-total")!,
@@ -600,25 +644,36 @@ const resultTitle = app.querySelector<HTMLElement>("#result-title")!;
 const resultMsg = app.querySelector<HTMLElement>("#result-msg")!;
 const resultTable = app.querySelector<HTMLTableElement>("#result-table")!;
 const btnResultDismiss = app.querySelector<HTMLButtonElement>("#btn-result-dismiss")!;
+const btnOnline = app.querySelector<HTMLButtonElement>("#btn-online")!;
+const seatClock = app.querySelector<HTMLButtonElement>("#seat-clock")!;
+const seatTime = app.querySelector<HTMLElement>("#seat-time")!;
+const seatOppTime = app.querySelector<HTMLElement>("#seat-opp-time")!;
+const seatAbilities = app.querySelector<HTMLElement>("#seat-abilities")!;
+const onlineOverlay = app.querySelector<HTMLElement>("#online-overlay")!;
+const onlineSeatPicker = app.querySelector<HTMLElement>("#online-seat")!;
+const onlineCodeInput = app.querySelector<HTMLInputElement>("#online-code")!;
+const onlineError = app.querySelector<HTMLElement>("#online-error")!;
 
-let seconds1 = DEFAULT_TIME_SEC;
-let seconds2 = DEFAULT_TIME_SEC;
-let active: Player = 1;
-/** Whose *player turn* it is (battle round). Only Enter / next battle round changes this; Space only switches the chess clock (`active`). */
-let turnPlayer: Player = 1;
-let running = false;
-/** True after Pause mid-match; Space resumes without resetting times from inputs */
-let paused = false;
-/** The match ended (scores compared or a clock ran out); only Reset starts a new one */
-let gameOver = false;
-/** Wall-clock ms (`Date.now()`): advances across sleep/lock unlike `performance.now()` in some browsers */
-let lastTickWallMs = 0;
+/** Everything both players share: see game.ts. The rest of this file is the screen */
+let game: GameState = newGame();
+
+/** Online, this phone is one player's: its seat, and the room once connected */
+let online: { seat: Player; room: Room | null; connected: boolean; seats: Record<Player, boolean> } | null = null;
+
+/** A clock runs */
+const isRunning = (): boolean => game.phase === "running";
+/** The result is known; only Reset starts a new game */
+const isOver = (): boolean => game.phase === "over";
+
+/** Seconds left on a player's clock, now */
+const timeLeft = (player: Player): number => secondsLeft(game.clock, player);
+
+const primaryCard = (player: Player): PrimaryCard | null => {
+  const id = game.primaries[player];
+  return id === null ? null : PRIMARY_BY_ID.get(id)!;
+};
+
 let raf = 0;
-/** First rAF after startLoop: align clock, don’t subtract (avoids a visible second jump) */
-let alignFirstTick = false;
-
-/** Cap single catch-up step (clock skew / bugs); real lock gaps can be minutes */
-const WALL_CLOCK_MAX_CATCHUP_SEC = 3600;
 
 let wakeLock: WakeLockSentinel | null = null;
 
@@ -628,62 +683,9 @@ let lastSpaceTime = 0;
 let activeBeforeSpaceSequence: Player = 1;
 const DOUBLE_SPACE_MS = 380;
 
-const MAX_GAME_TURN = 5;
+const scoreOf = (player: Player, kind?: ScoreKind): number => scoreOfGame(game, player, kind);
+const scoringTurnIdx = (player: Player): number => scoringTurnIdxOf(game, player);
 
-/** Current battle round (1–5). Each round has P1’s turn then P2’s; advancing the round puts P1 on the clock. */
-let currentGameTurn = 1;
-
-/** Clocks frozen while players photograph the table between two player turns */
-let photoBreak = false;
-let cp1 = 1;
-let cp2 = 1;
-/** Points per own player turn (turn 1–5 of that player); totals are always derived from these. */
-let scoreByTurn: Record<Player, Record<ScoreKind, number[]>> = { 1: emptyTurnScores(), 2: emptyTurnScores() };
-
-function emptyTurnScores(): Record<ScoreKind, number[]> {
-  return {
-    primary: Array<number>(MAX_GAME_TURN).fill(0),
-    secondary: Array<number>(MAX_GAME_TURN).fill(0),
-  };
-}
-
-function sum(values: number[]): number {
-  return values.reduce((total, n) => total + n, 0);
-}
-
-/** End-of-game mission bonus: primary points that don't count toward the per-turn cap */
-let endBonus: Record<Player, number> = { 1: 0, 2: 0 };
-
-function scoreOf(player: Player, kind?: ScoreKind): number {
-  const turns = scoreByTurn[player];
-  const primary = sum(turns.primary) + endBonus[player];
-  if (kind === "primary") return primary;
-  if (kind === "secondary") return sum(turns.secondary);
-  return primary + sum(turns.secondary);
-}
-
-/**
- * Points count for the scorer's latest own turn: an action started in Player 2's turn 2
- * that completes during Player 1's turn 3 still scores for Player 2's turn 2.
- */
-function scoringTurnIdx(player: Player): number {
-  const ownTurn = player === 1 || turnPlayer === 2 ? currentGameTurn : currentGameTurn - 1;
-  return Math.max(0, Math.min(MAX_GAME_TURN - 1, ownTurn - 1));
-}
-
-/** Manual CP added vs removed (± only) per player-turn slot (5 rounds × 2 players = 10). Not the automatic +1/turn. */
-const MAX_PLAYER_TURNS = MAX_GAME_TURN * 2;
-let cpHistoryAdded1 = Array<number>(MAX_PLAYER_TURNS).fill(0);
-let cpHistoryRemoved1 = Array<number>(MAX_PLAYER_TURNS).fill(0);
-let cpHistoryAdded2 = Array<number>(MAX_PLAYER_TURNS).fill(0);
-let cpHistoryRemoved2 = Array<number>(MAX_PLAYER_TURNS).fill(0);
-
-const MAX_PANEL_CP = 30;
-
-let abilities: Record<Player, Ability[]> = { 1: [], 2: [] };
-let nextAbilityId = 1;
-/** On top of the Command phase CP, a player gains at most 1 CP per battle round (11th edition). */
-let bonusCpGained: Record<Player, boolean> = { 1: false, 2: false };
 /** Whose abilities panel is open */
 let abilitiesPlayer: Player | null = null;
 /** Unit just struck or restored on the board, until the mouse leaves it */
@@ -712,7 +714,7 @@ function openTurnConfirmModal(kind: TurnConfirmKind): void {
   turnConfirmKind = kind;
   if (kind === "start-game") {
     turnConfirmTitle.textContent = t("startTitle");
-    turnConfirmMsg.textContent = photoBreaksToggle.checked ? `${t("startMsg")} ${t("photoBreaksOn")}` : t("startMsg");
+    turnConfirmMsg.textContent = game.options.photoBreaks ? `${t("startMsg")} ${t("photoBreaksOn")}` : t("startMsg");
   } else if (kind === "p1-to-p2") {
     turnConfirmTitle.textContent = t("endTurnTitle");
     turnConfirmMsg.textContent = t("endTurnMsg");
@@ -723,11 +725,11 @@ function openTurnConfirmModal(kind: TurnConfirmKind): void {
     turnConfirmTitle.textContent = t("resetTitle");
     turnConfirmMsg.textContent = t("resetMsg");
   } else if (kind === "unscore") {
-    const scored = pendingUnscore && secondaries[pendingUnscore.player].scored.find(({ id }) => id === pendingUnscore?.id);
+    const scored = pendingUnscore && game.secondaries[pendingUnscore.player].scored.find(({ id }) => id === pendingUnscore?.id);
     turnConfirmTitle.textContent = t("unscoreTitle", { card: scored ? SECONDARY_BY_ID.get(scored.id)!.name : "" });
     turnConfirmMsg.textContent = t("unscoreMsg", { vp: scored?.vp ?? 0, unit: t("vpUnit"), n: (scored?.turn ?? 0) + 1 });
   } else {
-    turnConfirmTitle.textContent = t("nextRoundTitle", { n: currentGameTurn + 1 });
+    turnConfirmTitle.textContent = t("nextRoundTitle", { n: game.round + 1 });
     turnConfirmMsg.textContent = t("nextRoundMsg");
   }
   turnConfirmOverlay.classList.add("is-visible");
@@ -741,7 +743,7 @@ function renderResultTable(): void {
   const roundRows = Array.from(
     { length: MAX_GAME_TURN },
     (_, i) =>
-      `<tr><th scope="row">${t("turnN", { n: i + 1 })}</th>${cells(scoreByTurn[1].primary[i], scoreByTurn[1].secondary[i])}${cells(scoreByTurn[2].primary[i], scoreByTurn[2].secondary[i])}</tr>`,
+      `<tr><th scope="row">${t("turnN", { n: i + 1 })}</th>${cells(game.scoreByTurn[1].primary[i], game.scoreByTurn[1].secondary[i])}${cells(game.scoreByTurn[2].primary[i], game.scoreByTurn[2].secondary[i])}</tr>`,
   ).join("");
   resultTable.innerHTML = `
     <thead>
@@ -756,8 +758,8 @@ function renderResultTable(): void {
       </tr>
     </thead>
     <tbody>${roundRows}${
-      endBonus[1] || endBonus[2]
-        ? `<tr class="result-table__bonus"><th scope="row">${t("endBonus")}</th><td class="is-group">${endBonus[1]}</td><td>–</td><td class="is-group">${endBonus[2]}</td><td>–</td></tr>`
+      game.endBonus[1] || game.endBonus[2]
+        ? `<tr class="result-table__bonus"><th scope="row">${t("endBonus")}</th><td class="is-group">${game.endBonus[1]}</td><td>–</td><td class="is-group">${game.endBonus[2]}</td><td>–</td></tr>`
         : ""
     }</tbody>
     <tfoot>
@@ -778,9 +780,8 @@ function showResultOverlay(heading: string, message: string, winner: Player | nu
 }
 
 function finishGameByScore(): void {
-  running = false;
-  paused = true;
-  gameOver = true;
+  game.phase = "over";
+  stopClock(game.clock);
   lastSpaceTime = 0;
   stopLoop();
   syncInputsFromState();
@@ -815,15 +816,12 @@ function applyConfirmed(kind: TurnConfirmKind): void {
   }
   if (kind === "p1-to-p2") {
     turnSound("turn");
-    turnPlayer = 2;
+    game.turnPlayer = 2;
     gainCpBothPlayers();
     applyAbilityCp(2, ["turn-cp"]);
-    if (active !== 2) {
-      active = 2;
-      if (running) lastTickWallMs = Date.now();
-    }
+    setActiveClock(game.clock, 2);
     setActivePanels();
-    if (photoBreaksToggle.checked) startPhotoBreak();
+    if (game.options.photoBreaks) startPhotoBreak();
     startTurnSecondaries(2);
     return;
   }
@@ -837,7 +835,7 @@ function applyConfirmed(kind: TurnConfirmKind): void {
   }
   advanceGameTurn();
   turnSound("round");
-  if (photoBreaksToggle.checked) startPhotoBreak();
+  if (game.options.photoBreaks) startPhotoBreak();
   startTurnSecondaries(1);
 }
 
@@ -851,23 +849,34 @@ function turnSound(name: "start" | "turn" | "round"): void {
 }
 
 function startPhotoBreak(): void {
+  game.photoBreak = true;
+  stopClock(game.clock);
+  showPhotoBreak();
+}
+
+/** The photo break on screen: also when it was started on the other phone */
+function showPhotoBreak(): void {
   playSound("photo");
-  photoBreak = true;
   stopLoop();
   app.classList.add("is-photo-break");
-  photoMsg.textContent = t("photoMsg", { n: turnPlayer });
+  photoMsg.textContent = t("photoMsg", { n: game.turnPlayer });
   photoOverlay.classList.add("is-visible");
   photoOverlay.setAttribute("aria-hidden", "false");
   btnPhotoResume.focus();
 }
 
 function endPhotoBreak(): void {
-  if (!photoBreak) return;
-  photoBreak = false;
+  if (!game.photoBreak) return;
+  game.photoBreak = false;
+  if (isRunning()) runClock(game.clock);
+  hidePhotoBreak();
+}
+
+function hidePhotoBreak(): void {
   app.classList.remove("is-photo-break");
   photoOverlay.classList.remove("is-visible");
   photoOverlay.setAttribute("aria-hidden", "true");
-  if (running) startLoop();
+  if (isRunning() && game.clock.since !== null) startLoop();
   if (pendingDraw) {
     openCards(pendingDraw.player, "draw", pendingDraw.drawn);
     pendingDraw = null;
@@ -914,8 +923,8 @@ function formatDuration(totalSeconds: number): string {
 }
 
 function renderTimeValue(): void {
-  timeValue.textContent =
-    seconds1 === seconds2 ? formatDuration(seconds1) : `${formatDuration(seconds1)} · ${formatDuration(seconds2)}`;
+  const [a, b] = [timeLeft(1), timeLeft(2)];
+  timeValue.textContent = a === b ? formatDuration(a) : `${formatDuration(a)} · ${formatDuration(b)}`;
 }
 
 /** Setup bar menus: closed by a click outside or Escape */
@@ -1197,6 +1206,14 @@ function store(key: string, value: string): void {
   }
 }
 
+function forget(key: string): void {
+  try {
+    localStorage.removeItem(key);
+  } catch {
+    /* private mode */
+  }
+}
+
 function stored(key: string): string | null {
   try {
     return localStorage.getItem(key);
@@ -1235,12 +1252,17 @@ function loadSound(): void {
 
 let soundToastTimer = 0;
 
-function toggleMute(): void {
-  setMuted(!isMuted());
-  soundToast.textContent = t(isMuted() ? "soundMuted" : "soundOn");
+/** A short line at the bottom of the screen */
+function showToast(text: string): void {
+  soundToast.textContent = text;
   soundToast.classList.add("is-visible");
   window.clearTimeout(soundToastTimer);
   soundToastTimer = window.setTimeout(() => soundToast.classList.remove("is-visible"), 1400);
+}
+
+function toggleMute(): void {
+  setMuted(!isMuted());
+  showToast(t(isMuted() ? "soundMuted" : "soundOn"));
 }
 
 function loadUiSize(): void {
@@ -1294,6 +1316,8 @@ function applyLang(value: string): void {
   renderCards();
   renderDispositions();
   syncFullscreenLabel();
+  renderSeat();
+  renderOnlineDialog();
 }
 
 function loadLang(): void {
@@ -1334,11 +1358,11 @@ function updateManualInputsVisibility(): void {
 }
 
 function syncPresetSelectFromState(): void {
-  if (seconds1 !== seconds2) {
+  if (timeLeft(1) !== timeLeft(2)) {
     setTimePreset(CUSTOM_PRESET_VALUE);
     return;
   }
-  const match = PRESETS.find((p) => p.sec === seconds1);
+  const match = PRESETS.find((p) => p.sec === timeLeft(1));
   setTimePreset(match ? String(match.sec) : CUSTOM_PRESET_VALUE);
 }
 
@@ -1346,15 +1370,14 @@ function applyPresetSeconds(totalSeconds: number): void {
   const min = Math.round(totalSeconds / 60);
   m1.value = String(min);
   m2.value = String(min);
-  seconds1 = totalSeconds;
-  seconds2 = totalSeconds;
+  game.clock.left = { 1: totalSeconds, 2: totalSeconds };
   applyTimesToDisplay();
   syncPresetSelectFromState();
 }
 
 function syncInputsFromState(): void {
-  m1.value = String(Math.round(seconds1 / 60));
-  m2.value = String(Math.round(seconds2 / 60));
+  m1.value = String(Math.round(timeLeft(1) / 60));
+  m2.value = String(Math.round(timeLeft(2) / 60));
 }
 
 /** The hour digit is dimmed under an hour, like an unlit segment. */
@@ -1364,27 +1387,29 @@ function renderTime(el: HTMLElement, totalSeconds: number): void {
 }
 
 function applyTimesToDisplay(): void {
-  renderTime(t1, seconds1);
-  renderTime(t2, seconds2);
+  renderTime(t1, timeLeft(1));
+  renderTime(t2, timeLeft(2));
+  renderSeatTimes();
 }
 
 function setActivePanels(): void {
-  if (!running) {
+  if (!isRunning()) {
     panel1.classList.remove("is-active", "is-idle");
     panel2.classList.remove("is-active", "is-idle");
     // Keep showing whose player turn it is while the clocks are paused
-    panel1.classList.toggle("is-turn", paused && !gameOver && turnPlayer === 1);
-    panel2.classList.toggle("is-turn", paused && !gameOver && turnPlayer === 2);
+    panel1.classList.toggle("is-turn", game.phase === "paused" && game.turnPlayer === 1);
+    panel2.classList.toggle("is-turn", game.phase === "paused" && game.turnPlayer === 2);
     return;
   }
-  const activePanel = active === 1 ? panel1 : panel2;
-  const idlePanel = active === 1 ? panel2 : panel1;
+  const activePanel = game.clock.active === 1 ? panel1 : panel2;
+  const idlePanel = game.clock.active === 1 ? panel2 : panel1;
   activePanel.classList.add("is-active");
   activePanel.classList.remove("is-idle");
   idlePanel.classList.remove("is-active");
   idlePanel.classList.add("is-idle");
-  panel1.classList.toggle("is-turn", turnPlayer === 1);
-  panel2.classList.toggle("is-turn", turnPlayer === 2);
+  panel1.classList.toggle("is-turn", game.turnPlayer === 1);
+  panel2.classList.toggle("is-turn", game.turnPlayer === 2);
+  renderSeat();
 }
 
 function setInputsEnabled(on: boolean): void {
@@ -1399,14 +1424,14 @@ function renderKeyHint(): void {
   const enter = `<kbd>${t("keyEnter")}</kbd>`;
   const space = `<kbd>${t("keySpace")}</kbd>`;
   const sep = '<span class="key-hint__sep"></span>';
-  if (running) {
+  if (isRunning()) {
     const hand = secondaryCardsOn()
       ? ` ${sep} <kbd>${HAND_KEY}</kbd> ${t("hintHand")} <kbd>${PRIMARY_KEY}</kbd> ${t("hintPrimary")}`
       : "";
     keyHint.innerHTML = `${enter} ${t("hintEndTurn")} ${sep} ${space} ${t("hintSwitch")} ${sep} ${space}${space} ${t("hintPause")}${hand}`;
-  } else if (gameOver) {
+  } else if (isOver()) {
     keyHint.innerHTML = `<span class="key-hint__status">${t("gameOver")}</span> ${t("hintPlayAgain")}`;
-  } else if (paused) {
+  } else if (isStopped(game)) {
     keyHint.innerHTML = `<span class="key-hint__status">${t("paused")}</span> ${space} ${t("hintResume")}`;
   } else {
     keyHint.innerHTML = `${enter} ${t("hintStart")}`;
@@ -1415,10 +1440,11 @@ function renderKeyHint(): void {
 
 function updateButtons(): void {
   /* Start / pause are keyboard-driven only (Enter / Space / double-space). */
-  app.classList.toggle("match-started", running || paused);
-  app.classList.toggle("is-paused", paused && !running && !gameOver);
-  app.classList.toggle("is-game-over", gameOver);
+  app.classList.toggle("match-started", inGame(game));
+  app.classList.toggle("is-paused", game.phase === "paused");
+  app.classList.toggle("is-game-over", isOver());
   renderKeyHint();
+  renderSeat();
 }
 
 async function tryAcquireWakeLock(): Promise<void> {
@@ -1442,92 +1468,65 @@ async function releaseWakeLock(): Promise<void> {
   wakeLock = null;
 }
 
-/** Returns true if the match ended (time ran out). */
 function warnIfLow(before: number, after: number): void {
   if (TIME_WARNINGS_SEC.some((limit) => before > limit && after <= limit)) playSound("warning");
 }
 
-function subtractActivePlayerTime(elapsedSec: number): boolean {
-  if (elapsedSec <= 0) return false;
-  if (active === 1) {
-    warnIfLow(seconds1, seconds1 - elapsedSec);
-    seconds1 -= elapsedSec;
-    if (seconds1 <= 0) {
-      seconds1 = 0;
-      endGame(2);
-      return true;
-    }
-  } else {
-    warnIfLow(seconds2, seconds2 - elapsedSec);
-    seconds2 -= elapsedSec;
-    if (seconds2 <= 0) {
-      seconds2 = 0;
-      endGame(1);
-      return true;
-    }
-  }
-  return false;
+/** Time left on each clock at the previous frame, to ring the warnings as it goes under them */
+let lastSeenLeft: Record<Player, number> = { 1: 0, 2: 0 };
+
+/** Rings the warnings and ends the game when the running clock is out. Returns true if it ended */
+function checkClock(): boolean {
+  const player = game.clock.active;
+  const left = timeLeft(player);
+  warnIfLow(lastSeenLeft[player], left);
+  lastSeenLeft[player] = left;
+  if (left > 0) return false;
+  stopClock(game.clock);
+  game.clock.left[player] = 0;
+  endGame(other(player));
+  return true;
 }
 
 /**
- * After screen lock / sleep, rAF may not run. Apply wall-clock elapsed time so the
- * timer matches real time when the tab is active again.
+ * After screen lock / sleep, rAF may not run. The time left comes from the wall clock,
+ * so one check puts the screen right when the tab is active again.
  */
-function applyWallClockCatchUp(): void {
-  if (!running || alignFirstTick || photoBreak) return;
-  const wallNow = Date.now();
-  const rawElapsed = (wallNow - lastTickWallMs) / 1000;
-  if (rawElapsed <= 0) return;
-  lastTickWallMs = wallNow;
-  const elapsed = Math.min(rawElapsed, WALL_CLOCK_MAX_CATCHUP_SEC);
-  if (subtractActivePlayerTime(elapsed)) return;
+function refreshClock(): void {
+  if (!isRunning() || game.clock.since === null) return;
+  if (checkClock()) return;
   applyTimesToDisplay();
 }
 
-function tick(_now: number): void {
-  if (!running) return;
-  const wallNow = Date.now();
-  if (alignFirstTick) {
-    lastTickWallMs = wallNow;
-    alignFirstTick = false;
-    raf = requestAnimationFrame(tick);
-    return;
-  }
-  const rawElapsed = (wallNow - lastTickWallMs) / 1000;
-  lastTickWallMs = wallNow;
-  const elapsed = Math.min(Math.max(rawElapsed, 0), WALL_CLOCK_MAX_CATCHUP_SEC);
-
-  if (subtractActivePlayerTime(elapsed)) return;
-
+function tick(): void {
+  if (!isRunning() || game.clock.since === null) return;
+  if (checkClock()) return;
   applyTimesToDisplay();
   raf = requestAnimationFrame(tick);
 }
 
+/** Draws the running clock every frame; the time itself comes from game.clock */
 function startLoop(): void {
   cancelAnimationFrame(raf);
-  lastTickWallMs = Date.now();
-  alignFirstTick = true;
+  lastSeenLeft = { 1: timeLeft(1), 2: timeLeft(2) };
   raf = requestAnimationFrame(tick);
 }
 
 function stopLoop(): void {
   cancelAnimationFrame(raf);
   raf = 0;
-  alignFirstTick = false;
 }
 
 function switchTurn(): void {
-  if (!running) return;
+  if (!isRunning()) return;
   playSound("switch");
-  active = active === 1 ? 2 : 1;
+  setActiveClock(game.clock, other(game.clock.active));
   setActivePanels();
-  lastTickWallMs = Date.now();
 }
 
 function endGame(winner: Player): void {
-  running = false;
-  paused = true;
-  gameOver = true;
+  game.phase = "over";
+  stopClock(game.clock);
   lastSpaceTime = 0;
   void releaseWakeLock();
   stopLoop();
@@ -1538,34 +1537,34 @@ function endGame(winner: Player): void {
   updateButtons();
   applyTimesToDisplay();
   syncPresetSelectFromState();
-  const loser: Player = winner === 1 ? 2 : 1;
+  const loser = other(winner);
   setBattleMusic(false);
   playSound("victory");
   showResultOverlay(t("wins", { n: winner }), t("ranOutOfTime", { n: loser }), winner);
-  panel1.classList.toggle("is-flag", seconds1 <= 0);
-  panel2.classList.toggle("is-flag", seconds2 <= 0);
+  panel1.classList.toggle("is-flag", timeLeft(1) <= 0);
+  panel2.classList.toggle("is-flag", timeLeft(2) <= 0);
+}
+
+/** The clocks as set in the bar, stopped, Player 1's first */
+function clockFromInputs(): GameState["clock"] {
+  const { a, b } = readMinutes();
+  return { left: { 1: a * 60, 2: b * 60 }, active: 1, since: null };
 }
 
 function start(): void {
   closePopovers();
   hideTurnConfirmModal();
   hideResultOverlay();
-  paused = false;
-  gameOver = false;
-  const { a, b } = readMinutes();
-  seconds1 = a * 60;
-  seconds2 = b * 60;
-  if (seconds1 <= 0 || seconds2 <= 0) return;
-  active = 1;
-  turnPlayer = 1;
+  game.phase = "setup";
+  game.clock = clockFromInputs();
+  if (timeLeft(1) <= 0 || timeLeft(2) <= 0) return;
+  game.turnPlayer = 1;
   lastSpaceTime = 0;
-  running = true;
-  cp1 = 1;
-  cp2 = 1;
-  cpHistoryAdded1 = Array<number>(MAX_PLAYER_TURNS).fill(0);
-  cpHistoryRemoved1 = Array<number>(MAX_PLAYER_TURNS).fill(0);
-  cpHistoryAdded2 = Array<number>(MAX_PLAYER_TURNS).fill(0);
-  cpHistoryRemoved2 = Array<number>(MAX_PLAYER_TURNS).fill(0);
+  game.phase = "running";
+  game.choosing = false;
+  runClock(game.clock);
+  game.cp = { 1: 1, 2: 1 };
+  game.cpHistory = { 1: emptyCpHistory(), 2: emptyCpHistory() };
   renderMiniCounters();
   startRoundAbilities();
   setInputsEnabled(false);
@@ -1576,14 +1575,14 @@ function start(): void {
   startLoop();
   turnSound("start");
   setBattleMusic(true);
-  secondaries = { 1: newSecondaryPile(), 2: newSecondaryPile() };
-  newCardUsed = { 1: false, 2: false };
+  game.secondaries = { 1: newSecondaryPile(), 2: newSecondaryPile() };
+  game.newCardUsed = { 1: false, 2: false };
   startTurnSecondaries(1);
 }
 
 function pause(): void {
-  running = false;
-  paused = true;
+  game.phase = "paused";
+  stopClock(game.clock);
   lastSpaceTime = 0;
   void releaseWakeLock();
   stopLoop();
@@ -1595,20 +1594,15 @@ function pause(): void {
 
 function reset(): void {
   setBattleMusic(false);
-  running = false;
-  paused = false;
-  gameOver = false;
+  game.phase = "setup";
   lastSpaceTime = 0;
   void releaseWakeLock();
   stopLoop();
   hideTurnConfirmModal();
   hideResultOverlay();
-  currentGameTurn = 1;
-  const { a, b } = readMinutes();
-  seconds1 = a * 60;
-  seconds2 = b * 60;
-  active = 1;
-  turnPlayer = 1;
+  game.round = 1;
+  game.clock = clockFromInputs();
+  game.turnPlayer = 1;
   panel1.classList.remove("is-flag");
   panel2.classList.remove("is-flag");
   setInputsEnabled(true);
@@ -1618,64 +1612,55 @@ function reset(): void {
   updateButtons();
   renderTurnDots();
   endPhotoBreak();
-  scoreByTurn = { 1: emptyTurnScores(), 2: emptyTurnScores() };
-  endBonus = { 1: 0, 2: 0 };
-  cp1 = 1;
-  cp2 = 1;
-  cpHistoryAdded1 = Array<number>(MAX_PLAYER_TURNS).fill(0);
-  cpHistoryRemoved1 = Array<number>(MAX_PLAYER_TURNS).fill(0);
-  cpHistoryAdded2 = Array<number>(MAX_PLAYER_TURNS).fill(0);
-  cpHistoryRemoved2 = Array<number>(MAX_PLAYER_TURNS).fill(0);
+  game.scoreByTurn = { 1: emptyTurnScores(), 2: emptyTurnScores() };
+  game.endBonus = { 1: 0, 2: 0 };
+  game.cp = { 1: 1, 2: 1 };
+  game.cpHistory = { 1: emptyCpHistory(), 2: emptyCpHistory() };
   pendingDraw = null;
   afterPutAway = null;
   closeCards(false);
-  primaryCards = { 1: null, 2: null };
-  primaryScored = { 1: new Map(), 2: new Map() };
-  secondaries = { 1: newSecondaryPile(), 2: newSecondaryPile() };
-  newCardUsed = { 1: false, 2: false };
+  game.choosing = false;
+  game.primaries = { 1: null, 2: null };
+  game.primaryScored = { 1: {}, 2: {} };
+  game.secondaries = { 1: newSecondaryPile(), 2: newSecondaryPile() };
+  game.newCardUsed = { 1: false, 2: false };
   renderMiniCounters();
   closeAbilities();
   for (const player of [1, 2] as const) {
-    bonusCpGained[player] = false;
-    for (const ability of abilities[player]) {
+    game.bonusCpGained[player] = false;
+    for (const ability of game.abilities[player]) {
       ability.lost = false;
       ability.spent = false;
     }
     renderAbilities(player);
   }
+  // A new version of the app, downloaded during the game, comes in with the empty board
+  applyUpdateIfIdle();
 }
 
 function renderMiniCounters(): void {
   for (const player of [1, 2] as const) {
-    // Primary and secondary add up the whole game, as the total does; the gauges show this turn against its 15
+    // The total covers the whole game; primary and secondary show the player's current turn only
     const turnIdx = scoringTurnIdx(player);
-    const turns = scoreByTurn[player];
     scoreTotalEl[player].textContent = String(scoreOf(player));
+    app.querySelector<HTMLElement>(`#p${player}-score-turn`)!.textContent = t("turnN", { n: turnIdx + 1 });
     for (const { kind } of SCORE_KINDS) {
-      const thisTurn = turns[kind][turnIdx];
-      app.querySelector<HTMLElement>(`#p${player}-${kind}-val`)!.textContent = String(sum(turns[kind]));
-      setCapGauge(app.querySelector<HTMLElement>(`#p${player}-${kind}-cap`)!, thisTurn, turnIdx, true);
-      // The −/+ still act on this turn only, within its 15 points
-      app.querySelector<HTMLButtonElement>(`#p${player}-${kind}-minus`)!.disabled = thisTurn === 0;
+      const points = game.scoreByTurn[player][kind][turnIdx];
+      app.querySelector<HTMLElement>(`#p${player}-${kind}-val`)!.textContent = String(points);
       const plus = app.querySelector<HTMLButtonElement>(`#p${player}-${kind}-plus`)!;
-      plus.disabled = thisTurn >= MAX_POINTS_PER_TURN;
+      plus.disabled = points >= MAX_POINTS_PER_TURN;
       plus.title = plus.disabled ? t("maxPerTurn", { max: MAX_POINTS_PER_TURN }) : "";
     }
-    // Primary + secondary + bonus always make the total: once scored, the bonus stays in view
-    const playing = running || paused;
     app.querySelector<HTMLElement>(`#p${player}-bonus-row`)!.hidden =
-      endBonus[player] === 0 && (!playing || turnIdx !== MAX_GAME_TURN - 1);
-    // Outside a game the bonus is only read, as before
-    app.querySelector<HTMLButtonElement>(`#p${player}-bonus-minus`)!.disabled = !playing || endBonus[player] === 0;
-    app.querySelector<HTMLButtonElement>(`#p${player}-bonus-plus`)!.disabled = !playing;
-    app.querySelector<HTMLElement>(`#p${player}-bonus-val`)!.textContent = String(endBonus[player]);
+      !inGame(game) || turnIdx !== MAX_GAME_TURN - 1;
+    app.querySelector<HTMLElement>(`#p${player}-bonus-val`)!.textContent = String(game.endBonus[player]);
   }
-  p1CpVal.textContent = String(cp1);
-  p2CpVal.textContent = String(cp2);
+  p1CpVal.textContent = String(game.cp[1]);
+  p2CpVal.textContent = String(game.cp[2]);
   renderHandButtons();
-  if (cardsPlayer !== null) renderCardsCaps(cardsPlayer);
   updateVisibleScoreTooltip();
   updateVisibleCpTooltip();
+  renderSeat();
 }
 
 const scoreTooltipEl = document.createElement("div");
@@ -1719,7 +1704,7 @@ function bindScoreTooltip(target: HTMLElement): void {
 }
 
 function renderScoreTooltipContent(player: Player): void {
-  const { primary, secondary } = scoreByTurn[player];
+  const { primary, secondary } = game.scoreByTurn[player];
   scoreTooltipEl.innerHTML = "";
   const legend = document.createElement("div");
   legend.className = "score-tooltip__legend";
@@ -1749,14 +1734,14 @@ function renderScoreTooltipContent(player: Player): void {
     }
     scoreTooltipEl.appendChild(row);
   }
-  if (endBonus[player] > 0) {
+  if (game.endBonus[player] > 0) {
     const row = document.createElement("div");
     row.className = "score-tooltip__row";
     const label = document.createElement("span");
     label.textContent = t("endBonus");
     const value = document.createElement("span");
     value.className = "score-tooltip__value";
-    value.textContent = t("bonusPri", { n: endBonus[player] });
+    value.textContent = t("bonusPri", { n: game.endBonus[player] });
     row.append(label, value);
     scoreTooltipEl.appendChild(row);
   }
@@ -1814,14 +1799,13 @@ function formatCpHistoryAddedRemoved(added: number, removed: number): string {
 }
 
 function renderCpTooltipContent(player: Player): void {
-  const addedHist = player === 1 ? cpHistoryAdded1 : cpHistoryAdded2;
-  const removedHist = player === 1 ? cpHistoryRemoved1 : cpHistoryRemoved2;
+  const { added: addedHist, removed: removedHist } = game.cpHistory[player];
   cpTooltipEl.innerHTML = "";
   const legend = document.createElement("div");
   legend.className = "score-tooltip__legend";
   legend.textContent = t("cpLegend");
   cpTooltipEl.appendChild(legend);
-  const matchActive = running || paused;
+  const matchActive = inGame(game);
   const curSlot = matchActive ? currentPlayerTurnSlot() : -1;
   for (let i = 0; i < MAX_PLAYER_TURNS; i++) {
     const row = document.createElement("div");
@@ -1859,12 +1843,11 @@ function updateVisibleCpTooltip(): void {
 }
 
 function activeAbilities(player: Player, kind: AbilityKind): Ability[] {
-  return abilities[player].filter((ability) => ability.kind === kind && !ability.lost);
+  return game.abilities[player].filter((ability) => ability.kind === kind && !ability.lost);
 }
 
 function gainCp(player: Player): void {
-  if (player === 1) cp1 = clampPanelCp(cp1 + 1);
-  else cp2 = clampPanelCp(cp2 + 1);
+  game.cp[player] = clampCp(game.cp[player] + 1);
   renderMiniCounters();
 }
 
@@ -1872,22 +1855,32 @@ function gainCp(player: Player): void {
 function applyAbilityCp(player: Player, kinds: ("round-cp" | "turn-cp")[]): void {
   const [source] = kinds.flatMap((kind) => activeAbilities(player, kind));
   if (!source) return;
-  if (bonusCpGained[player]) {
-    showCpToast(player, t("cpCapReached"), false);
+  if (game.bonusCpGained[player]) {
+    noticeCp(player, false);
     return;
   }
-  bonusCpGained[player] = true;
+  game.bonusCpGained[player] = true;
   gainCp(player);
-  playSound("cp");
-  showCpToast(player, t("cpGained"), true);
+  noticeCp(player, true);
   renderAbilities(player);
+}
+
+/** Online, the CP news goes to the player's own phone, whichever phone ended the turn */
+function noticeCp(player: Player, gained: boolean): void {
+  game.cpNotice[player] = { gained, n: game.cpNotice[player].n + 1 };
+  if (!online || online.seat === player) sayCp(player, gained);
+}
+
+function sayCp(player: Player, gained: boolean): void {
+  if (gained) playSound("cp");
+  showCpToast(player, t(gained ? "cpGained" : "cpCapReached"), gained);
 }
 
 /** Start of a battle round: discounts come back, the CP cap resets, then CP abilities trigger. */
 function startRoundAbilities(): void {
   for (const player of [1, 2] as const) {
-    bonusCpGained[player] = false;
-    for (const ability of abilities[player]) ability.spent = false;
+    game.bonusCpGained[player] = false;
+    for (const ability of game.abilities[player]) ability.spent = false;
   }
   // A new round is also the start of Player 1's turn
   applyAbilityCp(1, ["round-cp", "turn-cp"]);
@@ -1982,7 +1975,7 @@ function renderAbilities(player: Player): void {
   const chips = document.createElement("div");
   chips.className = "abilities__chips";
   // Lost units stay on the board, struck through, so a misclick is one click away from undo
-  for (const ability of abilities[player]) {
+  for (const ability of game.abilities[player]) {
     if (ability.kind === "discount") {
       coins.appendChild(cpCoinEl(ability));
     } else {
@@ -2006,8 +1999,8 @@ let restoredCoinId: number | null = null;
 
 /** A click on a spent coin brings it back: a misclick is one click away from undo */
 function spendCpCoin(player: Player, coin: HTMLButtonElement): void {
-  if (!running && !paused) return;
-  const ability = abilities[player].find(({ id }) => String(id) === coin.dataset.abilityId);
+  if (!inGame(game)) return;
+  const ability = game.abilities[player].find(({ id }) => String(id) === coin.dataset.abilityId);
   if (!ability || ability.lost || coin.classList.contains("is-animating")) return;
   if (ability.spent) {
     playSound("coinRestore");
@@ -2028,7 +2021,9 @@ function spendCpCoin(player: Player, coin: HTMLButtonElement): void {
     completed = true;
     window.clearTimeout(fallbackTimer);
     face.removeEventListener("animationend", onEnd);
-    ability.spent = true;
+    // The state may have come back from the other phone during the flip: look the unit up again
+    const current = game.abilities[player].find(({ id }) => id === ability.id);
+    if (current) current.spent = true;
     renderAbilities(player);
   }
 
@@ -2072,7 +2067,7 @@ type AbilitySlot = "discount" | "cp";
 const isCpKind = (kind: AbilityKind): boolean => kind !== "discount";
 
 function abilityInSlot(player: Player, slot: AbilitySlot): Ability | undefined {
-  return abilities[player].find((ability) => (slot === "discount" ? !isCpKind(ability.kind) : isCpKind(ability.kind)));
+  return game.abilities[player].find((ability) => (slot === "discount" ? !isCpKind(ability.kind) : isCpKind(ability.kind)));
 }
 
 /** The timing choice slides in only when +1 CP was just turned on, not on every redraw */
@@ -2130,9 +2125,9 @@ function renderAbilityList(): void {
 function toggleAbilitySlot(player: Player, slot: AbilitySlot): void {
   const existing = abilityInSlot(player, slot);
   if (existing) {
-    abilities[player] = abilities[player].filter((ability) => ability !== existing);
+    game.abilities[player] = game.abilities[player].filter((ability) => ability !== existing);
   } else {
-    abilities[player].push({ id: nextAbilityId++, kind: slot === "discount" ? "discount" : "turn-cp", lost: false, spent: false });
+    game.abilities[player].push({ id: game.nextAbilityId++, kind: slot === "discount" ? "discount" : "turn-cp", lost: false, spent: false });
     revealCpTiming = slot === "cp";
   }
   renderAbilityList();
@@ -2149,7 +2144,7 @@ function setCpTiming(player: Player, kind: AbilityKind): void {
 }
 
 function toggleAbilityLost(player: Player, id: number): void {
-  const ability = abilities[player].find((candidate) => candidate.id === id);
+  const ability = game.abilities[player].find((candidate) => candidate.id === id);
   if (!ability) return;
   ability.lost = !ability.lost;
   settlingAbilityId = id;
@@ -2160,27 +2155,6 @@ function toggleAbilityLost(player: Player, id: number): void {
 }
 
 /* ---------- Secondary mission cards (tactical) ---------- */
-
-/** A scored card keeps what it gave and when, so a misclick can be undone */
-type ScoredSecondary = { id: string; vp: number; turn: number };
-type SecondaryPile = { deck: string[]; hand: string[]; discard: string[]; scored: ScoredSecondary[] };
-
-function shuffled<T>(items: T[]): T[] {
-  const result = [...items];
-  for (let i = result.length - 1; i > 0; i--) {
-    const j = Math.floor(Math.random() * (i + 1));
-    [result[i], result[j]] = [result[j], result[i]];
-  }
-  return result;
-}
-
-function newSecondaryPile(): SecondaryPile {
-  return { deck: shuffled(SECONDARY_CARDS.map(({ id }) => id)), hand: [], discard: [], scored: [] };
-}
-
-let secondaries: Record<Player, SecondaryPile> = { 1: newSecondaryPile(), 2: newSecondaryPile() };
-/** Swapping a card for a new one (−1 CP) is allowed once per battle */
-let newCardUsed: Record<Player, boolean> = { 1: false, 2: false };
 
 const WHEN_KEYS = { yours: "whenYours", any: "whenAny", opponent: "whenOpponent" } as const;
 
@@ -2211,11 +2185,11 @@ let putAwayTimer: number | null = null;
 let afterPutAway: (() => void) | null = null;
 
 function secondaryCardsOn(): boolean {
-  return secondaryCardsToggle.checked;
+  return game.options.cards;
 }
 
 function drawSecondaries(player: Player, count: number): string[] {
-  const pile = secondaries[player];
+  const pile = game.secondaries[player];
   const drawn = pile.deck.splice(0, count);
   pile.hand.push(...drawn);
   return drawn;
@@ -2225,18 +2199,25 @@ function drawSecondaries(player: Player, count: number): string[] {
 function startTurnSecondaries(player: Player): void {
   if (!secondaryCardsOn()) return;
   const drawn = drawSecondaries(player, 2);
+  game.lastDraw = { player, ids: drawn, n: game.lastDraw.n + 1 };
   renderHandButtons();
+  showDraw(player, drawn);
+}
+
+/** The draw comes up on the drawing player's phone, whichever phone ended the turn */
+function showDraw(player: Player, drawn: string[]): void {
+  if (online && online.seat !== player) return;
   if (drawn.length === 0) {
     // Nothing left to draw: the Command phase scores still come up
-    if (!photoBreak && primaryScoresInCommand(player)) openCards(player, "command");
+    if (!game.photoBreak && primaryScoresInCommand(player)) openCards(player, "command");
     return;
   }
-  if (photoBreak) pendingDraw = { player, drawn };
+  if (game.photoBreak) pendingDraw = { player, drawn };
   else openCards(player, "draw", drawn);
 }
 
 function moveSecondary(player: Player, id: string, to: "discard" | "deck"): void {
-  const pile = secondaries[player];
+  const pile = game.secondaries[player];
   pile.hand = pile.hand.filter((cardId) => cardId !== id);
   if (to === "discard") pile.discard.push(id);
   // Shuffled back: anywhere in the deck
@@ -2245,7 +2226,7 @@ function moveSecondary(player: Player, id: string, to: "discard" | "deck"): void
 
 /** Card points go to the secondary score of the player's turn, within the 15 per turn */
 function addSecondaryPoints(player: Player, vp: number): number {
-  const turns = scoreByTurn[player].secondary;
+  const turns = game.scoreByTurn[player].secondary;
   const turnIdx = scoringTurnIdx(player);
   const added = Math.max(0, Math.min(vp, MAX_POINTS_PER_TURN - turns[turnIdx]));
   turns[turnIdx] += added;
@@ -2258,24 +2239,21 @@ function renderHandButtons(): void {
   app.classList.toggle("uses-secondary-cards", secondaryCardsOn());
   for (const player of [1, 2] as const) {
     const button = handButtonEl[player];
-    const count = secondaries[player].hand.length;
-    cardButtonsEl[player].hidden = !secondaryCardsOn() || !(running || paused);
-    primaryButtonEl[player].hidden = !primaryCards[player];
+    const count = game.secondaries[player].hand.length;
+    cardButtonsEl[player].hidden = !secondaryCardsOn() || !inGame(game);
+    primaryButtonEl[player].hidden = !primaryCard(player);
     button.querySelector(".score-box__hand-count")!.textContent = String(count);
     button.setAttribute("aria-label", t("handAria", { n: count }));
-    // The opponent sees during the turn what they can score when it ends, not only on the end-of-turn screen
-    const alert = turnEndAlertEl[player];
-    const due = secondaryCardsOn() && (running || paused) && !gameOver && player !== turnPlayer ? turnEndCount(player) : 0;
-    alert.hidden = due === 0;
-    alert.textContent = t("turnEndAlert", { n: due });
   }
+  renderSeat();
 }
 
 /** The cards of the player whose clock runs or, while paused, whose turn it is */
 function cardKeyPlayer(): Player | null {
   if (!secondaryCardsOn()) return null;
-  if (running) return active;
-  return paused ? turnPlayer : null;
+  if (online) return inGame(game) ? online.seat : null;
+  if (isRunning()) return game.clock.active;
+  return isStopped(game) ? game.turnPlayer : null;
 }
 
 /** S opens the hand, P the primary */
@@ -2306,7 +2284,7 @@ function openCards(player: Player, mode: typeof cardsMode, drawn: string[] = [])
   if (mode === "draw") renderCards(drawn);
   else if (mode === "primary") renderCards([primaryCardId(1), primaryCardId(2)]);
   else {
-    const pile = secondaries[player];
+    const pile = game.secondaries[player];
     renderCards([primaryCardId(player), ...pile.hand, ...pile.scored.map(({ id }) => id)]);
   }
   // Every card that comes on screen is heard: the primaries clash, the others swish in
@@ -2336,7 +2314,6 @@ function closeCards(putAway = true): void {
     playSound("putAway", count);
     putAwayTimer = window.setTimeout(hideCards, PUT_AWAY_MS + (count - 1) * PUT_AWAY_STAGGER_MS);
   }
-  renderHandButtons();
   if (commandNext !== null) openCards(commandNext, "command");
 }
 
@@ -2358,11 +2335,11 @@ function scoresAtTurnEnd(owner: Player, when: SecondaryCard["when"] | PrimarySec
   if (when === undefined || when === "any") return true;
   if (when === "end") return endTurnKind === "finish-game";
   if (when === "command") return false;
-  return when === (owner === turnPlayer ? "yours" : "opponent");
+  return when === (owner === game.turnPlayer ? "yours" : "opponent");
 }
 
 function turnEndSecondaries(owner: Player): string[] {
-  return secondaries[owner].hand.filter((id) => scoresAtTurnEnd(owner, SECONDARY_BY_ID.get(id)!.when));
+  return game.secondaries[owner].hand.filter((id) => scoresAtTurnEnd(owner, SECONDARY_BY_ID.get(id)!.when));
 }
 
 /** Which primary lines score in the view: at a turn end or in the Command phase, only that moment's */
@@ -2373,23 +2350,30 @@ function scoresInView(owner: Player, when: PrimarySection["when"]): boolean {
 }
 
 function primaryScoresInCommand(owner: Player): boolean {
-  const card = primaryCards[owner];
+  const card = primaryCard(owner);
   return !!card && card.sections.some((section) => section.when === "command" && sectionOpen(owner, section));
 }
 
 function primaryScoresAtTurnEnd(owner: Player): boolean {
-  const card = primaryCards[owner];
+  const card = primaryCard(owner);
   return !!card && card.sections.some((section) => sectionOpen(owner, section) && scoresAtTurnEnd(owner, section.when));
 }
 
 const turnEndCount = (owner: Player): number =>
   turnEndSecondaries(owner).length + (primaryScoresAtTurnEnd(owner) ? 1 : 0);
 
+/** Enter, or the End turn button: the round goes on, or the battle ends after the last turn */
+function requestTurnEnd(): void {
+  if (game.turnPlayer === 1) requestEndTurn("p1-to-p2");
+  else requestEndTurn(game.round >= MAX_GAME_TURN ? "finish-game" : "next-round");
+}
+
 /** With the cards, ending a turn first shows what scores now; with nothing to score, the plain confirmation */
 function requestEndTurn(kind: TurnConfirmKind): void {
   endTurnKind = kind;
-  const opponent: Player = turnPlayer === 1 ? 2 : 1;
-  endTurnSides = secondaryCardsOn() ? [turnPlayer, opponent].filter((side) => turnEndCount(side) > 0) : [];
+  // Online, each phone scores its own cards: the opponent's are on the opponent's phone
+  const sides = online ? [online.seat] : [game.turnPlayer, other(game.turnPlayer)];
+  endTurnSides = secondaryCardsOn() ? sides.filter((side) => turnEndCount(side) > 0) : [];
   if (endTurnSides.length === 0) {
     endTurnKind = null;
     openTurnConfirmModal(kind);
@@ -2412,7 +2396,7 @@ function cardsTabs(): CardsTab[] {
     }));
   }
   if ((cardsMode === "hand" || cardsMode === "scored") && cardsPlayer !== null) {
-    const pile = secondaries[cardsPlayer];
+    const pile = game.secondaries[cardsPlayer];
     return [
       { value: "hand", label: t("secondaryHand"), count: pile.hand.length, side: cardsPlayer, on: cardsMode === "hand" },
       { value: "scored", label: t("scoredTab"), count: pile.scored.length, side: cardsPlayer, on: cardsMode === "scored" },
@@ -2424,6 +2408,16 @@ function cardsTabs(): CardsTab[] {
 function renderCardsSwitch(): void {
   if (cardsMode === "hand" || cardsMode === "scored") {
     renderScoredLink();
+    return;
+  }
+  if (cardsMode === "mission" && online && cardsPlayer !== null) {
+    const link = document.createElement("button");
+    link.type = "button";
+    link.className = "cards-switch__link";
+    link.dataset.tab = String(other(cardsPlayer));
+    link.textContent = t(cardsPlayer === online.seat ? "oppPrimary" : "myPrimary");
+    cardsSwitch.hidden = !primaryCard(other(cardsPlayer));
+    cardsSwitch.replaceChildren(link);
     return;
   }
   const tabs = cardsTabs();
@@ -2447,7 +2441,7 @@ function renderCardsSwitch(): void {
 
 /** Scored cards are a rare detour, to undo a misclick: a quiet link, only once something is scored */
 function renderScoredLink(): void {
-  const scored = cardsPlayer === null ? 0 : secondaries[cardsPlayer].scored.length;
+  const scored = cardsPlayer === null ? 0 : game.secondaries[cardsPlayer].scored.length;
   cardsSwitch.hidden = cardsMode === "hand" && scored === 0;
   if (cardsSwitch.hidden) return;
   const link = document.createElement("button");
@@ -2460,63 +2454,29 @@ function renderScoredLink(): void {
 
 function showCardsTab(value: string): void {
   if (cardsPlayer === null) return;
-  if (cardsMode === "end-turn") openCards(Number(value) as Player, "end-turn");
+  if (cardsMode === "end-turn" || cardsMode === "mission") openCards(Number(value) as Player, cardsMode);
   else openCards(cardsPlayer, value === "scored" ? "scored" : "hand");
-}
-
-/** At a turn end, the player who scores after the one shown, if any: each side gets its own step */
-function nextEndTurnSide(): Player | null {
-  if (cardsMode !== "end-turn" || cardsPlayer === null) return null;
-  const index = endTurnSides.indexOf(cardsPlayer);
-  return index >= 0 && index < endTurnSides.length - 1 ? endTurnSides[index + 1] : null;
-}
-
-/**
- * Where the screen sits in the game, in the color of the player whose turn it is: the end of a turn
- * (and its step), or a new turn. The opponent's end-of-turn cards then read as part of the turn
- * that ends, not as the draw of the turn that comes
- */
-function renderCardsKicker(player: Player): void {
-  let text = "";
-  let side: Player = turnPlayer;
-  if (cardsMode === "end-turn") {
-    text = t("endTurnKicker", { n: turnPlayer });
-    if (endTurnSides.length > 1) {
-      text += ` · ${t("stepOf", { a: endTurnSides.indexOf(player) + 1, b: endTurnSides.length })}`;
-    }
-  } else if (cardsMode === "draw" || cardsMode === "command") {
-    side = player;
-    text = t("turnStartKicker", { n: player, r: currentGameTurn });
-  }
-  cardsKicker.textContent = text;
-  cardsKicker.hidden = text === "";
-  cardsKicker.classList.toggle("is-p1", side === 1);
-  cardsKicker.classList.toggle("is-p2", side === 2);
-}
-
-/** Where the cards score, this turn's points of their owner against the 15 allowed */
-function renderCardsCaps(player: Player): void {
-  cardsCaps.hidden = !["hand", "end-turn", "command", "mission"].includes(cardsMode);
-  if (cardsCaps.hidden) return;
-  const turnIdx = scoringTurnIdx(player);
-  for (const { kind } of SCORE_KINDS) {
-    const gauge = cardsCaps.querySelector<HTMLElement>(`[data-kind="${kind}"] .cap-gauge`)!;
-    setCapGauge(gauge, scoreByTurn[player][kind][turnIdx], turnIdx, false);
-  }
 }
 
 /** `dealIds` fly in from the deck; the others are already on the table */
 function renderCards(dealIds: string[] = []): void {
   if (cardsPlayer === null) return;
   const player = cardsPlayer;
-  const pile = secondaries[player];
-  const nextSide = nextEndTurnSide();
-  const closeLabel: StringKey =
-    cardsMode === "primary" ? "startGame" : cardsMode !== "end-turn" ? "continue" : endTurnKind === "finish-game" ? "endBattleBtn" : "endTurnBtn";
-  btnCardsClose.querySelector("span")!.textContent = nextSide !== null ? t("nextSideBtn", { n: nextSide }) : t(closeLabel);
+  const pile = game.secondaries[player];
+  // Online, Player 1 starts the game from the VS: their clock is the one that runs
+  const waitsForP1 = cardsMode === "primary" && !!online && online.seat !== 1;
+  const closeLabel: StringKey = waitsForP1
+    ? "vsWaitP1"
+    : cardsMode === "primary"
+      ? "startGame"
+      : cardsMode !== "end-turn"
+        ? "continue"
+        : endTurnKind === "finish-game"
+          ? "endBattleBtn"
+          : "endTurnBtn";
+  btnCardsClose.querySelector("span")!.textContent = t(closeLabel);
+  btnCardsClose.disabled = waitsForP1;
   renderCardsSwitch();
-  renderCardsKicker(player);
-  renderCardsCaps(player);
   if (cardsMode === "primary") {
     cardsTitle.textContent = t("primaryTitle");
     cardsSub.textContent = "";
@@ -2525,14 +2485,22 @@ function renderCards(dealIds: string[] = []): void {
     versus.className = "versus";
     versus.setAttribute("aria-hidden", "true");
     versus.innerHTML = "<span class=\"versus__line\"></span><span class=\"versus__text\">VS</span>";
-    const [first, second] = ([1, 2] as const).map((owner, index) =>
-      primaryCardEl(owner, index, dealIds.includes(primaryCardId(owner)), false),
-    );
+    // On a phone the cards stack around the VS: online, the opponent's on top and short, this
+    // phone's player's in full below; on one phone for both players, both short
+    const stacked = !!online || window.matchMedia("(max-width: 640px)").matches;
+    const owners: Player[] = online ? [other(online.seat), online.seat] : [1, 2];
+    const [first, second] = owners.map((owner, index) => {
+      const card = primaryCardEl(owner, index, dealIds.includes(primaryCardId(owner)), false);
+      card.classList.toggle("is-compact", stacked && owner !== online?.seat);
+      return card;
+    });
+    cardsRow.classList.toggle("is-stacked", stacked);
     cardsRow.classList.toggle("is-clashing", dealIds.length > 0);
     cardsRow.replaceChildren(first, versus, second);
     layoutCardsRow();
     return;
   }
+  cardsRow.classList.remove("is-stacked");
   const ids =
     cardsMode === "draw"
       ? drawnIds.filter((id) => pile.hand.includes(id))
@@ -2544,13 +2512,8 @@ function renderCards(dealIds: string[] = []): void {
           ? turnEndSecondaries(player)
           : [];
   if (cardsMode === "end-turn") {
-    cardsTitle.textContent = t("endTurnScoringTitle", { n: player });
-    cardsSub.textContent =
-      player !== turnPlayer
-        ? t("endTurnOpponentSub", { n: turnPlayer })
-        : nextSide !== null
-          ? t("endTurnScoringSubNext", { n: nextSide })
-          : t("endTurnScoringSub");
+    cardsTitle.textContent = t("endTurnScoringTitle", { n: game.turnPlayer });
+    cardsSub.textContent = player === game.turnPlayer ? t("endTurnScoringSub") : t("endTurnOpponentSub", { n: player });
   } else if (cardsMode === "command") {
     cardsTitle.textContent = t("commandTitle", { n: player });
     cardsSub.textContent = t("commandSub");
@@ -2568,7 +2531,9 @@ function renderCards(dealIds: string[] = []): void {
   // The primary card stays apart from the hand: on its own, or at a turn end when it scores
   const withPrimary =
     cardsMode === "mission" || cardsMode === "command" || (cardsMode === "end-turn" && primaryScoresAtTurnEnd(player));
-  const primary = withPrimary && primaryCards[player] ? [primaryCardEl(player, 0, dealIds.includes(primaryCardId(player)), true)] : [];
+  // Online, the opponent's primary can be read here, not scored
+  const ownCard = !online || player === online.seat;
+  const primary = withPrimary && primaryCard(player) ? [primaryCardEl(player, 0, dealIds.includes(primaryCardId(player)), ownCard)] : [];
   const cards = [
     ...primary,
     ...ids.map((id, index) => secondaryCardEl(player, id, index + primary.length, dealIds.includes(id))),
@@ -2641,17 +2606,13 @@ function secondaryCardEl(player: Player, id: string, index: number, deal: boolea
     </div>`;
   el.querySelector(".sec-card__kicker")!.textContent = t("secondaryKicker");
   el.querySelector(".sec-card__name")!.textContent = data.name;
-  const when = el.querySelector<HTMLElement>(".sec-card__when")!;
-  when.textContent = data.when ? t(WHEN_KEYS[data.when]) : "";
-  // At a turn end, why the card scores now
-  when.classList.toggle("is-now", cardsMode === "end-turn");
+  el.querySelector(".sec-card__when")!.textContent = data.when ? t(WHEN_KEYS[data.when]) : "";
   const note = el.querySelector<HTMLElement>(".sec-card__note")!;
   note.textContent = data.note ? data.note[lang] : "";
   note.hidden = !data.note;
 
   const unit = t("vpUnit");
   const scorable = cardsMode === "hand" || cardsMode === "end-turn";
-  const room = scorable ? roomThisTurn(player, "secondary") : Infinity;
   const options = data.options.map((option) => {
     if ("vp" in option) {
       const button = document.createElement("button");
@@ -2660,8 +2621,7 @@ function secondaryCardEl(player: Player, id: string, index: number, deal: boolea
       button.disabled = !scorable;
       button.dataset.action = "score";
       button.dataset.vp = String(option.vp);
-      button.innerHTML = `<span class="sec-option__vp">${vpHtml(option.vp, room)}</span><span class="sec-option__label"></span>`;
-      markCapped(button, option.vp, room);
+      button.innerHTML = `<span class="sec-option__vp">${option.vp}<small>${unit}</small></span><span class="sec-option__label"></span>`;
       button.querySelector(".sec-option__label")!.textContent = option.label[lang];
       return button;
     }
@@ -2683,14 +2643,14 @@ function secondaryCardEl(player: Player, id: string, index: number, deal: boolea
         <button type="button" class="sec-option__go" data-action="score-repeat"></button>
       </span>`;
     block.querySelector(".sec-option__label")!.textContent = `${option.label[lang]} · ${t("maxVp", { n: option.max })}`;
-    setGoButton(block.querySelector<HTMLElement>(".sec-option__go")!, repeatTotal(block), room);
+    block.querySelector(".sec-option__go")!.textContent = `${t("scoreIt")} ${repeatTotal(block)} ${unit}`;
     block.querySelector<HTMLElement>(".sec-option__repeat")!.hidden = !scorable;
     return block;
   });
   el.querySelector(".sec-card__options")!.replaceChildren(...options);
 
   const actions: HTMLElement[] = [];
-  if (cardsMode === "draw" && data.redraw && drawnIds.includes(id) && secondaries[player].deck.length > 0) {
+  if (cardsMode === "draw" && data.redraw && drawnIds.includes(id) && game.secondaries[player].deck.length > 0) {
     const redraw = document.createElement("button");
     redraw.type = "button";
     redraw.className = "sec-action sec-action--redraw";
@@ -2700,7 +2660,7 @@ function secondaryCardEl(player: Player, id: string, index: number, deal: boolea
     redraw.querySelector("small")!.textContent = t("redrawIf", { cond: data.redraw.condition[lang] });
     actions.push(redraw);
   }
-  const scored = cardsMode === "scored" ? secondaries[player].scored.find((entry) => entry.id === id) : undefined;
+  const scored = cardsMode === "scored" ? game.secondaries[player].scored.find((entry) => entry.id === id) : undefined;
   if (scored) {
     const stamp = document.createElement("span");
     stamp.className = "sec-card__stamp";
@@ -2717,7 +2677,7 @@ function secondaryCardEl(player: Player, id: string, index: number, deal: boolea
     swapCard.type = "button";
     swapCard.className = "sec-action sec-action--discard";
     swapCard.dataset.action = "swap";
-    swapCard.textContent = newCardUsed[player] ? t("swapUsed") : t("swapCp");
+    swapCard.textContent = game.newCardUsed[player] ? t("swapUsed") : t("swapCp");
     swapCard.disabled = !canSwapSecondary(player);
     actions.push(swapCard);
   }
@@ -2793,7 +2753,7 @@ function scoreSecondary(player: Player, id: string, vp: number, cardEl: HTMLElem
   const turn = scoringTurnIdx(player);
   const added = addSecondaryPoints(player, vp);
   moveSecondary(player, id, "discard");
-  secondaries[player].scored.push({ id, vp: added, turn });
+  game.secondaries[player].scored.push({ id, vp: added, turn });
   playSound("score");
   playCardExit(cardEl, "is-scored", `+${added}`);
 }
@@ -2802,20 +2762,20 @@ function scoreSecondary(player: Player, id: string, vp: number, cardEl: HTMLElem
 let pendingUnscore: { player: Player; id: string } | null = null;
 
 function askUnscore(player: Player, id: string): void {
-  if (gameOver) return;
+  if (isOver()) return;
   pendingUnscore = { player, id };
   openTurnConfirmModal("unscore");
 }
 
 /** A score clicked by mistake: its points leave the turn they went to, the card goes back to the hand */
 function restoreSecondary(player: Player, id: string): void {
-  const pile = secondaries[player];
+  const pile = game.secondaries[player];
   const scored = pile.scored.find((entry) => entry.id === id);
   if (!scored) return;
   pile.scored = pile.scored.filter((entry) => entry !== scored);
   pile.discard = pile.discard.filter((cardId) => cardId !== id);
   pile.hand.push(id);
-  const turns = scoreByTurn[player].secondary;
+  const turns = game.scoreByTurn[player].secondary;
   turns[scored.turn] = Math.max(0, turns[scored.turn] - scored.vp);
   playSound("undo");
   renderMiniCounters();
@@ -2828,14 +2788,14 @@ function restoreSecondary(player: Player, id: string): void {
 }
 
 function canSwapSecondary(player: Player): boolean {
-  return !newCardUsed[player] && (player === 1 ? cp1 : cp2) >= 1 && secondaries[player].deck.length > 0;
+  return !game.newCardUsed[player] && game.cp[player] >= 1 && game.secondaries[player].deck.length > 0;
 }
 
 /** −1 CP, once per battle: the card is discarded and a new one is dealt in its place */
 function swapSecondary(player: Player, id: string, cardEl: HTMLElement): void {
   if (!canSwapSecondary(player)) return;
   adjustCp(player, -1);
-  newCardUsed[player] = true;
+  game.newCardUsed[player] = true;
   const [replacement] = drawSecondaries(player, 1);
   moveSecondary(player, id, "discard");
   drawnIds = drawnIds.map((cardId) => (cardId === id ? replacement : cardId));
@@ -2861,16 +2821,25 @@ function redrawSecondary(player: Player, id: string, cardEl: HTMLElement): void 
 
 /* ---------- Force dispositions and primary missions ---------- */
 
-let dispositions: Record<Player, Disposition | null> = { 1: null, 2: null };
-let primaryCards: Record<Player, PrimaryCard | null> = { 1: null, 2: null };
-/** Points scored by each primary line and turn: one score per line per turn, a second click undoes it */
-let primaryScored: Record<Player, Map<string, number>> = { 1: new Map(), 2: new Map() };
-
 /** With the cards on, the game starts by choosing force dispositions */
 function requestStart(): void {
-  if (secondaryCardsOn()) openDispositions();
+  if (secondaryCardsOn()) chooseDispositions();
   else openTurnConfirmModal("start-game");
 }
+
+/** Online, the choice opens on both phones, empty: each player picks theirs, in secret */
+function chooseDispositions(): void {
+  if (online) {
+    game.choosing = true;
+    game.dispositions = { 1: null, 2: null };
+    game.primaries = { 1: null, 2: null };
+    dispoPick = null;
+  }
+  openDispositions();
+}
+
+/** Online, the disposition this phone's player is about to lock in */
+let dispoPick: Disposition | null = null;
 
 function openDispositions(): void {
   renderDispositions();
@@ -2886,24 +2855,73 @@ function closeDispositions(): void {
 
 function renderDispositions(): void {
   const lang = getLang();
+  const seat = online?.seat;
+  const locked = !!seat && !!game.dispositions[seat];
+  // Online, only this phone's column shows: the opponent's choice stays hidden until the reveal
+  const shown = (player: Player): Disposition | null =>
+    !seat ? game.dispositions[player] : player !== seat ? null : locked ? game.dispositions[seat] : dispoPick;
   dispoOverlay.querySelectorAll<HTMLElement>(".dispo-options").forEach((group) => {
     const player = Number(group.dataset.player) as Player;
     group.querySelectorAll<HTMLButtonElement>(".dispo-option").forEach((option) => {
       const data = DISPOSITIONS.find(({ id }) => id === option.dataset.value)!;
-      option.setAttribute("aria-pressed", String(dispositions[player] === data.id));
+      option.setAttribute("aria-pressed", String(shown(player) === data.id));
+      option.disabled = locked;
       option.querySelector(".dispo-option__hint")!.textContent = data.hint[lang];
     });
   });
-  btnDispoOk.disabled = !dispositions[1] || !dispositions[2];
+  dispoIntro.textContent = t(seat ? "dispoYourIntro" : "dispoIntro");
+  btnDispoOk.querySelector("span")!.textContent = t(seat ? "dispoLock" : "revealPrimaries");
+  btnDispoOk.disabled = seat ? locked || !dispoPick : !game.dispositions[1] || !game.dispositions[2];
+  dispoStatus.hidden = !seat;
+  if (seat) {
+    const them = other(seat);
+    dispoStatus.textContent = t(game.dispositions[them] ? "dispoChosen" : "onlineWaiting", { n: them });
+  }
+}
+
+/** Reveal, or online, lock in this phone's choice: the reveal comes once both are in */
+function confirmDispositions(): void {
+  if (!online) {
+    revealPrimaries();
+    return;
+  }
+  if (!dispoPick || game.dispositions[online.seat]) return;
+  game.dispositions[online.seat] = dispoPick;
+  if (!maybeReveal()) renderDispositions();
+}
+
+function cancelDispositions(): void {
+  if (online) {
+    game.choosing = false;
+    game.dispositions[online.seat] = null;
+  }
+  closeDispositions();
+}
+
+/** Online, both choices in: the phone that sees it first deals the primaries, both show the VS */
+function maybeReveal(): boolean {
+  const [first, second] = [game.dispositions[1], game.dispositions[2]];
+  if (!online || !game.choosing || !first || !second) return false;
+  game.choosing = false;
+  game.primaries = { 1: primaryFor(first, second).id, 2: primaryFor(second, first).id };
+  game.primaryScored = { 1: {}, 2: {} };
+  showReveal();
+  return true;
+}
+
+function showReveal(): void {
+  closeDispositions();
+  setBattleMusic(true);
+  openCards(online?.seat ?? 1, "primary");
 }
 
 /** Both dispositions known: each player gets the card of their deck facing the other's */
 function revealPrimaries(): void {
-  const mine = dispositions[1];
-  const theirs = dispositions[2];
+  const mine = game.dispositions[1];
+  const theirs = game.dispositions[2];
   if (!mine || !theirs) return;
-  primaryCards = { 1: primaryFor(mine, theirs), 2: primaryFor(theirs, mine) };
-  primaryScored = { 1: new Map(), 2: new Map() };
+  game.primaries = { 1: primaryFor(mine, theirs).id, 2: primaryFor(theirs, mine).id };
+  game.primaryScored = { 1: {}, 2: {} };
   closeDispositions();
   // The battle music rises with the VS
   setBattleMusic(true);
@@ -2917,7 +2935,7 @@ function sectionTurnKey(player: Player, section: PrimarySection): string {
 /** Whether a primary section scores now, from the player's own battle round */
 function sectionOpen(player: Player, section: PrimarySection): boolean {
   const turnIdx = scoringTurnIdx(player);
-  if (section.rounds === "end") return gameOver || turnIdx === MAX_GAME_TURN - 1;
+  if (section.rounds === "end") return isOver() || turnIdx === MAX_GAME_TURN - 1;
   const round = turnIdx + 1;
   return round >= section.rounds[0] && round <= section.rounds[1];
 }
@@ -2951,7 +2969,7 @@ function stepperHtml(field: "count" | "bonus", value: number): string {
 }
 
 function primaryCardEl(player: Player, index: number, deal: boolean, scorable: boolean): HTMLElement {
-  const data = primaryCards[player]!;
+  const data = primaryCard(player)!;
   const lang = getLang();
   const unit = t("vpUnit");
   const el = document.createElement("article");
@@ -2978,10 +2996,9 @@ function primaryCardEl(player: Player, index: number, deal: boolean, scorable: b
   note.textContent = data.note ? data.note[lang] : "";
   note.hidden = !data.note;
 
-  const scored = primaryScored[player];
+  const scored = game.primaryScored[player];
   const sections = data.sections.map((section, s) => {
     const turnKey = sectionTurnKey(player, section);
-    const room = scorable && section.rounds !== "end" ? roomThisTurn(player, "primary") : Infinity;
     // At a turn end, only what scores at that moment: a Command phase line waits for the next turn
     const scoresNow = sectionOpen(player, section) && scoresInView(player, section.when);
     const open = scorable && scoresNow;
@@ -3005,7 +3022,7 @@ function primaryCardEl(player: Player, index: number, deal: boolean, scorable: b
     }
     section.items.forEach((item, i) => {
       const key = `${turnKey}|${s}|${i}`;
-      const done = scored.get(key);
+      const done = scored[key];
       const blocked = !open;
       if ("vp" in item || done !== undefined) {
         // A fixed score, or any line already scored this turn (click again to undo)
@@ -3020,9 +3037,7 @@ function primaryCardEl(player: Player, index: number, deal: boolean, scorable: b
         button.setAttribute("aria-pressed", String(done !== undefined));
         if (done !== undefined) button.title = t("scoredUndo");
         const shown = done ?? ("vp" in item ? item.vp : 0);
-        const vp = done !== undefined ? `✓${shown}<small>${unit}</small>` : vpHtml(shown, open ? room : Infinity);
-        button.innerHTML = `<span class="sec-option__vp">${vp}</span><span class="sec-option__label"></span>`;
-        if (done === undefined && open) markCapped(button, shown, room);
+        button.innerHTML = `<span class="sec-option__vp">${done !== undefined ? "✓" : ""}${shown}<small>${unit}</small></span><span class="sec-option__label"></span>`;
         button.querySelector(".sec-option__label")!.textContent = item.label[lang];
         block.appendChild(button);
         return;
@@ -3054,7 +3069,7 @@ function primaryCardEl(player: Player, index: number, deal: boolean, scorable: b
       const go = row.querySelector<HTMLButtonElement>(".sec-option__go")!;
       go.dataset.section = String(s);
       go.dataset.item = String(i);
-      setGoButton(go, itemTotal(item, row), open ? room : Infinity);
+      go.textContent = `${t("scoreIt")} ${itemTotal(item, row)} ${unit}`;
       row.querySelectorAll<HTMLButtonElement>("button").forEach((button) => {
         button.disabled = blocked;
       });
@@ -3077,19 +3092,19 @@ function primaryCardEl(player: Player, index: number, deal: boolean, scorable: b
 
 /** Primary points: the turn's primary score (15 max) or, at the end of the battle, the end bonus */
 function togglePrimaryScore(player: Player, s: number, i: number, vp: number): void {
-  const card = primaryCards[player];
+  const card = primaryCard(player);
   if (!card) return;
   const section = card.sections[s];
   const turnKey = sectionTurnKey(player, section);
   const key = `${turnKey}|${s}|${i}`;
-  const scored = primaryScored[player];
-  const done = scored.get(key);
+  const scored = game.primaryScored[player];
+  const done = scored[key];
   // The points of a line leave the turn, or the end bonus, they went to
   const takeBack = (lineKey: string, points: number): void => {
-    scored.delete(lineKey);
-    if (turnKey === "end") endBonus[player] = Math.max(0, endBonus[player] - points);
+    delete scored[lineKey];
+    if (turnKey === "end") game.endBonus[player] = Math.max(0, game.endBonus[player] - points);
     else {
-      const turns = scoreByTurn[player].primary;
+      const turns = game.scoreByTurn[player].primary;
       turns[Number(turnKey)] = Math.max(0, turns[Number(turnKey)] - points);
     }
   };
@@ -3102,19 +3117,19 @@ function togglePrimaryScore(player: Player, s: number, i: number, vp: number): v
     if (section.pickOne) {
       section.items.forEach((_, other) => {
         const otherKey = `${turnKey}|${s}|${other}`;
-        const points = scored.get(otherKey);
+        const points = scored[otherKey];
         if (points !== undefined) takeBack(otherKey, points);
       });
     }
     let added = vp;
-    if (turnKey === "end") endBonus[player] += vp;
+    if (turnKey === "end") game.endBonus[player] += vp;
     else {
-      const turns = scoreByTurn[player].primary;
+      const turns = game.scoreByTurn[player].primary;
       const turnIdx = Number(turnKey);
       added = Math.max(0, Math.min(vp, MAX_POINTS_PER_TURN - turns[turnIdx]));
       turns[turnIdx] += added;
     }
-    scored.set(key, added);
+    scored[key] = added;
     playSound("score");
   }
   renderMiniCounters();
@@ -3122,7 +3137,7 @@ function togglePrimaryScore(player: Player, s: number, i: number, vp: number): v
 }
 
 function adjustScore(player: Player, kind: ScoreKind, delta: 1 | -1): void {
-  const turns = scoreByTurn[player][kind];
+  const turns = game.scoreByTurn[player][kind];
   const turnIdx = scoringTurnIdx(player);
   if (delta > 0) {
     if (turns[turnIdx] >= MAX_POINTS_PER_TURN) return;
@@ -3135,42 +3150,25 @@ function adjustScore(player: Player, kind: ScoreKind, delta: 1 | -1): void {
   renderMiniCounters();
 }
 
-function clampPanelCp(n: number): number {
-  return Math.max(0, Math.min(MAX_PANEL_CP, n));
-}
-
-function playerTurnSlotIndex(round: number, player: Player): number {
-  return (round - 1) * 2 + (player - 1);
-}
-
 function currentPlayerTurnSlot(): number {
-  return playerTurnSlotIndex(currentGameTurn, turnPlayer);
+  return playerTurnSlot(game.round, game.turnPlayer);
 }
 
 function recordCpManualAdjust(player: Player, slot: number, applied: number): void {
   if (applied === 0 || slot < 0 || slot >= MAX_PLAYER_TURNS) return;
-  if (applied > 0) {
-    if (player === 1) cpHistoryAdded1[slot] += applied;
-    else cpHistoryAdded2[slot] += applied;
-  } else {
-    const r = -applied;
-    if (player === 1) cpHistoryRemoved1[slot] += r;
-    else cpHistoryRemoved2[slot] += r;
-  }
+  const history = game.cpHistory[player];
+  if (applied > 0) history.added[slot] += applied;
+  else history.removed[slot] += -applied;
 }
 
 function adjustCp(player: Player, delta: number): void {
   if (delta === 0) return;
-  const current = player === 1 ? cp1 : cp2;
-  const next = clampPanelCp(current + delta);
+  const current = game.cp[player];
+  const next = clampCp(current + delta);
   const applied = next - current;
   if (applied === 0) return;
-  if (player === 1) cp1 = next;
-  else cp2 = next;
-  if (running || paused) {
-    const slot = currentPlayerTurnSlot();
-    recordCpManualAdjust(player, slot, applied);
-  }
+  game.cp[player] = next;
+  if (inGame(game)) recordCpManualAdjust(player, currentPlayerTurnSlot(), applied);
   renderMiniCounters();
 }
 
@@ -3179,13 +3177,13 @@ function adjustCp(player: Player, delta: number): void {
  * Not recorded in manual CP history (tooltip: added/removed per turn only).
  */
 function gainCpBothPlayers(): void {
-  cp1 = clampPanelCp(cp1 + 1);
-  cp2 = clampPanelCp(cp2 + 1);
+  game.cp[1] = clampCp(game.cp[1] + 1);
+  game.cp[2] = clampCp(game.cp[2] + 1);
   renderMiniCounters();
 }
 
 function adjustEndBonus(player: Player, delta: 1 | -1): void {
-  endBonus[player] = Math.max(0, endBonus[player] + delta);
+  game.endBonus[player] = Math.max(0, game.endBonus[player] + delta);
   renderMiniCounters();
 }
 
@@ -3237,7 +3235,6 @@ btnAbilitiesClose.addEventListener("click", closeAbilities);
 
 for (const player of [1, 2] as const) {
   handButtonEl[player].addEventListener("click", () => openCards(player, "hand"));
-  turnEndAlertEl[player].addEventListener("click", () => openCards(player, "hand"));
   primaryButtonEl[player].addEventListener("click", () => openCards(player, "mission"));
 }
 cardsSwitch.addEventListener("click", (e) => {
@@ -3246,13 +3243,7 @@ cardsSwitch.addEventListener("click", (e) => {
 });
 /** Continue: after the primaries reveal, the game starts */
 function continueCards(): void {
-  if (cardsPlayer === null) return;
-  // The end of a turn goes through each side that scores before it ends: the opponent's cards can't be skipped
-  const nextSide = nextEndTurnSide();
-  if (nextSide !== null) {
-    openCards(nextSide, "end-turn");
-    return;
-  }
+  if (cardsPlayer === null || btnCardsClose.disabled) return;
   const startsGame = cardsMode === "primary";
   const turnEnd = cardsMode === "end-turn" ? endTurnKind : null;
   closeCards();
@@ -3271,17 +3262,20 @@ cardsOverlay.addEventListener("click", (e) => {
 });
 dispoOverlay.addEventListener("click", (e) => {
   const option = (e.target as HTMLElement).closest<HTMLButtonElement>(".dispo-option");
-  if (!option) return;
+  if (!option || option.disabled) return;
   const player = Number(option.closest<HTMLElement>(".dispo-options")!.dataset.player) as Player;
-  dispositions[player] = option.dataset.value as Disposition;
+  if (online) {
+    if (player === online.seat) dispoPick = option.dataset.value as Disposition;
+  } else game.dispositions[player] = option.dataset.value as Disposition;
   renderDispositions();
 });
-btnDispoOk.addEventListener("click", revealPrimaries);
-btnDispoCancel.addEventListener("click", closeDispositions);
+btnDispoOk.addEventListener("click", confirmDispositions);
+btnDispoCancel.addEventListener("click", cancelDispositions);
 window.addEventListener("resize", () => {
   if (cardsPlayer !== null) layoutCardsRow();
 });
 secondaryCardsToggle.addEventListener("change", () => {
+  game.options.cards = secondaryCardsToggle.checked;
   secondaryCardsToggle.blur();
   renderHandButtons();
 });
@@ -3296,7 +3290,8 @@ cardsRow.addEventListener("click", (e) => {
   const cardEl = button?.closest<HTMLElement>(".sec-card");
   if (button && cardEl?.dataset.primaryPlayer && ["mission", "command", "end-turn"].includes(cardsMode)) {
     const owner = Number(cardEl.dataset.primaryPlayer) as Player;
-    const card = primaryCards[owner];
+    if (online && owner !== online.seat) return;
+    const card = primaryCard(owner);
     const s = Number(button.dataset.section ?? button.closest<HTMLElement>(".sec-option--repeat")?.dataset.section);
     const row = button.closest<HTMLElement>(".sec-option--repeat");
     const i = Number(button.dataset.item ?? row?.dataset.item);
@@ -3313,8 +3308,7 @@ cardsRow.addEventListener("click", (e) => {
       row.querySelectorAll<HTMLElement>("[data-value]").forEach((span) => {
         span.textContent = row.dataset[span.dataset.value === "bonus" ? "bonus" : "count"] ?? "0";
       });
-      const room = card.sections[s].rounds === "end" ? Infinity : roomThisTurn(owner, "primary");
-      setGoButton(row.querySelector<HTMLElement>(".sec-option__go")!, itemTotal(item, row), room);
+      row.querySelector(".sec-option__go")!.textContent = `${t("scoreIt")} ${itemTotal(item, row)} ${t("vpUnit")}`;
       return;
     }
     if (button.dataset.action === "pri-score") togglePrimaryScore(owner, s, i, row ? itemTotal(item, row) : "vp" in item ? item.vp : 0);
@@ -3339,7 +3333,7 @@ cardsRow.addEventListener("click", (e) => {
       const count = Math.max(1, Math.min(maxCount, Number(option.dataset.count) + delta));
       option.dataset.count = String(count);
       option.querySelector(".sec-option__count")!.textContent = String(count);
-      setGoButton(option.querySelector<HTMLElement>(".sec-option__go")!, repeatTotal(option), roomThisTurn(player, "secondary"));
+      option.querySelector(".sec-option__go")!.textContent = `${t("scoreIt")} ${repeatTotal(option)} ${t("vpUnit")}`;
       break;
     }
     case "score-repeat":
@@ -3367,26 +3361,25 @@ function renderTurnDots(): void {
     dot.setAttribute("role", "img");
     dot.setAttribute(
       "aria-label",
-      t(i === currentGameTurn ? "dotCurrent" : i < currentGameTurn ? "dotDone" : "dotNext", { n: i }),
+      t(i === game.round ? "dotCurrent" : i < game.round ? "dotDone" : "dotNext", { n: i }),
     );
-    if (i < currentGameTurn) dot.classList.add("turn-dot--past");
-    else if (i === currentGameTurn) dot.classList.add("turn-dot--current");
+    if (i < game.round) dot.classList.add("turn-dot--past");
+    else if (i === game.round) dot.classList.add("turn-dot--current");
     else dot.classList.add("turn-dot--future");
     turnDots.appendChild(dot);
   }
 }
 
 function advanceGameTurn(): void {
-  if (currentGameTurn >= MAX_GAME_TURN) return;
-  currentGameTurn += 1;
+  if (game.round >= MAX_GAME_TURN) return;
+  game.round += 1;
   renderMiniCounters();
-  active = 1;
-  turnPlayer = 1;
+  setActiveClock(game.clock, 1);
+  game.turnPlayer = 1;
   gainCpBothPlayers();
   startRoundAbilities();
   lastSpaceTime = 0;
   activeBeforeSpaceSequence = 1;
-  if (running) lastTickWallMs = Date.now();
   setActivePanels();
   renderTurnDots();
 }
@@ -3400,12 +3393,12 @@ function toggleFullscreen(): void {
 }
 
 function resume(): void {
-  if (running) return;
+  if (isRunning()) return;
   hideResultOverlay();
-  if (seconds1 <= 0 || seconds2 <= 0) return;
+  if (timeLeft(1) <= 0 || timeLeft(2) <= 0) return;
   lastSpaceTime = 0;
-  paused = false;
-  running = true;
+  game.phase = "running";
+  if (!game.photoBreak) runClock(game.clock);
   setInputsEnabled(false);
   setActivePanels();
   applyTimesToDisplay();
@@ -3415,7 +3408,7 @@ function resume(): void {
 }
 
 btnReset.addEventListener("click", () => {
-  if (running || paused) openTurnConfirmModal("reset");
+  if (inGame(game)) openTurnConfirmModal("reset");
   else reset();
 });
 btnFullscreen.addEventListener("click", toggleFullscreen);
@@ -3424,7 +3417,10 @@ btnTurnConfirmCancel.addEventListener("click", hideTurnConfirmModal);
 btnResultDismiss.addEventListener("click", hideResultOverlay);
 btnPhotoResume.addEventListener("click", endPhotoBreak);
 // A focused checkbox would swallow Enter / Space, the game shortcuts
-photoBreaksToggle.addEventListener("change", () => photoBreaksToggle.blur());
+photoBreaksToggle.addEventListener("change", () => {
+  game.options.photoBreaks = photoBreaksToggle.checked;
+  photoBreaksToggle.blur();
+});
 bindScoreTooltip(scoreTotalEl[1]);
 bindScoreTooltip(scoreTotalEl[2]);
 bindCpTooltip(p1CpVal);
@@ -3453,20 +3449,21 @@ function isButtonTarget(el: EventTarget | null): boolean {
 
 /** Space bar and taps on the timer area (same behavior) */
 function handleSpaceLikeInput(): void {
-  if (!running) {
-    if (gameOver) return;
-    if (paused) resume();
+  if (!isRunning()) {
+    if (isOver()) return;
+    if (isStopped(game)) resume();
     else return;
     return;
   }
 
+  if (online && game.clock.active !== online.seat) return;
   const now = performance.now();
   if (lastSpaceTime > 0 && now - lastSpaceTime < DOUBLE_SPACE_MS) {
-    active = activeBeforeSpaceSequence;
+    setActiveClock(game.clock, activeBeforeSpaceSequence);
     pause();
     return;
   }
-  activeBeforeSpaceSequence = active;
+  activeBeforeSpaceSequence = game.clock.active;
   lastSpaceTime = now;
   switchTurn();
 }
@@ -3475,6 +3472,13 @@ window.addEventListener("keydown", (e) => {
   if (e.code === MUTE_KEY_CODE && !e.repeat && !e.metaKey && !e.ctrlKey && !e.altKey && !isTypingTarget(e.target)) {
     e.preventDefault();
     toggleMute();
+    return;
+  }
+  if (onlineOverlay.classList.contains("is-visible")) {
+    if (e.key === "Escape") {
+      e.preventDefault();
+      closeOnlineDialog();
+    }
     return;
   }
   // The abilities panel is a form: keys keep their usual meaning there
@@ -3488,10 +3492,10 @@ window.addEventListener("keydown", (e) => {
   if (dispoOverlay.classList.contains("is-visible")) {
     if (e.code === "Enter" && !e.repeat) {
       e.preventDefault();
-      revealPrimaries();
+      confirmDispositions();
     } else if (e.key === "Escape") {
       e.preventDefault();
-      closeDispositions();
+      cancelDispositions();
     } else if (e.code === "Space") {
       e.preventDefault();
     }
@@ -3575,23 +3579,24 @@ window.addEventListener("keydown", (e) => {
     }
   }
   const keyPlayer = keyMode && !isTypingTarget(e.target) && !anyModalOpen() ? cardKeyPlayer() : null;
-  if (keyMode && keyPlayer && (keyMode === "hand" || primaryCards[keyPlayer])) {
+  if (keyMode && keyPlayer && (keyMode === "hand" || primaryCard(keyPlayer))) {
     e.preventDefault();
     openCards(keyPlayer, keyMode);
     return;
   }
   if (e.code === "Enter" && !e.repeat) {
     if (shouldIgnoreSpaceLike(e.target)) return;
-    if (!running) {
+    if (!isRunning()) {
       e.preventDefault();
-      if (gameOver) return;
-      if (paused) handleSpaceLikeInput();
+      if (isOver()) return;
+      if (isStopped(game)) handleSpaceLikeInput();
       else requestStart();
       return;
     }
     e.preventDefault();
-    if (turnPlayer === 1) requestEndTurn("p1-to-p2");
-    else requestEndTurn(currentGameTurn >= MAX_GAME_TURN ? "finish-game" : "next-round");
+    // Online, only the player whose turn it is ends it
+    if (online && game.turnPlayer !== online.seat) return;
+    requestTurnEnd();
     return;
   }
   if (e.code !== "Space") return;
@@ -3627,7 +3632,7 @@ board.addEventListener("pointerdown", (e) => {
 });
 
 onSegmentedPick(timePresets, (value) => {
-  if (running) return;
+  if (isRunning()) return;
   if (value === CUSTOM_PRESET_VALUE) {
     setTimePreset(value);
     m1.focus();
@@ -3647,10 +3652,10 @@ timePicker.addEventListener("mouseenter", () => {
 
 [m1, m2].forEach((input) => {
   input.addEventListener("input", () => {
-    if (running) return;
+    if (isRunning()) return;
+    // Also while paused: the time left can be corrected mid-game
     const { a, b } = readMinutes();
-    seconds1 = a * 60;
-    seconds2 = b * 60;
+    game.clock.left = { 1: a * 60, 2: b * 60 };
     applyTimesToDisplay();
     renderTimeValue();
   });
@@ -3707,9 +3712,514 @@ document.addEventListener("pointerdown", (e) => {
   if (!(e.target as HTMLElement).closest(".popover-anchor")) closePopovers();
 });
 
+/* ---------- Online: one game on two phones ---------- */
+
+/** The state as last agreed with the server, and its revision: each write adds one */
+type Synced = { rev: number; json: string };
+let synced: Synced = { rev: 0, json: "" };
+/** Newest state seen from the server, kept while a write of ours is on its way */
+let latestRemote: Synced | null = null;
+let pushing = false;
+
+const ONLINE_STORAGE_KEY = "warhammerClock.online";
+/** As in room.ts, which loads only once a game goes online */
+const ONLINE_CODE_LENGTH = 5;
+
+const packState = ({ rev, json }: Synced): string => `${rev}|${json}`;
+
+function unpackState(stored: string): Synced {
+  const bar = stored.indexOf("|");
+  return { rev: Number(stored.slice(0, bar)) || 0, json: stored.slice(bar + 1) };
+}
+
+/** Sends this phone's changes. What the other phone changed meanwhile is kept, field by field */
+async function pushState(): Promise<void> {
+  const room = online?.room;
+  // Joining: nothing is sent before the room's game has come in
+  if (!room || pushing || synced.rev === 0) return;
+  const local = JSON.stringify(game);
+  if (local === synced.json) return;
+  const base = synced;
+  pushing = true;
+  let sent = false;
+  try {
+    const stored = await room.transact((remote) => {
+      const current = remote === null ? base : unpackState(remote);
+      return packState({ rev: current.rev + 1, json: merge(current.json, base.json, local) });
+    });
+    if (online?.room !== room) return;
+    synced = unpackState(stored);
+    sent = true;
+    // Changes made here while the write was on its way go on top of what the server kept
+    const now = JSON.stringify(game);
+    const next = merge(synced.json, local, now);
+    if (next !== now) applyState(next);
+  } catch {
+    // Offline or refused: the next tick tries again
+  } finally {
+    pushing = false;
+  }
+  // What came from the other phone during the write is applied now, sent or not
+  if (latestRemote && latestRemote.rev > synced.rev) receiveState(latestRemote);
+  else if (sent && JSON.stringify(game) !== synced.json) void pushState();
+}
+
+function receiveState(remote: Synced): void {
+  if (!latestRemote || remote.rev > latestRemote.rev) latestRemote = remote;
+  if (pushing || remote.rev <= synced.rev) return;
+  const joining = synced.rev === 0;
+  const local = JSON.stringify(game);
+  // Joining takes the room's game as it is; later, this phone's own changes are kept on top
+  const next = joining ? remote.json : merge(remote.json, synced.json, local);
+  synced = remote;
+  if (next !== local) applyState(next, joining);
+  if (next !== remote.json) void pushState();
+}
+
+function applyState(json: string, joining = false): void {
+  const prev = game;
+  // A field a newer version of the app adds is kept from this phone's state
+  game = { ...game, ...(JSON.parse(json) as GameState) };
+  renderState(prev, joining);
+}
+
+/** The part of the state a player's open cards show */
+const cardsData = (state: GameState, player: Player): string =>
+  JSON.stringify([state.secondaries[player], state.primaryScored[player], state.scoreByTurn[player], state.turnPlayer, state.round]);
+
+/**
+ * Puts the screen in line with a state that came from the other phone: what this phone does on
+ * its own after an action of its own (sounds, overlays, the loop) follows from what changed
+ */
+function renderState(prev: GameState, joining: boolean): void {
+  photoBreaksToggle.checked = game.options.photoBreaks;
+  secondaryCardsToggle.checked = game.options.cards;
+  const wasInGame = inGame(prev);
+  if (game.phase === "setup" && wasInGame) resetScreen();
+  if (game.choosing && !prev.choosing) {
+    dispoPick = null;
+    openDispositions();
+  } else if (!game.choosing && prev.choosing && !game.primaries[1]) closeDispositions();
+  if (game.phase === "setup" && game.primaries[1] && !prev.primaries[1]) showReveal();
+  else maybeReveal();
+  if (!wasInGame && inGame(game)) {
+    if (cardsPlayer !== null && cardsMode === "primary") closeCards(false);
+    closePopovers();
+    closeDispositions();
+    hideTurnConfirmModal();
+    hideResultOverlay();
+    if (!joining) turnSound("start");
+    setBattleMusic(true);
+  }
+  if (game.phase === "over" && prev.phase !== "over") showGameOverScreen();
+  if (!joining && isRunning() && prev.phase === "running") {
+    if (prev.turnPlayer !== game.turnPlayer || prev.round !== game.round) turnSound(prev.round !== game.round ? "round" : "turn");
+    else if (prev.clock.active !== game.clock.active) playSound("switch");
+  }
+
+  if (isRunning() && game.clock.since !== null) {
+    startLoop();
+    void tryAcquireWakeLock();
+  } else {
+    stopLoop();
+    if (!isRunning()) void releaseWakeLock();
+  }
+  if (!isRunning()) syncInputsFromState();
+  if (game.phase === "setup") syncPresetSelectFromState();
+  setInputsEnabled(!isRunning());
+  if (game.photoBreak && !prev.photoBreak) showPhotoBreak();
+  else if (!game.photoBreak && prev.photoBreak) hidePhotoBreak();
+  const seat = online?.seat;
+  if (!joining && seat && game.cpNotice[seat].n !== prev.cpNotice[seat].n) sayCp(seat, game.cpNotice[seat].gained);
+  if (!joining && game.lastDraw.n !== prev.lastDraw.n) {
+    const { player, ids } = game.lastDraw;
+    if (game.photoBreak) {
+      if (online?.seat === player) pendingDraw = { player, drawn: ids };
+    } else showDraw(player, ids);
+  }
+
+  applyTimesToDisplay();
+  setActivePanels();
+  updateButtons();
+  renderTurnDots();
+  renderMiniCounters();
+  renderAbilities(1);
+  renderAbilities(2);
+  renderDispositions();
+  if (abilitiesPlayer !== null) renderAbilityList();
+  if (cardsPlayer !== null && cardsMode !== "primary" && cardsData(prev, cardsPlayer) !== cardsData(game, cardsPlayer)) renderCards();
+  renderSeat();
+}
+
+/** The other phone reset the game */
+function resetScreen(): void {
+  setBattleMusic(false);
+  lastSpaceTime = 0;
+  void releaseWakeLock();
+  stopLoop();
+  hideTurnConfirmModal();
+  hideResultOverlay();
+  pendingDraw = null;
+  afterPutAway = null;
+  hidePhotoBreak();
+  closeCards(false);
+  closeAbilities();
+}
+
+/** The game ended on the other phone: the same result shows here */
+function showGameOverScreen(): void {
+  lastSpaceTime = 0;
+  void releaseWakeLock();
+  stopLoop();
+  hideTurnConfirmModal();
+  setBattleMusic(false);
+  playSound("victory");
+  const flagged = ([1, 2] as const).find((player) => timeLeft(player) <= 0);
+  if (flagged) {
+    const winner = other(flagged);
+    showResultOverlay(t("wins", { n: winner }), t("ranOutOfTime", { n: flagged }), winner);
+    (flagged === 1 ? panel1 : panel2).classList.add("is-flag");
+    return;
+  }
+  const [total1, total2] = [scoreOf(1), scoreOf(2)];
+  if (total1 > total2) showResultOverlay(t("wins", { n: 1 }), t("wonOnPoints"), 1);
+  else if (total2 > total1) showResultOverlay(t("wins", { n: 2 }), t("wonOnPoints"), 2);
+  else showResultOverlay(t("draw"), t("tiedOnPoints"), null);
+}
+
+/** Creates a room with this game (no code), or joins one; this phone takes `seat` */
+async function connectRoom(seat: Player, code?: string): Promise<void> {
+  const { createRoom, joinRoom } = await import("./room");
+  leaveRoom();
+  online = { seat, room: null, connected: true, seats: { 1: false, 2: false } };
+  const events: RoomEvents = {
+    onState: (stored) => receiveState(unpackState(stored)),
+    onConnection: (connected) => {
+      if (!online) return;
+      online.connected = connected;
+      renderSeat();
+    },
+    onSeats: (seats) => {
+      if (!online) return;
+      online.seats = seats;
+      renderSeat();
+      renderOnlineDialog();
+    },
+  };
+  try {
+    if (code) {
+      synced = { rev: 0, json: "" };
+      online.room = await joinRoom(code, seat, events);
+    } else {
+      synced = { rev: 1, json: JSON.stringify(game) };
+      online.room = await createRoom(seat, packState(synced), events);
+    }
+  } catch (error) {
+    leaveRoom();
+    throw error;
+  }
+  store(ONLINE_STORAGE_KEY, JSON.stringify({ code: online.room.code, seat }));
+  document.documentElement.dataset.seat = String(seat);
+  renderSeat();
+}
+
+/** Back to one screen for both players, with the game as it stands */
+function leaveRoom(): void {
+  online?.room?.leave();
+  online = null;
+  synced = { rev: 0, json: "" };
+  latestRemote = null;
+  forget(ONLINE_STORAGE_KEY);
+  delete document.documentElement.dataset.seat;
+  renderSeat();
+}
+
+// Each tap or key may have changed the game: it is sent right after, and a timer catches the rest
+for (const type of ["pointerdown", "click", "keydown", "input", "change"]) {
+  window.addEventListener(
+    type,
+    () => {
+      if (online) window.setTimeout(() => void pushState(), 0);
+    },
+    true,
+  );
+}
+window.setInterval(() => void pushState(), 500);
+
+/* ---------- Online: this phone's player ---------- */
+
+const seatText = (id: string, text: string): void => {
+  app.querySelector<HTMLElement>(`#${id}`)!.textContent = text;
+};
+
+/** Where each player's CP units and CP toast sit on the board, to put them back after an online game */
+const abilitiesHome: Record<Player, HTMLElement> = { 1: abilitiesEl[1].parentElement!, 2: abilitiesEl[2].parentElement! };
+const cpToastHome: Record<Player, HTMLElement> = { 1: cpToastEl[1].parentElement!, 2: cpToastEl[2].parentElement! };
+const seatCpCard = app.querySelector<HTMLElement>(".seat-cp")!;
+
+/** The two clocks, every frame: this phone's large, the opponent's small */
+function renderSeatTimes(): void {
+  if (!online) return;
+  renderTime(seatTime, timeLeft(online.seat));
+  seatOppTime.textContent = formatTime(timeLeft(other(online.seat)));
+}
+
+function renderSeat(): void {
+  for (const player of [1, 2] as const) {
+    const inSeat = online?.seat === player;
+    const home = inSeat ? seatAbilities : abilitiesHome[player];
+    if (abilitiesEl[player].parentElement !== home) home.append(abilitiesEl[player]);
+    const toastHome = inSeat ? seatCpCard : cpToastHome[player];
+    if (cpToastEl[player].parentElement !== toastHome) toastHome.append(cpToastEl[player]);
+  }
+  if (!online) return;
+  const me = online.seat;
+  const them = other(me);
+  const running = isRunning();
+  const mine = running && game.clock.active === me;
+  const room = app.querySelector<HTMLElement>("#seat-room")!;
+  room.classList.toggle("is-offline", !online.connected);
+  room.title = online.connected ? "" : t("onlineOffline");
+  seatText("seat-code", online.room?.code ?? t("onlineConnecting"));
+  seatText("seat-round", inGame(game) ? `${t("round")} ${game.round}` : "");
+  seatText("seat-opp-name", t("player", { n: them }));
+  seatText("seat-opp-score", String(scoreOf(them)));
+  app.querySelector("#seat-opp")!.classList.toggle("is-running", running && game.clock.active === them);
+  const turn = inGame(game) ? ` · ${t(game.turnPlayer === me ? "seatYourTurn" : "seatTheirTurn")}` : "";
+  seatText("seat-who", `${t("player", { n: me })}${turn}`);
+  const hint = !inGame(game)
+    ? t("seatSetup")
+    : isOver()
+      ? t("gameOver")
+      : !running
+        ? t("paused")
+        : t(mine ? "seatTapToPass" : "seatTheirClock");
+  seatText("seat-hint", hint);
+  seatClock.classList.toggle("is-running", mine);
+  seatClock.setAttribute("aria-disabled", String(!mine));
+  renderSeatTimes();
+
+  const turnIdx = scoringTurnIdx(me);
+  seatText("seat-score", String(scoreOf(me)));
+  seatText("seat-turn", inGame(game) ? t("turnN", { n: turnIdx + 1 }) : "");
+  for (const { kind } of SCORE_KINDS) {
+    const points = game.scoreByTurn[me][kind][turnIdx];
+    seatText(`seat-${kind}`, String(points));
+    app.querySelector<HTMLButtonElement>(`#seat-${kind}-plus`)!.disabled = !inGame(game) || points >= MAX_POINTS_PER_TURN;
+    app.querySelector<HTMLButtonElement>(`#seat-${kind}-minus`)!.disabled = !inGame(game) || points === 0;
+  }
+  app.querySelector<HTMLElement>("#seat-bonus-row")!.hidden = !inGame(game) || turnIdx !== MAX_GAME_TURN - 1;
+  seatText("seat-bonus", String(game.endBonus[me]));
+  seatText("seat-cp", String(game.cp[me]));
+  seatText("seat-hand-count", String(game.secondaries[me].hand.length));
+  const playing = inGame(game) && !isOver();
+  app.querySelector<HTMLElement>("#seat-hand")!.hidden = !secondaryCardsOn() || !inGame(game);
+  app.querySelector<HTMLElement>("#seat-mission")!.hidden = !secondaryCardsOn() || !inGame(game) || !primaryCard(me);
+  app.querySelector<HTMLElement>("#seat-opp-primary")!.hidden = !secondaryCardsOn() || !primaryCard(them);
+  const pauseBtn = app.querySelector<HTMLButtonElement>("#seat-pause")!;
+  pauseBtn.hidden = !playing;
+  pauseBtn.textContent = t(running ? "seatPause" : "seatResume");
+  app.querySelector<HTMLElement>("#seat-end")!.hidden = !running || game.turnPlayer !== me;
+  app.querySelector<HTMLElement>("#seat-reset")!.hidden = !inGame(game);
+}
+
+/** A tap on this phone's own running clock passes it to the opponent */
+seatClock.addEventListener("click", () => {
+  if (!online || !isRunning() || game.clock.active !== online.seat) return;
+  switchTurn();
+  renderSeat();
+});
+
+const seatActions: [string, (me: Player) => void][] = [
+  ...SCORE_KINDS.flatMap(({ kind }): [string, (me: Player) => void][] => [
+    [`seat-${kind}-minus`, (me) => adjustScore(me, kind, -1)],
+    [`seat-${kind}-plus`, (me) => adjustScore(me, kind, 1)],
+  ]),
+  ["seat-bonus-minus", (me) => adjustEndBonus(me, -1)],
+  ["seat-bonus-plus", (me) => adjustEndBonus(me, 1)],
+  ["seat-cp-minus", (me) => adjustCp(me, -1)],
+  ["seat-cp-plus", (me) => adjustCp(me, 1)],
+  ["seat-abilities-btn", (me) => openAbilities(me)],
+  ["seat-hand", (me) => openCards(me, "hand")],
+  ["seat-mission", (me) => openCards(me, "mission")],
+  ["seat-opp-primary", (me) => openCards(other(me), "mission")],
+  [
+    "seat-pause",
+    () => {
+      if (isRunning()) pause();
+      else if (game.phase === "paused") resume();
+    },
+  ],
+  [
+    "seat-end",
+    (me) => {
+      if (isRunning() && game.turnPlayer === me) requestTurnEnd();
+    },
+  ],
+  [
+    "seat-reset",
+    () => {
+      if (inGame(game)) openTurnConfirmModal("reset");
+    },
+  ],
+  ["seat-room", () => openOnlineDialog()],
+];
+for (const [id, action] of seatActions) {
+  app.querySelector<HTMLButtonElement>(`#${id}`)!.addEventListener("click", () => {
+    if (!online) return;
+    action(online.seat);
+    renderSeat();
+  });
+}
+
+/* ---------- Online: the dialog to create or join a game ---------- */
+
+/** The seat picked in the dialog, before going online */
+let pickedSeat: Player = 1;
+let shownQrCode = "";
+
+const shareLink = (code: string, seat: Player): string =>
+  `${location.origin}${location.pathname}?room=${code}&seat=${seat}`;
+
+function showOnlineError(text: string | null): void {
+  onlineError.hidden = text === null;
+  onlineError.textContent = text ?? "";
+}
+
+function renderOnlineDialog(): void {
+  const room = online?.room ?? null;
+  app.querySelector<HTMLElement>("#online-start")!.hidden = !!online;
+  app.querySelector<HTMLElement>("#online-room")!.hidden = !online;
+  app.querySelector<HTMLElement>("#online-leave")!.hidden = !online;
+  setSegmentedValue(onlineSeatPicker, String(pickedSeat));
+  if (!online) return;
+  const them = other(online.seat);
+  seatText("online-room-code", room?.code ?? t("onlineConnecting"));
+  seatText("online-scan", room ? t("onlineScan", { n: them }) : "");
+  seatText("online-status", room ? t(online.seats[them] ? "onlineReady" : "onlineWaiting", { n: them }) : "");
+  app.querySelector<HTMLElement>("#online-share")!.hidden = !room;
+  if (room && shownQrCode !== room.code) {
+    shownQrCode = room.code;
+    void import("qrcode-generator").then(({ default: qrcode }) => {
+      const qr = qrcode(0, "M");
+      qr.addData(shareLink(room.code, them));
+      qr.make();
+      app.querySelector<HTMLElement>("#online-qr")!.innerHTML = qr.createSvgTag({ cellSize: 4, margin: 2, scalable: true });
+    });
+  }
+}
+
+function openOnlineDialog(code = ""): void {
+  closePopovers();
+  if (code) onlineCodeInput.value = code;
+  showOnlineError(null);
+  renderOnlineDialog();
+  onlineOverlay.classList.add("is-visible");
+  onlineOverlay.setAttribute("aria-hidden", "false");
+}
+
+function closeOnlineDialog(): void {
+  onlineOverlay.classList.remove("is-visible");
+  onlineOverlay.setAttribute("aria-hidden", "true");
+  (document.activeElement as HTMLElement | null)?.blur();
+}
+
+function roomErrorText(error: unknown): string {
+  return t(error instanceof Error && error.message === "not-found" ? "onlineNotFound" : "onlineUnavailable");
+}
+
+async function goOnline(seat: Player, code?: string): Promise<void> {
+  showOnlineError(null);
+  try {
+    await connectRoom(seat, code);
+    renderOnlineDialog();
+    // Joining: straight to the game. Creating: the code stays up for the opponent
+    if (code) closeOnlineDialog();
+  } catch (error) {
+    showOnlineError(roomErrorText(error));
+    renderOnlineDialog();
+  }
+}
+
+onSegmentedPick(onlineSeatPicker, (value) => {
+  pickedSeat = value === "2" ? 2 : 1;
+  setSegmentedValue(onlineSeatPicker, value);
+});
+btnOnline.addEventListener("click", () => openOnlineDialog());
+app.querySelector("#online-create")!.addEventListener("click", () => void goOnline(pickedSeat));
+app.querySelector("#online-join")!.addEventListener("click", () => {
+  const code = onlineCodeInput.value.trim().toUpperCase();
+  if (code.length !== ONLINE_CODE_LENGTH) {
+    showOnlineError(t("onlineNotFound"));
+    return;
+  }
+  void goOnline(pickedSeat, code);
+});
+onlineCodeInput.addEventListener("keydown", (e) => {
+  e.stopPropagation();
+  if (e.key === "Enter") app.querySelector<HTMLButtonElement>("#online-join")!.click();
+});
+app.querySelector("#online-share")!.addEventListener("click", () => {
+  const code = online?.room?.code;
+  if (!online || !code) return;
+  const url = shareLink(code, other(online.seat));
+  if (navigator.share) {
+    void navigator.share({ title: t("onlineTitle"), url }).catch(() => undefined);
+    return;
+  }
+  void navigator.clipboard?.writeText(url).then(() => showToast(t("onlineCopied")));
+});
+app.querySelector("#online-leave")!.addEventListener("click", () => {
+  leaveRoom();
+  renderOnlineDialog();
+  closeOnlineDialog();
+  renderAll();
+});
+app.querySelector("#online-close")!.addEventListener("click", closeOnlineDialog);
+
+/** Back in the game this phone was in, or the one a shared link points to */
+function resumeOnline(): void {
+  const params = new URLSearchParams(location.search);
+  const linkCode = params.get("room")?.trim().toUpperCase() ?? "";
+  const linkSeat = Number(params.get("seat"));
+  if (linkCode) history.replaceState(null, "", location.pathname);
+  let target: { code: string; seat: Player } | null = null;
+  if (linkCode && (linkSeat === 1 || linkSeat === 2)) target = { code: linkCode, seat: linkSeat };
+  else if (linkCode) {
+    openOnlineDialog(linkCode);
+    return;
+  } else {
+    try {
+      const saved = JSON.parse(stored(ONLINE_STORAGE_KEY) ?? "null") as { code?: string; seat?: number } | null;
+      if (saved?.code && (saved.seat === 1 || saved.seat === 2)) target = { code: saved.code, seat: saved.seat };
+    } catch {
+      /* nothing saved */
+    }
+  }
+  if (!target) return;
+  pickedSeat = target.seat;
+  const { code, seat } = target;
+  connectRoom(seat, code).catch((error: unknown) => {
+    openOnlineDialog(code);
+    showOnlineError(roomErrorText(error));
+  });
+}
+
+/** Everything on screen, from the state */
+function renderAll(): void {
+  applyTimesToDisplay();
+  setActivePanels();
+  updateButtons();
+  renderTurnDots();
+  renderMiniCounters();
+  renderAbilities(1);
+  renderAbilities(2);
+  renderSeat();
+}
+
 btnStart.addEventListener("click", () => {
-  if (running || paused) return;
-  if (secondaryCardsOn()) openDispositions();
+  if (inGame(game)) return;
+  if (secondaryCardsOn()) chooseDispositions();
   else start();
 });
 
@@ -3745,11 +4255,15 @@ syncFullscreenLabel();
 
 document.addEventListener("visibilitychange", () => {
   if (document.visibilityState === "visible") {
-    applyWallClockCatchUp();
-    if (running) void tryAcquireWakeLock();
+    refreshClock();
+    if (isRunning()) void tryAcquireWakeLock();
   }
 });
 
 window.addEventListener("pageshow", (e) => {
-  if (e.persisted) applyWallClockCatchUp();
+  if (e.persisted) refreshClock();
 });
+
+// Paused or over still counts as a game: its board stays until a reset
+setupPwa(() => inGame(game));
+resumeOnline();
