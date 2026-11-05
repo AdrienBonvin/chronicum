@@ -14,6 +14,8 @@
   --muted: #7f8a99;
   --faint: #3d4552;
   --danger: #ff5f5f;
+  /* Near the 15 points of a turn */
+  --warn: #f2b705;
   /* Current round, chosen option, primary button */
   --accent: var(--text);
   --on-accent: var(--bg);
@@ -1730,14 +1732,6 @@ kbd {
   color: var(--text);
 }
 
-.score-box__turn {
-  font-size: 0.56rem;
-  font-weight: 600;
-  text-transform: uppercase;
-  letter-spacing: 0.16em;
-  color: var(--muted);
-}
-
 .score-box__row {
   display: grid;
   grid-template-columns: 1fr auto auto auto;
@@ -1753,6 +1747,126 @@ kbd {
 
 .score-box__row[hidden] {
   display: none;
+}
+
+/* This turn against the 15 allowed: a thin bar under the game total of the row */
+.score-box__row .cap-gauge {
+  grid-column: 1 / -1;
+  margin-top: -0.1rem;
+}
+
+.cap-gauge {
+  display: flex;
+  align-items: center;
+  gap: 0.45rem;
+  min-width: 0;
+  cursor: help;
+}
+
+.cap-gauge__bar {
+  position: relative;
+  flex: 1;
+  min-width: 2.5rem;
+  height: 4px;
+  border-radius: 2px;
+  background: var(--line-strong);
+  overflow: hidden;
+}
+
+.cap-gauge__fill {
+  display: block;
+  width: calc(var(--fill, 0) * 100%);
+  height: 100%;
+  background: var(--pc, var(--text));
+  transition: width 0.3s ease, background 0.2s ease;
+}
+
+/* Marks every 5 points */
+.cap-gauge__bar::after {
+  content: "";
+  position: absolute;
+  inset: 0;
+  background: linear-gradient(
+    90deg,
+    transparent calc(100% / 3 - 1px),
+    var(--surface) calc(100% / 3 - 1px) calc(100% / 3),
+    transparent calc(100% / 3) calc(200% / 3 - 1px),
+    var(--surface) calc(200% / 3 - 1px) calc(200% / 3),
+    transparent calc(200% / 3)
+  );
+}
+
+.cap-gauge__text {
+  font-family: var(--font-num);
+  font-variant-numeric: tabular-nums;
+  font-size: 0.56rem;
+  font-weight: 600;
+  white-space: nowrap;
+  color: var(--muted);
+}
+
+.cap-gauge.is-near .cap-gauge__fill {
+  background: var(--warn);
+}
+
+.cap-gauge.is-near .cap-gauge__text {
+  color: var(--warn);
+}
+
+.cap-gauge.is-full .cap-gauge__fill {
+  background: var(--danger);
+}
+
+.cap-gauge.is-full .cap-gauge__text {
+  color: var(--danger);
+}
+
+/* On the opponent's box during the turn: what they can score when it ends */
+.score-box__alert {
+  display: flex;
+  align-items: center;
+  gap: 0.45rem;
+  margin-top: 0.35rem;
+  padding: 0.35rem 0.5rem;
+  border: 1px solid var(--pc);
+  border-radius: 4px;
+  background: color-mix(in srgb, var(--pc) 14%, var(--surface));
+  color: var(--text);
+  font-size: 0.58rem;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.1em;
+  text-align: left;
+}
+
+.score-box__alert::before {
+  content: "";
+  flex: none;
+  width: 0.45rem;
+  height: 0.45rem;
+  border-radius: 50%;
+  background: var(--pc);
+  animation: alertPulse 1.6s ease-in-out infinite;
+}
+
+.score-box__alert:hover {
+  background: color-mix(in srgb, var(--pc) 26%, var(--surface));
+}
+
+.score-box__alert[hidden] {
+  display: none;
+}
+
+@keyframes alertPulse {
+  50% {
+    opacity: 0.25;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .score-box__alert::before {
+    animation: none;
+  }
 }
 
 /* Last turn only: mission bonus, set apart from the capped per-turn points */
@@ -2574,6 +2688,60 @@ kbd {
   padding: 0.6rem 1rem 0;
 }
 
+/* Where the screen sits in the game, in the color of the player whose turn it is */
+.cards-kicker {
+  margin: 0;
+  font-size: 0.66rem;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.16em;
+  color: var(--muted);
+  text-shadow: 0 1px 8px rgba(0, 0, 0, 0.8);
+}
+
+.cards-kicker.is-p1 {
+  color: var(--p1);
+}
+
+.cards-kicker.is-p2 {
+  color: var(--p2);
+}
+
+.cards-kicker[hidden],
+.cards-caps[hidden] {
+  display: none;
+}
+
+/* This turn's points of the cards' owner, against the 15 allowed */
+.cards-caps {
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: center;
+  align-items: center;
+  gap: 0.5rem 1.1rem;
+  margin: -0.5rem 0 0.9rem;
+  font-size: 0.62rem;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.12em;
+  color: var(--muted);
+}
+
+.cards-caps__item {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+}
+
+.cards-caps .cap-gauge__bar {
+  width: 5rem;
+  flex: none;
+}
+
+.cards-caps .cap-gauge__text {
+  font-size: 0.7rem;
+}
+
 .cards-title {
   margin: 0;
   font-size: 1.5rem;
@@ -2910,6 +3078,21 @@ kbd {
   color: var(--muted);
 }
 
+/* At a turn end: the moment that makes the card score now */
+.sec-card__when.is-now {
+  align-self: flex-start;
+  padding: 0.1rem 0.5rem;
+  border: 1px solid var(--pc);
+  border-radius: 999px;
+  background: var(--pc-soft);
+  color: var(--text);
+  font-weight: 600;
+}
+
+.sec-card__when.is-now:empty {
+  display: none;
+}
+
 .sec-card__note {
   margin: 0;
   padding: 0.4rem 0.55rem;
@@ -2967,6 +3150,23 @@ button.sec-option:hover:not(:disabled) {
   font-weight: 700;
   line-height: 1;
   color: var(--pc);
+}
+
+/* Cut by the 15 per turn: the full value struck out, small, above what counts */
+.sec-option__vp s {
+  display: block;
+  font-size: 0.6rem;
+  font-weight: 600;
+  color: var(--muted);
+}
+
+.sec-option.is-capped .sec-option__vp,
+.sec-option__go.is-capped {
+  color: var(--warn);
+}
+
+.sec-option__go s {
+  opacity: 0.6;
 }
 
 .sec-option__vp small {
@@ -3216,8 +3416,7 @@ button.sec-option:hover:not(:disabled) {
   --pc-line: var(--p2-line);
 }
 
-.overlay--cards[data-mode="primary"] .cards-title,
-.overlay--cards[data-mode="end-turn"] .cards-title {
+.overlay--cards[data-mode="primary"] .cards-title {
   color: var(--text);
 }
 
