@@ -8,6 +8,7 @@ import type { Room, RoomEvents, Seat, Seats } from "./room";
 import { merge } from "./sync";
 import { startAnalytics, track } from "./analytics";
 import {
+  ALL_LOCKED,
   EVENT_MAX_MINUTES,
   EVENT_MIN_MINUTES,
   EVENT_NAME_MAX,
@@ -44,6 +45,7 @@ import {
   type AbilityKind,
   type ClockEvent,
   type ClockEventKind,
+  type EventLocks,
   type GameState,
   type Mvp,
   type Player,
@@ -104,14 +106,36 @@ const CUSTOM_PRESET_VALUE = "custom";
 
 /** The organiser's yes/no settings, in the tournament dialog: the field of the preset each one sets */
 const EVENT_TOGGLES = [
-  { id: "event-cards", key: "secondaryCards", field: "cards" },
-  { id: "event-manual-draw", key: "manualDraw", field: "manualDraw" },
-  { id: "event-photo-breaks", key: "photoBreaks", field: "photoBreaks" },
-  { id: "event-deploy-clock", key: "deployClock", field: "deployClock" },
-  { id: "event-judge-pause", key: "eventJudgePause", field: "judgeOnlyPause" },
-  { id: "event-music-off", key: "eventMusicOff", field: "musicOff" },
-  { id: "event-sounds-on", key: "eventSoundsOn", field: "soundsOn" },
-] as const satisfies readonly { id: string; key: StringKey; field: keyof EventPreset }[];
+  { id: "event-photo-breaks", field: "photoBreaks" },
+  { id: "event-deploy-clock", field: "deployClock" },
+  { id: "event-judge-pause", field: "judgeOnlyPause" },
+  { id: "event-music-off", field: "musicOff" },
+  { id: "event-sounds-on", field: "soundsOn" },
+] as const satisfies readonly { id: string; field: keyof EventPreset }[];
+
+/** Where the secondaries come from: none, drawn by the app, or each player's own deck of cards */
+const CARDS_SOURCES = ["off", "app", "deck"] as const;
+type CardsSource = (typeof CARDS_SOURCES)[number];
+const CARDS_SOURCE_KEYS: Record<CardsSource, StringKey> = { off: "cardsOff", app: "cardsApp", deck: "cardsDeck" };
+
+/** One choice for the cards, in the setup bar and in the tournament dialog */
+const cardsSourceHtml = (id: string): string => `
+  <div class="segmented segmented--cards" id="${id}" role="group" data-i18n-aria="secondaryCards">
+    ${CARDS_SOURCES.map((value) => `<button type="button" class="segmented__option" data-value="${value}" data-i18n="${CARDS_SOURCE_KEYS[value]}" data-i18n-title="${CARDS_SOURCE_KEYS[value]}Hint"></button>`).join("")}
+  </div>`;
+
+const eventToggleHtml = (id: string, key: StringKey): string => `
+  <label class="toggle-chip">
+    <input type="checkbox" id="${id}" />
+    <span data-i18n="${key}"></span>
+    <span class="toggle-chip__switch" aria-hidden="true"></span>
+  </label>`;
+
+/** Imposed by the organiser, or left to the players: one switch per setting */
+const eventLockHtml = (field: keyof EventLocks): string => `
+  <button type="button" class="event-lock" data-lock="${field}" aria-pressed="true">
+    <span class="event-lock__on" data-i18n="eventLocked"></span><span class="event-lock__off" data-i18n="eventFree"></span>
+  </button>`;
 
 /** Something comes and goes in the layout: it slides or glides open and shut in this time (slideRow, glideHeight) */
 const SLIDE_MS = 260;
@@ -313,6 +337,7 @@ function panelHtml(player: Player): string {
         <span class="panel-turn" data-i18n="playerTurn"></span>
         <span class="panel-turn panel-deploy" data-i18n="deploying"></span>
       </div>
+      <div class="panel-army" id="panel-army-${player}"></div>
       <span class="time" id="t${player}">1:00:00</span>
       <span class="panel-flag" data-i18n="timeOutLimits"></span>
     </section>`;
@@ -323,9 +348,8 @@ app.innerHTML = `
     <p class="toolbar-deploy" data-i18n="deployToolbarHint"></p>
     <div class="toolbar__group">
       <div class="event-badge" id="event-badge" hidden>
-        <span class="event-badge__label" data-i18n="eventLockedBy"></span>
         <span class="event-badge__name" id="event-badge-name"></span>
-        <button type="button" class="event-badge__leave" id="event-leave" data-i18n="eventLeave"></button>
+        <button type="button" class="event-badge__leave" id="event-leave" data-i18n-aria="eventLeave" data-i18n-title="eventLeave">×</button>
       </div>
       <div class="setting">
         <span class="setting__label">${ICON_CLOCK}<span data-i18n="time"></span></span>
@@ -363,17 +387,10 @@ app.innerHTML = `
         <span data-i18n="photoBreaks"></span>
         <span class="toggle-chip__switch" aria-hidden="true"></span>
       </label>
-      <label class="toggle-chip">
-        <input type="checkbox" id="secondary-cards" checked />
-        ${ICON_CARDS}
-        <span data-i18n="secondaryCards"></span>
-        <span class="toggle-chip__switch" aria-hidden="true"></span>
-      </label>
-      <label class="toggle-chip" id="manual-draw-chip" data-i18n-title="manualDrawHint">
-        <input type="checkbox" id="manual-draw" />
-        <span data-i18n="manualDraw"></span>
-        <span class="toggle-chip__switch" aria-hidden="true"></span>
-      </label>
+      <div class="setting setting--cards">
+        <span class="setting__label">${ICON_CARDS}<span data-i18n="secondaryCards"></span></span>
+        ${cardsSourceHtml("cards-source")}
+      </div>
     </div>
     <div class="toolbar__group toolbar__group--end">
       <button type="button" class="btn-online" id="btn-online">${ICON_ONLINE}<span id="online-label"></span></button>
@@ -829,13 +846,6 @@ app.innerHTML = `
     <div class="overlay-inner">
       <h2 id="online-title" data-i18n="onlineTitle"></h2>
       <div class="online-start" id="online-start">
-        <div class="event-card" id="event-card" hidden>
-          <span class="event-card__kicker" data-i18n="eventKicker"></span>
-          <p class="event-card__name" id="event-card-name"></p>
-          <p class="event-card__rules" id="event-card-rules"></p>
-          <p class="event-card__hint" id="event-card-hint"></p>
-          <button type="button" class="btn-ghost event-card__here" id="event-here" data-i18n="eventPlayHere"></button>
-        </div>
         <p class="online-mode" data-i18n="onlineTableTitle"></p>
         <p class="overlay-msg" id="online-intro"></p>
         <button type="button" class="btn-primary online-create" id="online-create"></button>
@@ -891,18 +901,31 @@ app.innerHTML = `
             <span data-i18n="eventName"></span>
             <input id="event-name" type="text" maxlength="${EVENT_NAME_MAX}" autocomplete="off" data-i18n-placeholder="eventNamePlaceholder" />
           </label>
-          <label class="event-field">
-            <span data-i18n="eventMinutes"></span>
+          <p class="event-form__head"><span data-i18n="eventRulesHead"></span><span data-i18n="eventLockHead"></span></p>
+          <div class="event-row">
+            <label class="event-row__label" for="event-minutes" data-i18n="eventMinutes"></label>
             <input id="event-minutes" type="number" min="${EVENT_MIN_MINUTES}" max="${EVENT_MAX_MINUTES}" step="5" value="${DEFAULT_TIME_SEC / 60}" />
-          </label>
-          ${EVENT_TOGGLES.map(
-            ({ id, key }) => `
-          <label class="toggle-chip">
-            <input type="checkbox" id="${id}" />
-            <span data-i18n="${key}"></span>
-            <span class="toggle-chip__switch" aria-hidden="true"></span>
-          </label>`,
-          ).join("")}
+            ${eventLockHtml("time")}
+          </div>
+          <div class="event-row">
+            <span class="event-row__label" data-i18n="secondaryCards"></span>
+            ${cardsSourceHtml("event-cards-source")}
+            ${eventLockHtml("cards")}
+          </div>
+          <div class="event-row">
+            ${eventToggleHtml("event-photo-breaks", "photoBreaks")}
+            ${eventLockHtml("photoBreaks")}
+          </div>
+          <div class="event-row">
+            ${eventToggleHtml("event-deploy-clock", "deployClock")}
+            ${eventLockHtml("deployClock")}
+          </div>
+          <div class="event-row">
+            ${eventToggleHtml("event-judge-pause", "eventJudgePause")}
+          </div>
+          <p class="event-form__head"><span data-i18n="eventDeviceHead"></span></p>
+          <div class="event-row">${eventToggleHtml("event-music-off", "eventMusicOff")}</div>
+          <div class="event-row">${eventToggleHtml("event-sounds-on", "eventSoundsOn")}</div>
           <p class="event-form__note" data-i18n="eventSuggested"></p>
         </form>
         <figure class="event-poster">
@@ -983,18 +1006,18 @@ const abilitiesOverlay = app.querySelector<HTMLElement>("#abilities-overlay")!;
 const abilitiesTitle = app.querySelector<HTMLElement>("#abilities-title")!;
 const abilityList = app.querySelector<HTMLUListElement>("#ability-list")!;
 const btnAbilitiesClose = app.querySelector<HTMLButtonElement>("#btn-abilities-close")!;
-const secondaryCardsToggle = app.querySelector<HTMLInputElement>("#secondary-cards")!;
-const manualDrawToggle = app.querySelector<HTMLInputElement>("#manual-draw")!;
-const manualDrawChip = app.querySelector<HTMLElement>("#manual-draw-chip")!;
+const cardsSourcePicker = app.querySelector<HTMLElement>("#cards-source")!;
+const eventCardsSourcePicker = app.querySelector<HTMLElement>("#event-cards-source")!;
 const eventBadge = app.querySelector<HTMLElement>("#event-badge")!;
 const eventLeaveBtn = app.querySelector<HTMLButtonElement>("#event-leave")!;
-const eventCard = app.querySelector<HTMLElement>("#event-card")!;
-const eventHereBtn = app.querySelector<HTMLButtonElement>("#event-here")!;
 const eventOverlay = app.querySelector<HTMLElement>("#event-overlay")!;
+const panelArmy: Record<Player, HTMLElement> = {
+  1: app.querySelector<HTMLElement>("#panel-army-1")!,
+  2: app.querySelector<HTMLElement>("#panel-army-2")!,
+};
 const eventForm = app.querySelector<HTMLFormElement>("#event-form")!;
 const eventNameInput = app.querySelector<HTMLInputElement>("#event-name")!;
 const eventMinutesInput = app.querySelector<HTMLInputElement>("#event-minutes")!;
-const eventToggle = (id: (typeof EVENT_TOGGLES)[number]["id"]): HTMLInputElement => app.querySelector<HTMLInputElement>(`#${id}`)!;
 const handButtonEl: Record<Player, HTMLButtonElement> = {
   1: app.querySelector<HTMLButtonElement>("#p1-hand-btn")!,
   2: app.querySelector<HTMLButtonElement>("#p2-hand-btn")!,
@@ -3468,21 +3491,35 @@ function setActivePanels(): void {
 }
 
 function setInputsEnabled(on: boolean): void {
-  // Set by a tournament's organiser: the players read the settings, they don't change them
-  const free = on && !eventLocked();
-  btnTime.disabled = !free;
-  m1.disabled = !free;
-  m2.disabled = !free;
-  photoBreaksToggle.disabled = !free;
-  secondaryCardsToggle.disabled = !free;
-  manualDrawToggle.disabled = !free;
-  deployClockToggle.disabled = !free;
+  // What a tournament's organiser imposes stays as set: the players read it, they don't change it
+  const locks = eventLocks();
+  btnTime.disabled = !on || locks.time;
+  m1.disabled = !on || locks.time;
+  m2.disabled = !on || locks.time;
+  photoBreaksToggle.disabled = !on || locks.photoBreaks;
+  deployClockToggle.disabled = !on || locks.deployClock;
+  cardsSourcePicker.querySelectorAll<HTMLButtonElement>(".segmented__option").forEach((option) => {
+    option.disabled = !on || locks.cards;
+  });
+  cardsSourcePicker.classList.toggle("is-locked", locks.cards);
 }
 
-/** The real deck only means something with the cards on */
-function renderManualDrawChip(): void {
-  manualDrawChip.hidden = !game.options.cards;
-  manualDrawToggle.checked = manualDraw();
+/* ---------- Where the secondaries come from: none, drawn by the app, each player's own deck ---------- */
+
+function cardsSource(): CardsSource {
+  if (!game.options.cards) return "off";
+  return manualDraw() ? "deck" : "app";
+}
+
+function setCardsSource(source: CardsSource): void {
+  game.options.cards = source !== "off";
+  game.options.manualDraw = source === "deck";
+  renderCardsSource();
+  renderHandButtons();
+}
+
+function renderCardsSource(): void {
+  setSegmentedValue(cardsSourcePicker, cardsSource());
 }
 
 /* ---------- Tournaments: the settings of the organiser's QR code ---------- */
@@ -3491,22 +3528,48 @@ const eventLocked = (): boolean => !!game.options.event;
 /** Only a judge call stops the clocks: no pause from the players */
 const pauseLocked = (): boolean => game.options.event?.judgeOnlyPause === true;
 
-/** "1h25 per player · real deck · photo breaks", what the poster and the arrival say */
-function eventRules(rules: Pick<EventPreset, "seconds" | "cards" | "manualDraw" | "photoBreaks" | "deployClock" | "judgeOnlyPause">): string {
-  return [
-    t("eventPerPlayer", { time: formatDuration(rules.seconds) }),
-    rules.cards ? t(rules.manualDraw ? "eventRealDeck" : "eventAppDraw") : t("eventNoCards"),
-    rules.photoBreaks ? t("eventPhotoBreaks") : "",
-    rules.deployClock ? "" : t("eventUntimedDeploy"),
-    rules.judgeOnlyPause ? t("eventJudgeOnly") : "",
-  ]
-    .filter(Boolean)
-    .join(" · ");
-}
+const NOTHING_LOCKED: EventLocks = { time: false, cards: false, photoBreaks: false, deployClock: false };
+/** A game set before the organiser could leave settings free: everything was imposed */
+const eventLocks = (): EventLocks => (game.options.event ? (game.options.event.locked ?? ALL_LOCKED) : NOTHING_LOCKED);
+
+type EventRules = Pick<EventPreset, "seconds" | "cards" | "manualDraw" | "photoBreaks" | "deployClock" | "judgeOnlyPause" | "locked">;
 
 /**
- * The organiser's link opened: the game takes the tournament's settings, locked. Music and sounds
- * only follow the organiser's suggestion on this device; the language stays the player's
+ * "1h25 per player · players' decks · pause by the judge only · photo breaks, deployment clock:
+ * players' choice": what is imposed, then what is left to the players
+ */
+function eventRules(rules: EventRules): string {
+  const imposed = [
+    rules.locked.time ? t("eventPerPlayer", { time: formatDuration(rules.seconds) }) : "",
+    rules.locked.cards ? (rules.cards ? t(rules.manualDraw ? "eventRealDeck" : "eventAppDraw") : t("eventNoCards")) : "",
+    rules.locked.photoBreaks ? (rules.photoBreaks ? t("eventPhotoBreaks") : t("eventNoPhotoBreaks")) : "",
+    rules.locked.deployClock ? (rules.deployClock ? t("eventTimedDeploy") : t("eventUntimedDeploy")) : "",
+    rules.judgeOnlyPause ? t("eventJudgeOnly") : "",
+  ];
+  const free = [
+    rules.locked.time ? "" : t("eventFreeTime"),
+    rules.locked.cards ? "" : t("eventFreeCards"),
+    rules.locked.photoBreaks ? "" : t("eventPhotoBreaks"),
+    rules.locked.deployClock ? "" : t("eventFreeDeploy"),
+  ].filter(Boolean);
+  return [...imposed, free.length > 0 ? t("eventPlayersChoice", { list: free.join(", ") }) : ""].filter(Boolean).join(" · ");
+}
+
+/** The rules of the game on the board, for the chip's tooltip */
+const boardRules = (): EventRules => ({
+  seconds: timeLeft(1),
+  cards: game.options.cards,
+  manualDraw: manualDraw(),
+  photoBreaks: game.options.photoBreaks,
+  deployClock: deploymentTimed(),
+  judgeOnlyPause: pauseLocked(),
+  locked: eventLocks(),
+});
+
+/**
+ * The organiser's link opened: the game takes the tournament's settings, the imposed ones locked,
+ * the others only a start. Music and sounds follow the organiser's suggestion on this device; the
+ * language stays the player's
  */
 function joinEvent(preset: EventPreset): void {
   if (inGame(game) || inPreBattle()) return;
@@ -3516,48 +3579,35 @@ function joinEvent(preset: EventPreset): void {
     cards: preset.cards,
     manualDraw: preset.manualDraw,
     deployClock: preset.deployClock,
-    event: { name: preset.name, judgeOnlyPause: preset.judgeOnlyPause },
+    event: { name: preset.name, judgeOnlyPause: preset.judgeOnlyPause, locked: preset.locked },
   };
   photoBreaksToggle.checked = preset.photoBreaks;
-  secondaryCardsToggle.checked = preset.cards;
   deployClockToggle.checked = preset.deployClock;
   applyPresetSeconds(preset.seconds);
   if (preset.musicOff) applyMusic("off");
   if (preset.soundsOn) applySounds("on");
   renderEvent();
+  renderHandButtons();
+  showToast(t("eventApplied", { name: preset.name || t("eventUnnamed") }));
 }
 
-/** Back to a free game, before it starts: every device of the room sees the badge go */
+/** Back to a free game, before it starts: every device of the room sees the chip go */
 function leaveEvent(): void {
   if (!eventLocked() || inGame(game) || inPreBattle()) return;
   delete game.options.event;
   renderEvent();
 }
 
+/** A small chip in the setup bar: the tournament's name, its rules on hover, a cross to leave it */
 function renderEvent(): void {
   const event = game.options.event;
-  const name = event?.name || t("eventUnnamed");
   eventBadge.hidden = !event;
-  eventCard.hidden = !event;
-  app.querySelector<HTMLElement>("#event-badge-name")!.textContent = name;
-  eventLeaveBtn.hidden = inGame(game) || inPreBattle();
   if (event) {
-    app.querySelector<HTMLElement>("#event-card-name")!.textContent = name;
-    app.querySelector<HTMLElement>("#event-card-rules")!.textContent = eventRules({
-      seconds: timeLeft(1),
-      cards: game.options.cards,
-      manualDraw: manualDraw(),
-      photoBreaks: game.options.photoBreaks,
-      deployClock: deploymentTimed(),
-      judgeOnlyPause: pauseLocked(),
-    });
+    app.querySelector<HTMLElement>("#event-badge-name")!.textContent = event.name || t("eventUnnamed");
+    eventBadge.title = `${t("eventLockedBy")} · ${eventRules(boardRules())}`;
   }
-  // A phone plays its own player only: it creates the table's game or joins the opponent's. A
-  // computer or a tablet at the table is played on as it is, or shows the players' codes
-  const phone = PHONE.matches;
-  eventHereBtn.hidden = phone;
-  app.querySelector<HTMLElement>("#event-card-hint")!.textContent = t(phone ? "eventJoinHint" : "eventScreenHint");
-  renderManualDrawChip();
+  eventLeaveBtn.hidden = inGame(game) || inPreBattle();
+  renderCardsSource();
   setInputsEnabled(!isRunning() && !inPreBattle());
   renderKeyHint();
 }
@@ -6641,16 +6691,7 @@ btnDispoCancel.addEventListener("click", cancelDispositions);
 window.addEventListener("resize", () => {
   if (cardsPlayer !== null) layoutCardsRow();
 });
-secondaryCardsToggle.addEventListener("change", () => {
-  game.options.cards = secondaryCardsToggle.checked;
-  secondaryCardsToggle.blur();
-  renderManualDrawChip();
-  renderHandButtons();
-});
-manualDrawToggle.addEventListener("change", () => {
-  game.options.manualDraw = manualDrawToggle.checked;
-  manualDrawToggle.blur();
-});
+onSegmentedPick(cardsSourcePicker, (value) => setCardsSource(value as CardsSource));
 let touchedCards = false;
 cardsRow.addEventListener("pointerdown", (e) => {
   touchedCards = e.pointerType !== "mouse";
@@ -7356,6 +7397,8 @@ board.addEventListener("pointerdown", (e) => {
   if ((e.target as HTMLElement).closest(".turn-tracker")) return;
   if ((e.target as HTMLElement).closest(".mini-counter")) return;
   if ((e.target as HTMLElement).closest(".panel-corner")) return;
+  // The army picked in its half before the game: a tap there opens the list
+  if ((e.target as HTMLElement).closest(".panel-army")) return;
   if (shouldIgnoreSpaceLike(e.target)) return;
   e.preventDefault();
   handleSpaceLikeInput();
@@ -7560,7 +7603,6 @@ const cardsData = (state: GameState, player: Player): string =>
 function renderState(prev: GameState, joining: boolean): void {
   renderFactions();
   photoBreaksToggle.checked = game.options.photoBreaks;
-  secondaryCardsToggle.checked = game.options.cards;
   deployClockToggle.checked = deploymentTimed();
   renderEvent();
   const pre = game.preBattle;
@@ -7919,8 +7961,15 @@ function renderSeat(): void {
     // A phone picks its own army at the top of its setup; the menu keeps both for a screen
     if (inSeat && factionRow[player].parentElement !== seatSetup) seatSetup.prepend(factionRow[player]);
   }
-  const homeRows = ([1, 2] as const).filter((player) => !(phoneView() && online?.seat === player)).map((player) => factionRow[player]);
-  if (homeRows.some((row) => row.parentElement !== factionsSection)) factionsSection.append(...homeRows);
+  // A screen picks each army in its player's half before the battle, where the eyes are; once it
+  // starts, the choice goes back to the menu
+  const onBoard = !phoneView() && !inGame(game) && !inPreBattle();
+  for (const player of [1, 2] as const) {
+    if (phoneView() && online?.seat === player) continue;
+    const rowHome = onBoard ? panelArmy[player] : factionsSection;
+    if (factionRow[player].parentElement !== rowHome) rowHome.append(factionRow[player]);
+  }
+  factionsSection.closest<HTMLElement>(".settings__section")!.hidden = onBoard;
   renderFactionRows();
   renderPhoneHome();
   // A phone's own screen has no setup bar: the menu and the game setup move into it. The board
@@ -8328,19 +8377,25 @@ app.querySelector("#online-remote-create")!.addEventListener("click", () => void
 btnOnline.addEventListener("click", () => openOnlineDialog());
 stripRoom.addEventListener("click", () => openOnlineDialog());
 eventLeaveBtn.addEventListener("click", leaveEvent);
-eventHereBtn.addEventListener("click", closeOnlineDialog);
 
 /* ---------- The organiser's side: a tournament's settings, its link, QR code and poster ---------- */
 
+const eventToggle = (id: (typeof EVENT_TOGGLES)[number]["id"]): HTMLInputElement => app.querySelector<HTMLInputElement>(`#${id}`)!;
+const eventLockButtons = (): HTMLButtonElement[] => [...eventForm.querySelectorAll<HTMLButtonElement>(".event-lock")];
+let eventCardsSource: CardsSource = "app";
+
 function readEventForm(): EventPreset {
-  const preset = Object.fromEntries(EVENT_TOGGLES.map(({ id, field }) => [field, eventToggle(id).checked])) as Pick<
+  const toggles = Object.fromEntries(EVENT_TOGGLES.map(({ id, field }) => [field, eventToggle(id).checked])) as Pick<
     EventPreset,
     (typeof EVENT_TOGGLES)[number]["field"]
   >;
+  const locked = Object.fromEntries(eventLockButtons().map((button) => [button.dataset.lock!, button.getAttribute("aria-pressed") === "true"])) as EventLocks;
   const minutes = Number(eventMinutesInput.value) || DEFAULT_TIME_SEC / 60;
   return {
-    ...preset,
-    manualDraw: preset.cards && preset.manualDraw,
+    ...toggles,
+    cards: eventCardsSource !== "off",
+    manualDraw: eventCardsSource === "deck",
+    locked,
     name: eventNameInput.value.trim(),
     seconds: Math.min(EVENT_MAX_MINUTES, Math.max(EVENT_MIN_MINUTES, Math.round(minutes))) * 60,
   };
@@ -8353,7 +8408,7 @@ let shownEventLink = "";
 
 function renderEventSetup(): void {
   const preset = readEventForm();
-  eventToggle("event-manual-draw").disabled = !preset.cards;
+  setSegmentedValue(eventCardsSourcePicker, eventCardsSource);
   const link = currentEventLink();
   app.querySelector<HTMLElement>("#event-link")!.textContent = link;
   app.querySelector<HTMLElement>("#event-poster-name")!.textContent = preset.name || t("eventUnnamed");
@@ -8373,17 +8428,21 @@ async function eventQrSvg(link: string): Promise<string> {
   return qr.createSvgTag({ cellSize: 4, margin: 2, scalable: true });
 }
 
-/** Opened with the settings of the game on the board, a sensible start for most tournaments */
+/**
+ * Opened with the settings of the game on the board. Most tournaments impose the time and the
+ * cards; photo breaks and the deployment clock are left to the tables
+ */
 function openEventSetup(): void {
   closePopovers();
   eventMinutesInput.value = String(Math.round(timeLeft(1) / 60));
-  eventToggle("event-cards").checked = game.options.cards;
-  eventToggle("event-manual-draw").checked = manualDraw();
+  eventCardsSource = cardsSource();
   eventToggle("event-photo-breaks").checked = game.options.photoBreaks;
   eventToggle("event-deploy-clock").checked = deploymentTimed();
   eventToggle("event-judge-pause").checked = true;
   eventToggle("event-music-off").checked = true;
   eventToggle("event-sounds-on").checked = true;
+  const imposed: EventLocks = { time: true, cards: true, photoBreaks: false, deployClock: false };
+  for (const button of eventLockButtons()) button.setAttribute("aria-pressed", String(imposed[button.dataset.lock as keyof EventLocks]));
   renderEventSetup();
   eventOverlay.classList.add("is-visible");
   eventOverlay.setAttribute("aria-hidden", "false");
@@ -8437,6 +8496,17 @@ async function eventPosterImage(): Promise<Blob | null> {
 app.querySelector("#btn-event-setup")!.addEventListener("click", openEventSetup);
 app.querySelector("#event-close")!.addEventListener("click", closeEventSetup);
 eventForm.addEventListener("input", renderEventSetup);
+onSegmentedPick(eventCardsSourcePicker, (value) => {
+  eventCardsSource = value as CardsSource;
+  renderEventSetup();
+});
+// Imposed or left to the players: the switch says it, the poster and the link follow
+eventForm.addEventListener("click", (e) => {
+  const lock = (e.target as HTMLElement).closest<HTMLButtonElement>(".event-lock");
+  if (!lock) return;
+  lock.setAttribute("aria-pressed", String(lock.getAttribute("aria-pressed") !== "true"));
+  renderEventSetup();
+});
 eventForm.addEventListener("change", renderEventSetup);
 eventForm.addEventListener("submit", (e) => e.preventDefault());
 eventOverlay.addEventListener("click", (e) => {
@@ -8512,8 +8582,9 @@ const parseSeat = (value: unknown): Seat | null =>
 /** Back in the game this device was in, or the one a shared link points to */
 function resumeOnline(): void {
   const params = new URLSearchParams(location.search);
-  // A tournament's QR code: its settings for a new game, then the start of the online game. The
-  // room this device was in before belongs to an earlier game, it is not resumed
+  // A tournament's QR code: its settings for a new game, said in a toast and a chip. A phone shows
+  // the start of the online game as always; a screen at the table is played on as it is. The room
+  // this device was in before belongs to an earlier game, it is not resumed
   if (params.has(EVENT_PARAM)) {
     const preset = decodeEvent(params.get(EVENT_PARAM));
     history.replaceState(null, "", location.pathname);
@@ -8521,7 +8592,6 @@ function resumeOnline(): void {
       forget(ONLINE_STORAGE_KEY);
       joinEvent(preset);
       track("Tournoi ouvert", { tournoi: preset.name || "sans nom" });
-      openOnlineDialog();
       return;
     }
   }

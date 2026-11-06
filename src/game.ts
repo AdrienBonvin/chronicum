@@ -115,7 +115,10 @@ export type ClockEvent = {
  * A game set by a tournament's organiser (src/event.ts): its settings are read, not changed, on
  * every device of the room, until the players leave the tournament before the game starts
  */
-export type EventLock = { name: string; judgeOnlyPause: boolean };
+export type EventLock = { name: string; judgeOnlyPause: boolean; locked?: EventLocks };
+
+/** What the organiser imposes; the rest is set to the organiser's choice but left to the players */
+export type EventLocks = { time: boolean; cards: boolean; photoBreaks: boolean; deployClock: boolean };
 
 export type GameState = {
   /** Given when the battle starts: the photos of the table are kept under it */

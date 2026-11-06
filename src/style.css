@@ -9946,90 +9946,105 @@ h2.report-hero__result {
 
 /* ---------- Tournaments: the organiser's settings, from a QR code ---------- */
 
-/* In the setup bar: whose settings these are, and the way out of them before the game */
+/* In the setup bar: a small chip with the tournament's name, its rules on hover, a cross to leave */
 .event-badge {
-  display: flex;
+  display: inline-flex;
   align-items: center;
-  gap: 0.5rem;
-  padding: 0.3rem 0.4rem 0.3rem 0.7rem;
+  gap: 0.15rem;
+  max-width: 12rem;
+  padding: 0.15rem 0.15rem 0.15rem 0.6rem;
   border: 1px solid var(--line-strong);
   border-radius: 999px;
-  font-size: 0.75rem;
+  font-size: 0.72rem;
   white-space: nowrap;
+  cursor: default;
 }
 
-.event-badge__label {
-  color: var(--muted);
+.event-badge[hidden] {
+  display: none;
 }
 
 .event-badge__name {
-  max-width: 14rem;
   overflow: hidden;
   text-overflow: ellipsis;
   font-weight: 700;
 }
 
 .event-badge__leave {
-  padding: 0.2rem 0.55rem;
-  border: 1px solid var(--line-strong);
-  border-radius: 999px;
+  display: grid;
+  place-items: center;
+  width: 1.4rem;
+  height: 1.4rem;
+  border: 0;
+  border-radius: 50%;
   background: transparent;
   color: var(--muted);
   font: inherit;
+  font-size: 0.95rem;
+  line-height: 1;
   cursor: pointer;
 }
 
+.event-badge__leave[hidden] {
+  display: none;
+}
+
 .event-badge__leave:hover {
+  background: rgba(255, 255, 255, 0.08);
   color: var(--text);
 }
 
-/* At the top of the online start: the tournament the table plays in */
-.event-card {
+/* The cards' source in the setup bar: words, not figures */
+.segmented--cards .segmented__option {
+  font-family: inherit;
+  font-size: 0.74rem;
+  white-space: nowrap;
+}
+
+.segmented__option:disabled {
+  cursor: default;
+}
+
+.segmented--cards.is-locked .segmented__option:not([aria-pressed="true"]) {
+  opacity: 0.4;
+}
+
+/* Before the game, each player picks their army in their half, under their name (main.ts, renderSeat) */
+.panel-army {
+  position: relative;
+  /* Its list opens over the score and CP boxes in the corners */
+  z-index: 20;
+  display: flex;
+  justify-content: center;
+  margin-bottom: 0.75rem;
+}
+
+.panel-army:empty {
+  display: none;
+}
+
+.panel-army .faction-row {
   display: flex;
   flex-direction: column;
-  gap: 0.35rem;
-  margin-bottom: 1rem;
-  padding: 0.9rem 1rem;
-  border: 1px solid var(--line-strong);
-  border-radius: 10px;
-  background: var(--surface);
-  text-align: left;
+  align-items: stretch;
+  gap: 0.4rem;
 }
 
-.event-card__kicker {
-  font-size: 0.68rem;
-  font-weight: 600;
-  letter-spacing: 0.18em;
-  text-transform: uppercase;
-  color: var(--muted);
+.panel-army .faction-row__chapter:not([hidden]) {
+  display: flex;
 }
 
-.overlay-inner .event-card p {
-  margin: 0;
+.panel-army .faction-row__player {
+  display: none;
 }
 
-.event-card__name {
-  font-size: 1.15rem;
-  font-weight: 700;
-}
-
-.event-card__rules {
-  font-size: 0.85rem;
-}
-
-.event-card__hint {
-  font-size: 0.78rem;
-  color: var(--muted);
-}
-
-.event-card__here {
-  align-self: flex-start;
-  margin-top: 0.3rem;
+.panel-army .picker {
+  min-width: 15rem;
 }
 
 /* The organiser's dialog: the settings beside the QR code they make */
 .overlay--event .overlay-inner {
-  width: 40rem;
+  width: 46rem;
 }
 
 .event-setup {
@@ -10178,4 +10193,71 @@ h2.report-hero__result {
   margin: 28px 0 0;
   font-size: 16px;
   color: #555;
+}
+
+/* The organiser's rows: the setting, its value, then imposed or left to the players */
+.overlay-inner p.event-form__head {
+  display: flex;
+  justify-content: space-between;
+  margin: 0.6rem 0 0;
+  font-size: 0.64rem;
+  font-weight: 600;
+  letter-spacing: 0.14em;
+  text-align: left;
+  text-transform: uppercase;
+  color: var(--muted);
+}
+
+.event-row {
+  display: flex;
+  align-items: center;
+  gap: 0.6rem;
+  min-height: 2.2rem;
+}
+
+.event-row__label {
+  flex: 0 0 auto;
+  min-width: 6rem;
+  font-size: 0.8rem;
+  text-align: left;
+}
+
+.event-row input[type="number"] {
+  width: 5rem;
+  padding: 0.45rem 0.55rem;
+  border: 1px solid var(--line-strong);
+  border-radius: 6px;
+  background: var(--surface);
+  color: var(--text);
+  font: inherit;
+  font-size: 0.9rem;
+}
+
+.event-row > .toggle-chip {
+  flex: 1;
+}
+
+.event-lock {
+  flex: 0 0 auto;
+  margin-left: auto;
+  padding: 0.25rem 0.65rem;
+  border: 1px solid var(--line-strong);
+  border-radius: 999px;
+  background: transparent;
+  color: var(--muted);
+  font: inherit;
+  font-size: 0.7rem;
+  font-weight: 600;
+  cursor: pointer;
+}
+
+.event-lock[aria-pressed="true"] {
+  border-color: var(--accent);
+  background: var(--accent);
+  color: var(--on-accent);
+}
+
+.event-lock[aria-pressed="true"] .event-lock__off,
+.event-lock[aria-pressed="false"] .event-lock__on {
+  display: none;
 }
