@@ -2572,9 +2572,12 @@ function fitScreen(): void {
   const root = document.documentElement;
   const { innerWidth: w, innerHeight: h } = window;
   if (root.dataset.uiSize === "auto") {
-    // By the screen's area: about Standard on a laptop, Ultra wide on a 3440 px ultrawide. Neither
-    // side may overflow, and a phone keeps the size its screens were drawn for
-    const scale = PHONE.matches ? 1.12 : Math.max(0.86, Math.min(Math.sqrt(w * h) / 1020, h / 560, w / 1100, 2.12));
+    // By the screen's area, never under Standard (a laptop's window would get less) unless the
+    // screen can't hold it; up to Ultra wide on a 3440 px ultrawide. Neither side may overflow, and
+    // a phone keeps the size its screens were drawn for
+    const standard = 1.12;
+    const fits = Math.min(h / 560, w / 1100);
+    const scale = PHONE.matches ? standard : Math.max(0.86, Math.min(Math.max(Math.sqrt(w * h) / 1020, standard), fits, 2.12));
     root.style.setProperty("--ui-scale", scale.toFixed(3));
   } else root.style.removeProperty("--ui-scale");
   // Twice as wide as tall, an ultrawide: the players side by side
