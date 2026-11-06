@@ -2,7 +2,7 @@ import "./style.css";
 import { getLang, setLang, setPlayerNames, t, type Lang, type StringKey } from "./i18n";
 import type { MissionAction } from "./actions";
 import { SECONDARY_BY_ID, type SecondaryCard, type Text } from "./secondaries";
-import { FACTION_BY_ID, FACTIONS, SPACE_MARINES, SPACE_MARINES_NAME, type Faction, type FactionGroup } from "./factions";
+import { FACTION_BY_ID, FACTIONS, SPACE_MARINES, SPACE_MARINES_NAME, sideLooks, type Faction, type FactionGroup } from "./factions";
 import { applyUpdateIfIdle, setupPwa } from "./pwa";
 import type { Room, RoomEvents, Seat, Seats } from "./room";
 import { merge } from "./sync";
@@ -1465,8 +1465,10 @@ function factionOf(player: Player): Faction | undefined {
   return id ? FACTION_BY_ID.get(id) : undefined;
 }
 
+/** Picked as plain Space Marines ("Other chapter" in the list), the army goes by that name */
 function factionName(player: Player): string | undefined {
-  return factionOf(player)?.name[getLang()];
+  const faction = factionOf(player);
+  return faction && (faction.id === SPACE_MARINES ? SPACE_MARINES_NAME : faction.name)[getLang()];
 }
 
 /** The army beside a player's name, when the name is not already it (both picked the same) */
@@ -2655,26 +2657,31 @@ function renderMe(): void {
   root.toggleAttribute("data-flip", me !== null && (root.dataset.layout === "columns" ? me === 2 : me === 1));
   renderFactionRows();
 }
-/** On <html> for the player colors used everywhere, on the panel for its own decor: none before an army is picked */
-function applyFactionLook(player: Player): void {
-  const faction = factionOf(player);
+/**
+ * On <html> for the player colors used everywhere, on each panel for its own decor (none before
+ * an army is picked). Two sides too close in color: one takes another (see sideLooks)
+ */
+function applyFactionLooks(): void {
+  const looks = sideLooks(factionOf(1), factionOf(2));
   const root = document.documentElement.style;
-  const panel = player === 1 ? panel1 : panel2;
-  if (!faction) {
-    root.removeProperty(`--fx${player}`);
-    root.removeProperty(`--fx${player}-time`);
-    delete panel.dataset.band;
-    delete panel.dataset.texture;
-    panel.style.removeProperty("--fx-a");
-    panel.style.removeProperty("--fx-b");
-    return;
+  for (const player of [1, 2] as const) {
+    const faction = factionOf(player);
+    const look = looks[player];
+    const panel = player === 1 ? panel1 : panel2;
+    root.setProperty(`--fx${player}`, look.color);
+    root.setProperty(`--fx${player}-time`, look.time);
+    if (!faction) {
+      delete panel.dataset.band;
+      delete panel.dataset.texture;
+      panel.style.removeProperty("--fx-a");
+      panel.style.removeProperty("--fx-b");
+      continue;
+    }
+    panel.dataset.band = faction.band;
+    panel.dataset.texture = faction.texture;
+    panel.style.setProperty("--fx-a", look.color);
+    panel.style.setProperty("--fx-b", look.accent ?? faction.accent);
   }
-  root.setProperty(`--fx${player}`, faction.color);
-  root.setProperty(`--fx${player}-time`, faction.time);
-  panel.dataset.band = faction.band;
-  panel.dataset.texture = faction.texture;
-  panel.style.setProperty("--fx-a", faction.color);
-  panel.style.setProperty("--fx-b", faction.accent);
 }
 
 /** A player picks their army: on their own phone, or for both on a shared screen */
@@ -2722,8 +2729,7 @@ let namedFactions = "";
 
 /** The armies on screen: colors, decor, the lists, and the players' names wherever they show */
 function renderFactions(): void {
-  applyFactionLook(1);
-  applyFactionLook(2);
+  applyFactionLooks();
   showFactionChoice(1);
   showFactionChoice(2);
   renderFactionRows();

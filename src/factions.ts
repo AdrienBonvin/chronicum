@@ -94,3 +94,83 @@ export const FACTIONS: Faction[] = [
 ];
 
 export const FACTION_BY_ID = new Map(FACTIONS.map((faction) => [faction.id, faction]));
+
+/* ---------- Two armies of one color: player 2 takes another ---------- */
+
+/** What a side of the board is drawn in: its color, its clock digits, and the decor's second color */
+export type SideLook = { color: string; time: string; accent: string | null };
+
+/** The colors of a side with no army yet */
+const DEFAULT_LOOKS: Record<1 | 2, SideLook> = {
+  1: { color: "#4a9bff", time: "#d4e6ff", accent: null },
+  2: { color: "#ff5d77", time: "#ffdbe1", accent: null },
+};
+
+/** Two colors closer than this (OKLab) read as one across the table: gold and ochre, two greens */
+const MIN_GAP = 0.1;
+/** As legible on the board's background as the armies' own colors */
+const MIN_CONTRAST = 3.8;
+const BOARD_BG = "#08090b";
+/** A side's color when its army's own and its accent are both too close to the other side's */
+const FALLBACKS = ["#4a9bff", "#ff5d77", "#f5c518", "#2ee68a", "#b45fe0", "#1fc8d6"];
+
+const rgb = (hex: string): number[] => [1, 3, 5].map((i) => parseInt(hex.slice(i, i + 2), 16));
+const linear = (channel: number): number => {
+  const c = channel / 255;
+  return c <= 0.04045 ? c / 12.92 : ((c + 0.055) / 1.055) ** 2.4;
+};
+
+function oklab(hex: string): number[] {
+  const [r, g, b] = rgb(hex).map(linear);
+  const l = Math.cbrt(0.4122214708 * r + 0.5363325363 * g + 0.0514459929 * b);
+  const m = Math.cbrt(0.2119034982 * r + 0.6806995451 * g + 0.1073969566 * b);
+  const s = Math.cbrt(0.0883024619 * r + 0.2817188376 * g + 0.6299787005 * b);
+  return [
+    0.2104542553 * l + 0.793617785 * m - 0.0040720468 * s,
+    1.9779984951 * l - 2.428592205 * m + 0.4505937099 * s,
+    0.0259040371 * l + 0.7827717662 * m - 0.808675766 * s,
+  ];
+}
+
+const gap = (a: string, b: string): number => {
+  const [x, y] = [oklab(a), oklab(b)];
+  return Math.hypot(x[0] - y[0], x[1] - y[1], x[2] - y[2]);
+};
+
+const luminance = (hex: string): number => {
+  const [r, g, b] = rgb(hex).map(linear);
+  return 0.2126 * r + 0.7152 * g + 0.0722 * b;
+};
+
+const legible = (hex: string): boolean => (luminance(hex) + 0.05) / (luminance(BOARD_BG) + 0.05) >= MIN_CONTRAST;
+
+/** The clock digits: the color, very light, as the armies' own digits are */
+function tint(hex: string): string {
+  return `#${rgb(hex)
+    .map((c) => Math.round(c + (255 - c) * 0.8).toString(16).padStart(2, "0"))
+    .join("")}`;
+}
+
+/**
+ * Each side's look. When the two colors are too close (one army twice, Custodes against T'au),
+ * one side gives way: a side with no army yet, else player 2, the same on every device. It takes
+ * its army's accent when that reads well (Thousand Sons in gold), else the fallback furthest
+ * from the other side's color; its decor then swaps its two colors
+ */
+export function sideLooks(first: Faction | undefined, second: Faction | undefined): Record<1 | 2, SideLook> {
+  const own = (faction: Faction | undefined, player: 1 | 2): SideLook =>
+    faction ? { color: faction.color, time: faction.time, accent: faction.accent } : DEFAULT_LOOKS[player];
+  const looks: Record<1 | 2, SideLook> = { 1: own(first, 1), 2: own(second, 2) };
+  if (gap(looks[1].color, looks[2].color) >= MIN_GAP) return looks;
+  const moves: 1 | 2 = second && !first ? 1 : 2;
+  const kept = looks[moves === 1 ? 2 : 1].color;
+  const army = moves === 1 ? first : second;
+  const accent = army?.accent;
+  if (accent && legible(accent) && gap(accent, kept) >= MIN_GAP) {
+    looks[moves] = { color: accent, time: tint(accent), accent: army.color };
+    return looks;
+  }
+  const fallback = FALLBACKS.reduce((best, color) => (gap(color, kept) > gap(best, kept) ? color : best));
+  looks[moves] = { color: fallback, time: tint(fallback), accent: army?.accent ?? null };
+  return looks;
+}
