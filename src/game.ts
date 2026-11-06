@@ -111,6 +111,12 @@ export type ClockEvent = {
   left: Record<Player, number>;
 };
 
+/**
+ * A game set by a tournament's organiser (src/event.ts): its settings are read, not changed, on
+ * every device of the room, until the players leave the tournament before the game starts
+ */
+export type EventLock = { name: string; judgeOnlyPause: boolean };
+
 export type GameState = {
   /** Given when the battle starts: the photos of the table are kept under it */
   gameId: string;
@@ -126,8 +132,11 @@ export type GameState = {
   round: number;
   /** Clocks frozen while players photograph the table between two player turns */
   photoBreak: boolean;
-  /** Chosen before the game, fixed during it. Untimed deployment: the clocks start with the first turn */
-  options: { photoBreaks: boolean; cards: boolean; deployClock: boolean };
+  /**
+   * Chosen before the game, fixed during it. Untimed deployment: the clocks start with the first
+   * turn. Real deck (`manualDraw`): players draw from their own cards and pick in the app what they drew
+   */
+  options: { photoBreaks: boolean; cards: boolean; deployClock: boolean; manualDraw?: boolean; event?: EventLock };
   /** A judge called to the table: both clocks frozen since then (wall-clock ms) */
   judgeCall: number | null;
   /** The player who gave the game up: the other one wins, whatever the score. Absent from older states */
@@ -185,10 +194,20 @@ export function emptyCpHistory(): { added: number[]; removed: number[] } {
   return { added: Array<number>(MAX_PLAYER_TURNS).fill(0), removed: Array<number>(MAX_PLAYER_TURNS).fill(0) };
 }
 
+/** A fair pick in [0, n), from the browser's cryptographic randomness */
+export function randomIndex(n: number): number {
+  // Rejection sampling: the values past the last whole multiple of n would favour the small ones
+  const limit = Math.floor(0x1_0000_0000 / n) * n;
+  const value = new Uint32Array(1);
+  do crypto.getRandomValues(value);
+  while (value[0] >= limit);
+  return value[0] % n;
+}
+
 function shuffled<T>(items: T[]): T[] {
   const result = [...items];
   for (let i = result.length - 1; i > 0; i--) {
-    const j = Math.floor(Math.random() * (i + 1));
+    const j = randomIndex(i + 1);
     [result[i], result[j]] = [result[j], result[i]];
   }
   return result;
