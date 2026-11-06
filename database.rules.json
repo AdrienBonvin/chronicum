@@ -5,6 +5,7 @@
     "rooms": {
       "$code": {
         ".read": "auth != null && $code.matches(/^[A-HJ-NP-Z2-9]{5}$/)",
+        ".write": "auth != null && !newData.exists() && root.child('roomsSeen').child($code).val() < now - 86400000",
         "createdAt": {
           ".write": "auth != null && !data.exists() && $code.matches(/^[A-HJ-NP-Z2-9]{5}$/)",
           ".validate": "newData.isNumber()"
@@ -60,6 +61,14 @@
       ".indexOn": ".value",
       "$code": {
         ".write": "auth != null && $code.matches(/^[A-HJ-NP-Z2-9]{5}$/) && ((root.child('rooms').child($code).child('seats/1').val() === auth.uid || root.child('rooms').child($code).child('seats/2').val() === auth.uid || root.child('rooms').child($code).child('boards').child(auth.uid).exists()) || (!newData.exists() && data.val() < now - 172800000))",
+        ".validate": "newData.isNumber() && newData.val() <= now"
+      }
+    },
+    "roomsSeen": {
+      ".read": "auth != null && query.orderByValue == true && query.startAt == null && query.limitToFirst <= 20",
+      ".indexOn": ".value",
+      "$code": {
+        ".write": "auth != null && $code.matches(/^[A-HJ-NP-Z2-9]{5}$/) && ((root.child('rooms').child($code).child('seats/1').val() === auth.uid || root.child('rooms').child($code).child('seats/2').val() === auth.uid || root.child('rooms').child($code).child('boards').child(auth.uid).exists()) || (!newData.exists() && data.val() < now - 86400000))",
         ".validate": "newData.isNumber() && newData.val() <= now"
       }
     }

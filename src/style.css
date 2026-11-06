@@ -3971,6 +3971,56 @@ button.sec-option:hover:not(:disabled) {
   border-color: rgba(255, 95, 95, 0.45);
 }
 
+.sec-action--unpick:hover {
+  color: var(--text);
+  border-color: var(--pc-line);
+}
+
+/* ---------- Drawn from the real deck: blank until the card drawn is picked in its list ---------- */
+
+.sec-card.is-blank .sec-card__inner {
+  border-style: dashed;
+}
+
+.sec-card.is-blank .sec-card__name {
+  color: var(--muted);
+}
+
+.sec-card__blank-mark {
+  flex: 1;
+  display: grid;
+  place-items: center;
+  font-size: 4.5rem;
+  font-weight: 700;
+  line-height: 1;
+  color: var(--pc);
+  opacity: 0.3;
+}
+
+.sec-card__pick {
+  display: flex;
+  flex-direction: column;
+  gap: 0.5rem;
+  font-size: 0.78rem;
+  color: var(--muted);
+}
+
+.sec-card__pick select {
+  width: 100%;
+  padding: 0.6rem 0.65rem;
+  border: 1px solid var(--pc-line);
+  border-radius: 6px;
+  background: var(--surface);
+  color: var(--text);
+  font: inherit;
+  font-size: 0.92rem;
+}
+
+.sec-card__pick select:focus-visible {
+  outline: 2px solid var(--pc);
+  outline-offset: 2px;
+}
+
 /* Scored page: the whole card undoes its score, the options are only a reminder */
 .overlay--cards[data-mode="scored"] .sec-card {
   cursor: pointer;
@@ -4722,6 +4772,7 @@ button.sec-option:hover:not(:disabled) {
   gap: 0.45rem;
   padding: 0.3rem 0.7rem;
   font-size: 0.72rem;
+  white-space: nowrap;
 }
 
 .strip-reset .icon {
@@ -5272,74 +5323,24 @@ h2.report-hero__result {
   grid-template-columns: 1fr;
 }
 
-/* The picture's signature: the seal and the name, a code to start one's own chronicle */
+/* The picture's signature, in a corner like a photographer's mark */
 .report-sign {
   display: flex;
   align-items: center;
-  gap: 14px;
-  margin: 16px 0 0;
-  padding: 16px 4px 0;
-  border-top: 1px solid var(--line);
-}
-
-.report-sign__seal svg {
-  display: block;
-  width: 40px;
-  height: 40px;
-}
-
-.report-sign__name,
-.report-sign__scan {
-  display: flex;
-  flex-direction: column;
-  gap: 3px;
-}
-
-.report-sign__name {
-  flex: 1;
-}
-
-.report-sign__name b {
-  color: var(--bone);
-  font-family: var(--font-brand);
-  font-size: 1.05rem;
-  letter-spacing: 0.12em;
-}
-
-.report-sign__name small {
-  color: var(--brass);
-  font-family: var(--font-num);
-  font-size: 0.62rem;
-  letter-spacing: 0.14em;
-  text-transform: uppercase;
-}
-
-.report-sign__scan {
-  align-items: flex-end;
-  order: 1;
-  text-align: right;
-}
-
-.report-sign__scan b {
-  color: var(--text);
-  font-size: 0.8rem;
-}
-
-.report-sign__scan small {
+  justify-content: flex-end;
+  gap: 6px;
+  margin: 12px 0 0;
   color: var(--muted);
   font-family: var(--font-num);
-  font-size: 0.66rem;
+  font-size: 0.6rem;
+  letter-spacing: 0.08em;
+  opacity: 0.7;
 }
 
-.report-sign__qr {
-  order: 2;
-}
-
-.report-sign__qr svg {
+.report-sign svg {
   display: block;
-  width: 72px;
-  height: 72px;
-  border-radius: 4px;
+  width: 14px;
+  height: 14px;
 }
 
 /* ---------- End screen: the MVPs, the battle story, the folded secondaries ---------- */
@@ -9707,4 +9708,302 @@ h2.report-hero__result {
   #seat-end {
     min-height: 3rem;
   }
+}
+
+/* ---------- Ending a game early: give up, finish without clocks, erase ---------- */
+
+.overlay.overlay--end-game {
+  z-index: 13;
+}
+
+.end-game-options {
+  display: grid;
+  gap: 0.55rem;
+  margin-top: 1.2rem;
+}
+
+.end-game-option {
+  display: grid;
+  gap: 0.2rem;
+  padding: 0.75rem 0.9rem;
+  text-align: left;
+  text-transform: none;
+  letter-spacing: 0;
+  border-color: var(--line-strong);
+  background: transparent;
+  color: var(--text);
+}
+
+.end-game-option[hidden] {
+  display: none;
+}
+
+.end-game-option b {
+  font-size: 1rem;
+  font-weight: 600;
+}
+
+.end-game-option span {
+  color: var(--muted);
+  font-size: 0.85rem;
+  font-weight: 400;
+  line-height: 1.35;
+}
+
+.end-game-option:hover:not(:disabled),
+.end-game-option:focus-visible {
+  border-color: var(--accent);
+}
+
+.end-game-option.is-danger b {
+  color: var(--danger);
+}
+
+.end-game-option.is-danger:hover:not(:disabled),
+.end-game-option.is-danger:focus-visible {
+  border-color: color-mix(in srgb, var(--danger) 55%, transparent);
+}
+
+/* Without clocks: the times stay where they stopped, dimmed */
+#app.is-untimed #t1,
+#app.is-untimed #t2,
+#app.is-untimed #seat-time,
+#app.is-untimed #seat-opp-time {
+  opacity: 0.35;
+}
+
+/* ---------- Tournaments: the organiser's settings, from a QR code ---------- */
+
+/* In the setup bar: whose settings these are, and the way out of them before the game */
+.event-badge {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  padding: 0.3rem 0.4rem 0.3rem 0.7rem;
+  border: 1px solid var(--line-strong);
+  border-radius: 999px;
+  font-size: 0.75rem;
+  white-space: nowrap;
+}
+
+.event-badge__label {
+  color: var(--muted);
+}
+
+.event-badge__name {
+  max-width: 14rem;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  font-weight: 700;
+}
+
+.event-badge__leave {
+  padding: 0.2rem 0.55rem;
+  border: 1px solid var(--line-strong);
+  border-radius: 999px;
+  background: transparent;
+  color: var(--muted);
+  font: inherit;
+  cursor: pointer;
+}
+
+.event-badge__leave:hover {
+  color: var(--text);
+}
+
+/* At the top of the online start: the tournament the table plays in */
+.event-card {
+  display: flex;
+  flex-direction: column;
+  gap: 0.35rem;
+  margin-bottom: 1rem;
+  padding: 0.9rem 1rem;
+  border: 1px solid var(--line-strong);
+  border-radius: 10px;
+  background: var(--surface);
+  text-align: left;
+}
+
+.event-card__kicker {
+  font-size: 0.68rem;
+  font-weight: 600;
+  letter-spacing: 0.18em;
+  text-transform: uppercase;
+  color: var(--muted);
+}
+
+.overlay-inner .event-card p {
+  margin: 0;
+}
+
+.event-card__name {
+  font-size: 1.15rem;
+  font-weight: 700;
+}
+
+.event-card__rules {
+  font-size: 0.85rem;
+}
+
+.event-card__hint {
+  font-size: 0.78rem;
+  color: var(--muted);
+}
+
+.event-card__here {
+  align-self: flex-start;
+  margin-top: 0.3rem;
+}
+
+/* The organiser's dialog: the settings beside the QR code they make */
+.overlay--event .overlay-inner {
+  width: 40rem;
+}
+
+.event-setup {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) 12rem;
+  gap: 1.25rem;
+  align-items: start;
+  margin-top: 1rem;
+}
+
+@media (max-width: 640px) {
+  .event-setup {
+    grid-template-columns: minmax(0, 1fr);
+  }
+}
+
+.event-form {
+  display: flex;
+  flex-direction: column;
+  gap: 0.6rem;
+  min-width: 0;
+}
+
+.event-field {
+  display: flex;
+  flex-direction: column;
+  gap: 0.3rem;
+  font-size: 0.78rem;
+  color: var(--muted);
+  text-align: left;
+}
+
+.event-field input {
+  padding: 0.55rem 0.65rem;
+  border: 1px solid var(--line-strong);
+  border-radius: 6px;
+  background: var(--surface);
+  color: var(--text);
+  font: inherit;
+  font-size: 0.95rem;
+}
+
+.overlay-inner p.event-form__note {
+  margin: 0.2rem 0 0;
+  font-size: 0.72rem;
+  color: var(--muted);
+  text-align: left;
+}
+
+.event-poster {
+  display: flex;
+  flex-direction: column;
+  gap: 0.6rem;
+  margin: 0;
+  text-align: center;
+}
+
+.event-poster__qr {
+  padding: 0.5rem;
+  border-radius: 8px;
+  background: #fff;
+}
+
+.event-poster__qr svg {
+  display: block;
+  width: 100%;
+  height: auto;
+}
+
+.event-poster figcaption {
+  display: flex;
+  flex-direction: column;
+  gap: 0.2rem;
+  font-size: 0.8rem;
+}
+
+.event-poster figcaption span {
+  color: var(--muted);
+}
+
+.overlay-inner p.event-link {
+  margin: 1rem 0 0;
+  padding: 0.5rem 0.65rem;
+  border-radius: 6px;
+  background: var(--surface);
+  font-family: ui-monospace, "SF Mono", Menlo, monospace;
+  font-size: 0.7rem;
+  color: var(--muted);
+  text-align: left;
+  word-break: break-all;
+  user-select: all;
+}
+
+/* The poster as a picture: printed on paper, so ink on white whatever the app's theme */
+.event-print {
+  position: fixed;
+  top: 0;
+  left: -10000px;
+  width: 620px;
+  padding: 48px 56px;
+  background: #fff;
+  color: #111;
+  font-family: var(--font-ui);
+  text-align: center;
+}
+
+.event-print__kicker {
+  margin: 0;
+  font-size: 18px;
+  font-weight: 600;
+  letter-spacing: 0.3em;
+  text-transform: uppercase;
+  color: #555;
+}
+
+.event-print__name {
+  margin: 10px 0 0;
+  font-size: 44px;
+  line-height: 1.1;
+}
+
+.event-print__rules {
+  margin: 14px 0 0;
+  font-size: 20px;
+  color: #333;
+}
+
+.event-print__qr {
+  width: 360px;
+  margin: 32px auto 0;
+}
+
+.event-print__qr svg {
+  display: block;
+  width: 100%;
+  height: auto;
+}
+
+.event-print__scan {
+  margin: 20px 0 0;
+  font-size: 26px;
+  font-weight: 700;
+}
+
+.event-print__brand {
+  margin: 28px 0 0;
+  font-size: 16px;
+  color: #555;
 }

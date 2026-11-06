@@ -5,8 +5,7 @@
   "targets": {
     "warhammerclock": {
       "hosting": {
-        "app": ["chronicum"],
-        "legacy": ["warhammerclock"]
+        "app": ["chronicum"]
       }
     }
   },

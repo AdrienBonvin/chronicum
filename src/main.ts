@@ -6,6 +6,16 @@ import { FACTION_BY_ID, FACTIONS, SPACE_MARINES, SPACE_MARINES_NAME, sideLooks, 
 import { applyUpdateIfIdle, setupPwa } from "./pwa";
 import type { Room, RoomEvents, Seat, Seats } from "./room";
 import { merge } from "./sync";
+import { startAnalytics, track } from "./analytics";
+import {
+  EVENT_MAX_MINUTES,
+  EVENT_MIN_MINUTES,
+  EVENT_NAME_MAX,
+  EVENT_PARAM,
+  decodeEvent,
+  eventLink,
+  type EventPreset,
+} from "./event";
 import {
   BATTLE_READY_VP,
   DEFAULT_TIME_SEC,
@@ -23,6 +33,7 @@ import {
   nowMs,
   other,
   playerTurnSlot,
+  randomIndex,
   runClock,
   scoreOf as scoreOfGame,
   scoringTurnIdx as scoringTurnIdxOf,
@@ -90,6 +101,17 @@ const PRESETS = [
 ] as const;
 
 const CUSTOM_PRESET_VALUE = "custom";
+
+/** The organiser's yes/no settings, in the tournament dialog: the field of the preset each one sets */
+const EVENT_TOGGLES = [
+  { id: "event-cards", key: "secondaryCards", field: "cards" },
+  { id: "event-manual-draw", key: "manualDraw", field: "manualDraw" },
+  { id: "event-photo-breaks", key: "photoBreaks", field: "photoBreaks" },
+  { id: "event-deploy-clock", key: "deployClock", field: "deployClock" },
+  { id: "event-judge-pause", key: "eventJudgePause", field: "judgeOnlyPause" },
+  { id: "event-music-off", key: "eventMusicOff", field: "musicOff" },
+  { id: "event-sounds-on", key: "eventSoundsOn", field: "soundsOn" },
+] as const satisfies readonly { id: string; key: StringKey; field: keyof EventPreset }[];
 
 /** Something comes and goes in the layout: it slides or glides open and shut in this time (slideRow, glideHeight) */
 const SLIDE_MS = 260;
@@ -300,6 +322,11 @@ app.innerHTML = `
   <header class="toolbar">
     <p class="toolbar-deploy" data-i18n="deployToolbarHint"></p>
     <div class="toolbar__group">
+      <div class="event-badge" id="event-badge" hidden>
+        <span class="event-badge__label" data-i18n="eventLockedBy"></span>
+        <span class="event-badge__name" id="event-badge-name"></span>
+        <button type="button" class="event-badge__leave" id="event-leave" data-i18n="eventLeave"></button>
+      </div>
       <div class="setting">
         <span class="setting__label">${ICON_CLOCK}<span data-i18n="time"></span></span>
         <div class="time-picker" id="time-picker">
@@ -340,6 +367,11 @@ app.innerHTML = `
         <input type="checkbox" id="secondary-cards" checked />
         ${ICON_CARDS}
         <span data-i18n="secondaryCards"></span>
+        <span class="toggle-chip__switch" aria-hidden="true"></span>
+      </label>
+      <label class="toggle-chip" id="manual-draw-chip" data-i18n-title="manualDrawHint">
+        <input type="checkbox" id="manual-draw" />
+        <span data-i18n="manualDraw"></span>
         <span class="toggle-chip__switch" aria-hidden="true"></span>
       </label>
     </div>
@@ -417,6 +449,9 @@ app.innerHTML = `
                 <button type="button" class="segmented__option" data-value="fr" title="Français">FR</button>
               </div>
             </div>
+          </div>
+          <div class="settings__section settings__section--event">
+            <button type="button" class="btn-secondary settings-event" id="btn-event-setup" data-i18n="eventSetup"></button>
           </div>
           <div class="settings__section settings__about">
             <span class="settings__brand">Chronicum</span>
@@ -585,6 +620,21 @@ app.innerHTML = `
       <div class="overlay-actions">
         <button type="button" class="btn-secondary" id="btn-turn-confirm-cancel"><span data-i18n="cancel"></span> <kbd data-i18n="keyEsc"></kbd></button>
         <button type="button" class="btn-primary" id="btn-turn-confirm-ok"><span data-i18n="confirm"></span> <kbd data-i18n="keyEnter"></kbd></button>
+      </div>
+    </div>
+  </div>
+  <div class="overlay overlay--end-game" id="end-game-overlay" role="dialog" aria-modal="true" aria-labelledby="end-game-title" aria-hidden="true">
+    <div class="overlay-inner">
+      <h2 id="end-game-title" data-i18n="endGameTitle"></h2>
+      <p class="overlay-msg" data-i18n="endGameMsg"></p>
+      <div class="end-game-options">
+        <button type="button" class="end-game-option" id="end-game-concede-1"><b></b><span></span></button>
+        <button type="button" class="end-game-option" id="end-game-concede-2"><b></b><span></span></button>
+        <button type="button" class="end-game-option" id="end-game-untimed"><b data-i18n="untimed"></b><span data-i18n="untimedHint"></span></button>
+        <button type="button" class="end-game-option is-danger" id="end-game-erase"><b data-i18n="eraseGame"></b><span data-i18n="resetMsg"></span></button>
+      </div>
+      <div class="overlay-actions">
+        <button type="button" class="btn-secondary" id="btn-end-game-cancel"><span data-i18n="cancel"></span> <kbd data-i18n="keyEsc"></kbd></button>
       </div>
     </div>
   </div>
@@ -779,6 +829,13 @@ app.innerHTML = `
     <div class="overlay-inner">
       <h2 id="online-title" data-i18n="onlineTitle"></h2>
       <div class="online-start" id="online-start">
+        <div class="event-card" id="event-card" hidden>
+          <span class="event-card__kicker" data-i18n="eventKicker"></span>
+          <p class="event-card__name" id="event-card-name"></p>
+          <p class="event-card__rules" id="event-card-rules"></p>
+          <p class="event-card__hint" id="event-card-hint"></p>
+          <button type="button" class="btn-ghost event-card__here" id="event-here" data-i18n="eventPlayHere"></button>
+        </div>
         <p class="online-mode" data-i18n="onlineTableTitle"></p>
         <p class="overlay-msg" id="online-intro"></p>
         <button type="button" class="btn-primary online-create" id="online-create"></button>
@@ -821,6 +878,46 @@ app.innerHTML = `
       <div class="overlay-actions">
         <button type="button" class="btn-ghost" id="online-leave" hidden></button>
         <button type="button" class="btn-secondary" id="online-close"><span id="online-close-label"></span> <kbd data-i18n="keyEsc"></kbd></button>
+      </div>
+    </div>
+  </div>
+  <div class="overlay overlay--event" id="event-overlay" role="dialog" aria-modal="true" aria-labelledby="event-title" aria-hidden="true">
+    <div class="overlay-inner">
+      <h2 id="event-title" data-i18n="eventSetupTitle"></h2>
+      <p class="overlay-msg" data-i18n="eventSetupIntro"></p>
+      <div class="event-setup">
+        <form class="event-form" id="event-form">
+          <label class="event-field">
+            <span data-i18n="eventName"></span>
+            <input id="event-name" type="text" maxlength="${EVENT_NAME_MAX}" autocomplete="off" data-i18n-placeholder="eventNamePlaceholder" />
+          </label>
+          <label class="event-field">
+            <span data-i18n="eventMinutes"></span>
+            <input id="event-minutes" type="number" min="${EVENT_MIN_MINUTES}" max="${EVENT_MAX_MINUTES}" step="5" value="${DEFAULT_TIME_SEC / 60}" />
+          </label>
+          ${EVENT_TOGGLES.map(
+            ({ id, key }) => `
+          <label class="toggle-chip">
+            <input type="checkbox" id="${id}" />
+            <span data-i18n="${key}"></span>
+            <span class="toggle-chip__switch" aria-hidden="true"></span>
+          </label>`,
+          ).join("")}
+          <p class="event-form__note" data-i18n="eventSuggested"></p>
+        </form>
+        <figure class="event-poster">
+          <div class="event-poster__qr" id="event-qr"></div>
+          <figcaption>
+            <b id="event-poster-name"></b>
+            <span id="event-poster-rules"></span>
+          </figcaption>
+        </figure>
+      </div>
+      <p class="event-link" id="event-link"></p>
+      <div class="overlay-actions">
+        <button type="button" class="btn-secondary" id="event-copy" data-i18n="eventCopy"></button>
+        <button type="button" class="btn-secondary" id="event-download" data-i18n="eventDownload"></button>
+        <button type="button" class="btn-primary" id="event-close"><span data-i18n="close"></span> <kbd data-i18n="keyEsc"></kbd></button>
       </div>
     </div>
   </div>
@@ -887,6 +984,17 @@ const abilitiesTitle = app.querySelector<HTMLElement>("#abilities-title")!;
 const abilityList = app.querySelector<HTMLUListElement>("#ability-list")!;
 const btnAbilitiesClose = app.querySelector<HTMLButtonElement>("#btn-abilities-close")!;
 const secondaryCardsToggle = app.querySelector<HTMLInputElement>("#secondary-cards")!;
+const manualDrawToggle = app.querySelector<HTMLInputElement>("#manual-draw")!;
+const manualDrawChip = app.querySelector<HTMLElement>("#manual-draw-chip")!;
+const eventBadge = app.querySelector<HTMLElement>("#event-badge")!;
+const eventLeaveBtn = app.querySelector<HTMLButtonElement>("#event-leave")!;
+const eventCard = app.querySelector<HTMLElement>("#event-card")!;
+const eventHereBtn = app.querySelector<HTMLButtonElement>("#event-here")!;
+const eventOverlay = app.querySelector<HTMLElement>("#event-overlay")!;
+const eventForm = app.querySelector<HTMLFormElement>("#event-form")!;
+const eventNameInput = app.querySelector<HTMLInputElement>("#event-name")!;
+const eventMinutesInput = app.querySelector<HTMLInputElement>("#event-minutes")!;
+const eventToggle = (id: (typeof EVENT_TOGGLES)[number]["id"]): HTMLInputElement => app.querySelector<HTMLInputElement>(`#${id}`)!;
 const handButtonEl: Record<Player, HTMLButtonElement> = {
   1: app.querySelector<HTMLButtonElement>("#p1-hand-btn")!,
   2: app.querySelector<HTMLButtonElement>("#p2-hand-btn")!,
@@ -930,6 +1038,8 @@ const turnConfirmTitle = app.querySelector<HTMLElement>("#turn-confirm-title")!;
 const turnConfirmMsg = app.querySelector<HTMLElement>("#turn-confirm-msg")!;
 const btnTurnConfirmOk = app.querySelector<HTMLButtonElement>("#btn-turn-confirm-ok")!;
 const btnTurnConfirmCancel = app.querySelector<HTMLButtonElement>("#btn-turn-confirm-cancel")!;
+const endGameOverlay = app.querySelector<HTMLElement>("#end-game-overlay")!;
+const btnEndGameCancel = app.querySelector<HTMLButtonElement>("#btn-end-game-cancel")!;
 const resultOverlay = app.querySelector<HTMLElement>("#result-overlay")!;
 const mvpOverlay = app.querySelector<HTMLElement>("#mvp-overlay")!;
 const btnMvpCrown = app.querySelector<HTMLButtonElement>("#btn-mvp-crown")!;
@@ -1070,6 +1180,89 @@ function hideTurnConfirmModal(): void {
   turnConfirmKind = null;
   turnConfirmOverlay.classList.remove("is-visible");
   turnConfirmOverlay.setAttribute("aria-hidden", "true");
+}
+
+/* ---------- Ending a game before its last round ---------- */
+
+/** Who won: the opponent of a player who gave up, else the higher score */
+function gameWinner(): Player | null {
+  if (game.concededBy) return other(game.concededBy);
+  const [total1, total2] = [scoreOf(1), scoreOf(2)];
+  return total1 > total2 ? 1 : total2 > total1 ? 2 : null;
+}
+
+const untimed = (): boolean => game.clock.offFrom !== undefined;
+
+/**
+ * Give up, play the end fast without clocks, or erase the game. A player's phone gives up for
+ * its own player only; a shared screen, for either
+ */
+function openEndGame(): void {
+  closePopovers();
+  const me = online?.seat;
+  for (const player of [1, 2] as const) {
+    const button = app.querySelector<HTMLButtonElement>(`#end-game-concede-${player}`)!;
+    button.hidden = me !== undefined && me !== player;
+    button.querySelector("b")!.textContent = me === player ? t("concedeMine") : t("concede", { n: player });
+    button.querySelector("span")!.textContent = t("concedeHint", { n: other(player) });
+  }
+  app.querySelector<HTMLElement>("#end-game-untimed")!.hidden = untimed();
+  endGameOverlay.classList.add("is-visible");
+  endGameOverlay.setAttribute("aria-hidden", "false");
+  btnEndGameCancel.focus();
+}
+
+function closeEndGame(): void {
+  endGameOverlay.classList.remove("is-visible");
+  endGameOverlay.setAttribute("aria-hidden", "true");
+}
+
+/** A player gives the game up: whatever was on screen goes, the result shows */
+function concede(player: Player): void {
+  closeEndGame();
+  if (cardsPlayer !== null) closeCards(false);
+  if (game.photoBreak) {
+    game.photoBreak = false;
+    hidePhotoBreak();
+  }
+  if (game.judgeCall !== null) {
+    game.judgeCall = null;
+    hideJudgeCall();
+  }
+  hideTimeOut();
+  // A draw waiting for the break to end would open over the result
+  pendingDraw = null;
+  game.concededBy = player;
+  logClock("concede", { player });
+  finishGameByScore();
+}
+
+/** The rest of the game is played fast: the clocks stop for good, no more photo breaks */
+function finishWithoutClocks(): void {
+  closeEndGame();
+  stopClock(game.clock);
+  game.clock.offFrom = game.round;
+  game.options.photoBreaks = false;
+  photoBreaksToggle.checked = false;
+  logClock("untimed");
+  stopLoop();
+  hideTimeOut();
+  if (game.phase === "paused") resume();
+  applyTimesToDisplay();
+  setActivePanels();
+  updateButtons();
+}
+
+/** In a game still going, the reset buttons end it instead: they open the choices above */
+function renderResetLabels(): void {
+  const key = inGame(game) && !isOver() ? "endGame" : "reset";
+  for (const id of ["btn-reset", "seat-reset"]) {
+    const label = app.querySelector<HTMLElement>(`#${id} span`)!;
+    label.dataset.i18n = key;
+    label.textContent = t(key);
+  }
+  btnReset.dataset.i18nTitle = key;
+  btnReset.title = t(key);
 }
 
 function hideResultOverlay(): void {
@@ -1812,7 +2005,7 @@ function crownMvps(): void {
 /* ---------- The chronicle: each battle this device sees to its end gets the next number ---------- */
 
 const CHRONICLES_STORAGE_KEY = "warhammerClock.chronicles";
-/** Where a shared report leads: its QR code and the address under it */
+/** Where a shared report leads: the address at its foot */
 const APP_URL = "https://chronicum.web.app/";
 /** The brand's seal: a C that is also a dial, bone and brass (public/icon.svg without its square) */
 const SEAL_SVG = `<svg viewBox="0 0 100 100" aria-hidden="true"><g fill="none" stroke="#e8dfcb"><path d="M74.04 25.96 A34 34 0 1 0 74.04 74.04" stroke-width="8"/><path d="M50 22 V28 M22 50 H28 M50 72 V78" stroke-width="3"/><path d="M50 50 L74 41" stroke="#b08d57" stroke-width="5" stroke-linecap="round"/><circle cx="50" cy="50" r="5" fill="#b08d57" stroke="none"/></g></svg>`;
@@ -1845,32 +2038,27 @@ function chronicleNo(): number {
 
 const chronicleTitle = (): string => t("chronicle", { n: String(chronicleNo()).padStart(3, "0") });
 
-/** At the foot of the shared picture: who made it, and a code to start one's own */
-async function reportSignHtml(): Promise<string> {
-  const { default: qrcode } = await import("qrcode-generator");
-  const qr = qrcode(0, "M");
-  qr.addData(APP_URL);
-  qr.make();
-  // Ink on bone: the dark image keeps a code every camera reads
-  const code = qr.createSvgTag({ cellSize: 4, margin: 2, scalable: true }).replace('fill="white"', 'fill="#e8dfcb"').replace('fill="black"', 'fill="#07090d"');
-  return `<footer class="report-sign">
-    <span class="report-sign__seal">${SEAL_SVG}</span>
-    <span class="report-sign__name"><b>Chronicum</b><small>${t("brandLine")}</small></span>
-    <span class="report-sign__qr">${code}</span>
-    <span class="report-sign__scan"><b>${t("scanToPlay")}</b><small>${APP_URL.replace(/^https:\/\/|\/$/g, "")}</small></span>
-  </footer>`;
+/** At the foot of the shared picture, kept small: the battle is what people share, not the app */
+function reportSignHtml(): string {
+  return `<footer class="report-sign">${SEAL_SVG}<span>${APP_URL.replace(/^https:\/\/|\/$/g, "")}</span></footer>`;
 }
 
 /* ---------- The report, on screen and as a picture ---------- */
 
 function reportHeroHtml(title: boolean): string {
   const [total1, total2] = [scoreOf(1), scoreOf(2)];
-  const winner: Player | null = total1 > total2 ? 1 : total2 > total1 ? 2 : null;
+  const winner = gameWinner();
   const events = clockEvents();
   const started = events.find((event) => event.kind === "start");
   const ended = events.filter((event) => event.kind === "end").pop();
   const date = new Date(started?.at ?? Date.now()).toLocaleDateString(getLang(), { day: "numeric", month: "short", year: "numeric" });
-  const meta = [date, started && ended ? formatDuration((ended.at - started.at) / 1000) : "", `${t("round")} ${game.round}`]
+  const offFrom = game.clock.offFrom;
+  const meta = [
+    date,
+    started && ended ? formatDuration((ended.at - started.at) / 1000) : "",
+    `${t("round")} ${game.round}`,
+    offFrom !== undefined ? t("reportUntimed", { n: offFrom }) : "",
+  ]
     .filter(Boolean)
     .join(" · ");
   const side = (player: Player): string => {
@@ -1878,7 +2066,10 @@ function reportHeroHtml(title: boolean): string {
     return `<div class="report-side is-p${player}"><span class="report-side__name">${t("player", { n: player })}</span>${faction ? `<span class="report-side__faction">${faction}</span>` : ""}</div>`;
   };
   const score = (player: Player): string => `<b class="is-p${player}${winner && winner !== player ? " is-behind" : ""}">${scoreOf(player)}</b>`;
-  const result = `<span class="report-pill${winner ? ` is-p${winner}` : ""}">${winner ? t("wins", { n: winner }) : t("draw")}</span><span class="report-wtc">${t("reportWtc", { a: wtcPoints(total1, total2), b: wtcPoints(total2, total1) })}</span>`;
+  const result = `<span class="report-pill${winner ? ` is-p${winner}` : ""}">${winner ? t("wins", { n: winner }) : t("draw")}</span><span class="report-wtc">${
+    // A game given up has no WTC score to read from its points
+    game.concededBy ? t("reportConceded", { n: game.concededBy }) : t("reportWtc", { a: wtcPoints(total1, total2), b: wtcPoints(total2, total1) })
+  }</span>`;
   return `
     <header class="report-hero${winner ? ` is-p${winner}-wins` : ""}">
       <p class="report-hero__chronicle">${chronicleTitle()}</p>
@@ -1916,7 +2107,7 @@ async function reportImage(): Promise<Blob | null> {
   const sheet = document.createElement("div");
   sheet.className = "report-export";
   const spent = timeByRound();
-  sheet.innerHTML = `<article class="report">${reportHeroHtml(false)}${mvpImageHtml()}<div class="report-players">${reportPlayer(1, spent, true)}${reportPlayer(2, spent, true)}</div>${reportLegend()}</article>${await reportSignHtml()}`;
+  sheet.innerHTML = `<article class="report">${reportHeroHtml(false)}${mvpImageHtml()}<div class="report-players">${reportPlayer(1, spent, true)}${reportPlayer(2, spent, true)}</div>${reportLegend()}</article>${reportSignHtml()}`;
   document.body.append(sheet);
   try {
     const { toBlob } = await import("html-to-image");
@@ -1945,10 +2136,15 @@ async function exportBattleReport(): Promise<void> {
     if (!blob) return;
     const file = new File([blob], `chronicum-${String(chronicleNo()).padStart(3, "0")}-${battleDay()}.png`, { type: "image/png" });
     if (PHONE.matches && navigator.canShare?.({ files: [file] })) {
-      await navigator.share({ files: [file] }).catch(() => undefined);
+      const shared = await navigator.share({ files: [file] }).then(
+        () => true,
+        () => false,
+      );
+      if (shared) track("Récap partagé", { via: "partage" });
       return;
     }
     download(file);
+    track("Récap partagé", { via: "téléchargement" });
   } catch {
     showToast(t("reportExportFailed"));
   } finally {
@@ -1975,10 +2171,29 @@ function showResultOverlay(): void {
   void refreshEndPhotos();
 }
 
+/** How the game is played, for the audience measure: one screen, phones, a shared screen, apart */
+function playMode(): string {
+  if (table) return "écran partagé";
+  if (!online) return "un écran";
+  if (!online.phone) return "à distance";
+  return online.seats?.board ? "téléphones et écran" : "deux téléphones";
+}
+
+const cardsLabel = (): string => (!game.options.cards ? "sans" : manualDraw() ? "vrai paquet" : "app");
+
+/** This device's battles so far, in steps: whether players come back, without knowing who they are */
+function chronicleStep(n: number): string {
+  if (n <= 1) return "1";
+  if (n <= 5) return "2-5";
+  return n <= 20 ? "6-20" : "21+";
+}
+
 function finishGameByScore(): void {
   game.phase = "over";
   stopClock(game.clock);
   logClock("end");
+  // Counted once, by the device that ends the battle
+  track("Partie terminée", { chronique: chronicleStep(chronicleNo()), mode: playMode(), abandon: !!game.concededBy });
   lastSpaceTime = 0;
   stopLoop();
   syncInputsFromState();
@@ -2025,6 +2240,8 @@ function applyConfirmed(kind: TurnConfirmKind): void {
     return;
   }
   if (kind === "reset") {
+    // After a game over, the next one never starts in its room: in a tournament, the last opponent is still there
+    if (isOver()) leaveRoom();
     reset();
     return;
   }
@@ -3135,6 +3352,8 @@ function applyLang(value: string, remember = false): void {
   renderSeat();
   renderOnlineDialog();
   renderJudgeCall();
+  renderEvent();
+  if (eventOverlay.classList.contains("is-visible")) renderEventSetup();
   if (tossOverlay.classList.contains("is-visible")) renderToss();
   if (logOverlay.classList.contains("is-visible")) renderClockLog();
   if (resultOverlay.classList.contains("is-visible")) renderBattleReport();
@@ -3249,12 +3468,98 @@ function setActivePanels(): void {
 }
 
 function setInputsEnabled(on: boolean): void {
-  btnTime.disabled = !on;
-  m1.disabled = !on;
-  m2.disabled = !on;
-  photoBreaksToggle.disabled = !on;
-  secondaryCardsToggle.disabled = !on;
-  deployClockToggle.disabled = !on;
+  // Set by a tournament's organiser: the players read the settings, they don't change them
+  const free = on && !eventLocked();
+  btnTime.disabled = !free;
+  m1.disabled = !free;
+  m2.disabled = !free;
+  photoBreaksToggle.disabled = !free;
+  secondaryCardsToggle.disabled = !free;
+  manualDrawToggle.disabled = !free;
+  deployClockToggle.disabled = !free;
+}
+
+/** The real deck only means something with the cards on */
+function renderManualDrawChip(): void {
+  manualDrawChip.hidden = !game.options.cards;
+  manualDrawToggle.checked = manualDraw();
+}
+
+/* ---------- Tournaments: the settings of the organiser's QR code ---------- */
+
+const eventLocked = (): boolean => !!game.options.event;
+/** Only a judge call stops the clocks: no pause from the players */
+const pauseLocked = (): boolean => game.options.event?.judgeOnlyPause === true;
+
+/** "1h25 per player · real deck · photo breaks", what the poster and the arrival say */
+function eventRules(rules: Pick<EventPreset, "seconds" | "cards" | "manualDraw" | "photoBreaks" | "deployClock" | "judgeOnlyPause">): string {
+  return [
+    t("eventPerPlayer", { time: formatDuration(rules.seconds) }),
+    rules.cards ? t(rules.manualDraw ? "eventRealDeck" : "eventAppDraw") : t("eventNoCards"),
+    rules.photoBreaks ? t("eventPhotoBreaks") : "",
+    rules.deployClock ? "" : t("eventUntimedDeploy"),
+    rules.judgeOnlyPause ? t("eventJudgeOnly") : "",
+  ]
+    .filter(Boolean)
+    .join(" · ");
+}
+
+/**
+ * The organiser's link opened: the game takes the tournament's settings, locked. Music and sounds
+ * only follow the organiser's suggestion on this device; the language stays the player's
+ */
+function joinEvent(preset: EventPreset): void {
+  if (inGame(game) || inPreBattle()) return;
+  game.options = {
+    ...game.options,
+    photoBreaks: preset.photoBreaks,
+    cards: preset.cards,
+    manualDraw: preset.manualDraw,
+    deployClock: preset.deployClock,
+    event: { name: preset.name, judgeOnlyPause: preset.judgeOnlyPause },
+  };
+  photoBreaksToggle.checked = preset.photoBreaks;
+  secondaryCardsToggle.checked = preset.cards;
+  deployClockToggle.checked = preset.deployClock;
+  applyPresetSeconds(preset.seconds);
+  if (preset.musicOff) applyMusic("off");
+  if (preset.soundsOn) applySounds("on");
+  renderEvent();
+}
+
+/** Back to a free game, before it starts: every device of the room sees the badge go */
+function leaveEvent(): void {
+  if (!eventLocked() || inGame(game) || inPreBattle()) return;
+  delete game.options.event;
+  renderEvent();
+}
+
+function renderEvent(): void {
+  const event = game.options.event;
+  const name = event?.name || t("eventUnnamed");
+  eventBadge.hidden = !event;
+  eventCard.hidden = !event;
+  app.querySelector<HTMLElement>("#event-badge-name")!.textContent = name;
+  eventLeaveBtn.hidden = inGame(game) || inPreBattle();
+  if (event) {
+    app.querySelector<HTMLElement>("#event-card-name")!.textContent = name;
+    app.querySelector<HTMLElement>("#event-card-rules")!.textContent = eventRules({
+      seconds: timeLeft(1),
+      cards: game.options.cards,
+      manualDraw: manualDraw(),
+      photoBreaks: game.options.photoBreaks,
+      deployClock: deploymentTimed(),
+      judgeOnlyPause: pauseLocked(),
+    });
+  }
+  // A phone plays its own player only: it creates the table's game or joins the opponent's. A
+  // computer or a tablet at the table is played on as it is, or shows the players' codes
+  const phone = PHONE.matches;
+  eventHereBtn.hidden = phone;
+  app.querySelector<HTMLElement>("#event-card-hint")!.textContent = t(phone ? "eventJoinHint" : "eventScreenHint");
+  renderManualDrawChip();
+  setInputsEnabled(!isRunning() && !inPreBattle());
+  renderKeyHint();
 }
 
 function renderKeyHint(): void {
@@ -3268,7 +3573,10 @@ function renderKeyHint(): void {
     const hand = secondaryCardsOn()
       ? ` ${sep} <kbd>${HAND_KEY}</kbd> ${t("hintHand")} <kbd>${PRIMARY_KEY}</kbd> ${t("hintPrimary")}`
       : "";
-    keyHint.innerHTML = `${enter} ${t("hintEndTurn")} ${sep} ${space} ${t("hintSwitch")} ${sep} ${space}${space} ${t("hintPause")}${hand}${judge}`;
+    const off = untimed() ? `<span class="key-hint__status">${t("untimedBadge")}</span> ` : "";
+    // A tournament where only the judge stops the clocks: no pause to offer
+    const pauseHint = pauseLocked() ? "" : ` ${sep} ${space}${space} ${t("hintPause")}`;
+    keyHint.innerHTML = `${off}${enter} ${t("hintEndTurn")} ${sep} ${space} ${t("hintSwitch")}${pauseHint}${hand}${judge}`;
   } else if (isOver()) {
     keyHint.innerHTML = `<span class="key-hint__status">${t("gameOver")}</span> ${t("hintPlayAgain")}`;
   } else if (isStopped(game)) {
@@ -3286,6 +3594,8 @@ function updateButtons(): void {
   btnJudge.hidden = !inGame(game) || isOver();
   app.classList.toggle("is-deploying", isDeploying());
   app.classList.toggle("is-pre-battle", inPreBattle());
+  app.classList.toggle("is-untimed", untimed() && !isOver());
+  renderResetLabels();
   renderKeyHint();
   renderSeat();
 }
@@ -3438,6 +3748,8 @@ const LOG_TEXT: Record<ClockEventKind, (event: ClockEvent) => string> = {
   judgeEnd: ({ seconds }) => t("logJudgeEnd", { time: formatSpan(seconds ?? 0) }),
   adjust: ({ player, seconds }) => t("logAdjust", { n: player ?? "", delta: formatDelta(seconds ?? 0) }),
   timeOut: ({ player }) => t("logTimeOut", { n: player ?? "" }),
+  untimed: () => t("logUntimed"),
+  concede: ({ player }) => t("logConcede", { n: player ?? "" }),
   end: () => t("logEnd"),
 };
 
@@ -3630,6 +3942,8 @@ function start(): void {
   // The log began with the first toss
   if (!game.preBattle) game.clockLog = {};
   logClock("start");
+  // Counted once, by the device that starts the battle
+  track("Partie lancée", { mode: playMode(), cartes: cardsLabel(), tournoi: eventLocked() });
   // A new game: its photos (unless the deployment's already started them) and its MVPs start afresh
   newGamePhotos();
   game.mvp = { 1: null, 2: null };
@@ -3750,6 +4064,7 @@ function reset(): void {
   hideTurnConfirmModal();
   hideResultOverlay();
   game.judgeCall = null;
+  game.concededBy = null;
   game.clockLog = {};
   game.mvp = { 1: null, 2: null };
   // The next game gets its own photos
@@ -4419,12 +4734,106 @@ function secondaryCardsOn(): boolean {
   return game.options.cards;
 }
 
+/** Players draw from their own deck: the app deals blank cards, each filled in with the card drawn */
+const manualDraw = (): boolean => game.options.manualDraw === true;
+
+/** A blank card waiting for the card drawn from the real deck. Never in a pile: only in the draw */
+const BLANK_PREFIX = "blank:";
+const isBlank = (id: string): boolean => id.startsWith(BLANK_PREFIX);
+let blankSeq = 0;
+const newBlank = (): string => `${BLANK_PREFIX}${Date.now().toString(36)}${(blankSeq++).toString(36)}`;
+
+/** The draw on screen still has a blank card: the turn goes on once every card drawn is picked */
+const drawPending = (): boolean => cardsPlayer !== null && cardsMode === "draw" && drawnIds.some(isBlank);
+
+/**
+ * Each card is picked at random when it is drawn, never set by a shuffle made earlier: the order of
+ * the deck, kept in the shared state, tells nothing about the next cards. With the real deck, blank
+ * cards come instead, as many as the deck still holds
+ */
 function drawSecondaries(player: Player, count: number): string[] {
   const pile = game.secondaries[player];
-  const drawn = pile.deck.splice(0, count);
+  if (manualDraw()) {
+    // The blanks already on screen take their cards from the same deck: never more blanks than cards
+    const waiting = cardsPlayer === player && cardsMode === "draw" ? drawnIds.filter(isBlank).length : 0;
+    return Array.from({ length: Math.max(0, Math.min(count, pile.deck.length - waiting)) }, newBlank);
+  }
+  const n = Math.min(count, pile.deck.length);
+  const drawn = Array.from({ length: n }, () => pile.deck.splice(randomIndex(pile.deck.length), 1)[0]);
   pile.hand.push(...drawn);
   for (const id of drawn) game.cardRounds[player][id] = { drawn: game.round };
   return drawn;
+}
+
+/** A card of the draw replaced by another: here, and on the other screens showing the same draw */
+function replaceDrawn(player: Player, from: string, to: string): void {
+  drawnIds = drawnIds.map((id) => (id === from ? to : id));
+  if (game.lastDraw.player === player) game.lastDraw.ids = game.lastDraw.ids.map((id) => (id === from ? to : id));
+}
+
+/**
+ * The card drawn from the real deck, picked on its blank: it leaves the deck for the hand. False
+ * when it is no longer in the deck (picked meanwhile on the other blank, or on another device)
+ */
+function pickDrawnCard(player: Player, blank: string, id: string, cardEl: HTMLElement): boolean {
+  const pile = game.secondaries[player];
+  const at = pile.deck.indexOf(id);
+  if (at < 0 || !drawnIds.includes(blank)) return false;
+  pile.deck.splice(at, 1);
+  pile.hand.push(id);
+  game.cardRounds[player][id] = { drawn: game.round };
+  replaceDrawn(player, blank, id);
+  revealCard(cardEl, id);
+  return true;
+}
+
+/** A card picked by mistake goes back to the deck, and its blank comes back */
+function unpickDrawnCard(player: Player, id: string, cardEl: HTMLElement): void {
+  const pile = game.secondaries[player];
+  if (!pile.hand.includes(id)) return;
+  pile.hand = pile.hand.filter((cardId) => cardId !== id);
+  pile.deck.push(id);
+  delete game.cardRounds[player][id];
+  const blank = newBlank();
+  replaceDrawn(player, id, blank);
+  playCardExit(cardEl, "is-returned", undefined, [blank]);
+}
+
+/** The blank's half turn, then the card picked finishing it */
+const REVEAL_HALF_MS = 200;
+const REVEAL_IN_MS = 280;
+
+/** The blank turns over to the card picked on it, as a card dealt face down is revealed */
+function revealCard(cardEl: HTMLElement, id: string): void {
+  playSound("flip");
+  const done = () => {
+    renderCards();
+    renderHandButtons();
+    const card = [...cardsRow.querySelectorAll<HTMLElement>(".sec-card")].find((el) => el.dataset.cardId === id);
+    if (card && !prefersReducedMotion()) halfTurn(card, -90, 0, REVEAL_IN_MS, "cubic-bezier(0.2, 0, 0.2, 1)");
+  };
+  if (prefersReducedMotion()) {
+    done();
+    return;
+  }
+  halfTurn(cardEl, 0, 90, REVEAL_HALF_MS, "cubic-bezier(0.4, 0, 1, 1)").then(done, done);
+}
+
+/** A card's faces turned about their upright axis, in 3D for the turn only (style.css, .is-turning) */
+function halfTurn(card: HTMLElement, from: number, to: number, duration: number, easing: string): Promise<unknown> {
+  const faces = card.querySelector<HTMLElement>(".sec-card__faces");
+  if (!faces) return Promise.resolve();
+  card.classList.add("is-turning");
+  const animation = faces.animate([{ transform: `rotateY(${from}deg)` }, { transform: `rotateY(${to}deg)` }], {
+    duration,
+    easing,
+    fill: "forwards",
+  });
+  return animation.finished.finally(() => {
+    card.classList.remove("is-turning");
+    // The blank stays edge on until it leaves the page; the card picked lies flat again
+    if (to === 0) animation.cancel();
+  });
 }
 
 /** Start of a player's own turn: two new secondaries, revealed once any photo break is over */
@@ -4508,6 +4917,7 @@ function cardKeyMode(e: KeyboardEvent): "hand" | "mission" | null {
 const anyModalOpen = (): boolean =>
   resultOverlay.classList.contains("is-visible") ||
   turnConfirmOverlay.classList.contains("is-visible") ||
+  endGameOverlay.classList.contains("is-visible") ||
   timeOutOverlay.classList.contains("is-visible");
 
 /** Card ids of the primary cards, to deal them like the others */
@@ -4776,7 +5186,7 @@ function renderCards(dealIds: string[] = []): void {
   cardsRow.classList.remove("is-stacked");
   const ids =
     cardsMode === "draw"
-      ? drawnIds.filter((id) => pile.hand.includes(id))
+      ? drawnIds.filter((id) => isBlank(id) || pile.hand.includes(id))
       : cardsMode === "hand"
         ? pile.hand
         : cardsMode === "scored"
@@ -4799,8 +5209,11 @@ function renderCards(dealIds: string[] = []): void {
   } else {
     cardsTitle.textContent = t(cardsMode === "draw" ? "drawTitle" : "handTitle", { n: player });
     const deck = pile.deck.length > 0 ? t("deckLeft", { n: pile.deck.length }) : t("deckEmpty");
-    cardsSub.textContent = cardsMode === "draw" ? `${deck} · ${t("scoreFromHand")}` : deck;
+    const blanks = cardsMode === "draw" && ids.some(isBlank);
+    cardsSub.textContent = cardsMode === "draw" ? `${deck} · ${t(blanks ? "pickFromDeck" : "scoreFromHand")}` : deck;
   }
+  // The turn goes on once every card drawn from the real deck is picked
+  if (cardsMode === "draw") btnCardsClose.disabled = ids.some(isBlank);
   // The primary card stays apart from the hand: on its own, or at a turn end when it scores
   const withPrimary =
     cardsMode === "mission" || cardsMode === "command" || (cardsMode === "end-turn" && primaryScoresAtTurnEnd(player));
@@ -4809,7 +5222,9 @@ function renderCards(dealIds: string[] = []): void {
   const primary = withPrimary && primaryCard(player) ? [primaryCardEl(player, 0, dealIds.includes(primaryCardId(player)), ownCard)] : [];
   const cards = [
     ...primary,
-    ...ids.map((id, index) => secondaryCardEl(player, id, index + primary.length, dealIds.includes(id))),
+    ...ids.map((id, index) =>
+      (isBlank(id) ? blankCardEl : secondaryCardEl)(player, id, index + primary.length, dealIds.includes(id)),
+    ),
   ];
   if (cards.length === 0) {
     const empty = document.createElement("p");
@@ -5020,6 +5435,45 @@ function repeatTotal(option: HTMLElement): number {
   return Math.min(per * Number(option.dataset.count), max);
 }
 
+/**
+ * A card drawn from the real deck, still blank: dealt like any other, it shows the card picked in
+ * its list once the player has looked at what they drew. The list holds what is left in the deck
+ */
+function blankCardEl(player: Player, blank: string, index: number, deal: boolean): HTMLElement {
+  const el = document.createElement("article");
+  el.className = "sec-card is-blank";
+  el.classList.toggle("is-dealt", deal);
+  el.style.setProperty("--i", String(index));
+  el.dataset.cardId = blank;
+  el.innerHTML = `
+    <div class="sec-card__faces">
+      <div class="sec-card__inner">
+        <header class="sec-card__head">
+          <span class="sec-card__kicker"></span>
+          <h3 class="sec-card__name"></h3>
+        </header>
+        <span class="sec-card__blank-mark" aria-hidden="true">?</span>
+        <label class="sec-card__pick">
+          <span class="sec-card__pick-label"></span>
+          <select></select>
+        </label>
+      </div>
+    </div>`;
+  el.querySelector(".sec-card__kicker")!.textContent = t("secondaryKicker");
+  el.querySelector(".sec-card__name")!.textContent = t("blankCardName");
+  el.querySelector(".sec-card__pick-label")!.textContent = t(canEdit(player) ? "blankCardHint" : "blankCardWait", { n: player });
+  const select = el.querySelector("select")!;
+  select.id = `pick-${blank.replace(/[^a-z0-9]/gi, "")}`;
+  select.disabled = !canEdit(player);
+  const prompt = new Option(t("blankCardPick"), "", true, true);
+  prompt.disabled = true;
+  const names = game.secondaries[player].deck
+    .map((id) => ({ id, name: SECONDARY_BY_ID.get(id)?.name ?? id }))
+    .sort((a, b) => a.name.localeCompare(b.name));
+  select.replaceChildren(prompt, ...names.map(({ id, name }) => new Option(name, id)));
+  return el;
+}
+
 function secondaryCardEl(player: Player, id: string, index: number, deal: boolean): HTMLElement {
   const data = SECONDARY_BY_ID.get(id)!;
   const lang = getLang();
@@ -5130,6 +5584,15 @@ function secondaryCardEl(player: Player, id: string, index: number, deal: boolea
     undo.textContent = t("unscoreBtn");
     actions.push(undo);
   } else if (cardsMode === "draw") {
+    // Picked by mistake from the real deck: back to the deck, the blank comes back
+    if (manualDraw() && canEdit(player)) {
+      const unpick = document.createElement("button");
+      unpick.type = "button";
+      unpick.className = "sec-action sec-action--unpick";
+      unpick.dataset.action = "unpick";
+      unpick.textContent = t("unpickCard");
+      actions.push(unpick);
+    }
     // A new card for 1 CP: only while drawing, never later from the hand
     const swapCard = document.createElement("button");
     swapCard.type = "button";
@@ -5575,7 +6038,7 @@ function swapSecondary(player: Player, id: string, cardEl: HTMLElement): void {
   game.newCardUsed[player] = true;
   const [replacement] = drawSecondaries(player, 1);
   moveSecondary(player, id, "discard");
-  drawnIds = drawnIds.map((cardId) => (cardId === id ? replacement : cardId));
+  replaceDrawn(player, id, replacement);
   // The other cards lose their swap button at once: it is spent for the battle
   cardsRow.querySelectorAll<HTMLButtonElement>('[data-action="swap"]').forEach((button) => {
     button.disabled = true;
@@ -5591,7 +6054,7 @@ function redrawSecondary(player: Player, id: string, cardEl: HTMLElement): void 
   const [replacement] = drawSecondaries(player, 1);
   if (!replacement) return;
   moveSecondary(player, id, data.redraw.to);
-  drawnIds = drawnIds.map((cardId) => (cardId === id ? replacement : cardId));
+  replaceDrawn(player, id, replacement);
   // Back to the deck it goes the way it came, to the discard it falls
   playCardExit(cardEl, data.redraw.to === "deck" ? "is-returned" : "is-discarded", undefined, [replacement]);
 }
@@ -6069,7 +6532,8 @@ btnCardsClose.addEventListener("click", continueCards);
 // Not the second click of a double-click: that one would close what the first click opened.
 // Not on the primaries' VS either: the game starts from there, a stray click must not cancel it
 cardsOverlay.addEventListener("click", (e) => {
-  if (cardsPlayer === null || cardsMode === "primary" || e.detail > 1) return;
+  // Nor a draw from the real deck with a card still to pick: the turn waits for it
+  if (cardsPlayer === null || cardsMode === "primary" || e.detail > 1 || drawPending()) return;
   if ((e.target as HTMLElement).closest(".sec-card, button, a")) return;
   closeCards();
 });
@@ -6089,7 +6553,12 @@ window.addEventListener("resize", () => {
 secondaryCardsToggle.addEventListener("change", () => {
   game.options.cards = secondaryCardsToggle.checked;
   secondaryCardsToggle.blur();
+  renderManualDrawChip();
   renderHandButtons();
+});
+manualDrawToggle.addEventListener("change", () => {
+  game.options.manualDraw = manualDrawToggle.checked;
+  manualDrawToggle.blur();
 });
 let touchedCards = false;
 cardsRow.addEventListener("pointerdown", (e) => {
@@ -6232,7 +6701,19 @@ cardsRow.addEventListener("click", (e) => {
     case "redraw":
       redrawSecondary(player, id, cardEl);
       break;
+    case "unpick":
+      if (cardsMode === "draw") unpickDrawnCard(player, id, cardEl);
+      break;
   }
+});
+// The card drawn from the real deck, picked on its blank
+cardsRow.addEventListener("change", (e) => {
+  const select = (e.target as HTMLElement).closest<HTMLSelectElement>(".sec-card__pick select");
+  const cardEl = select?.closest<HTMLElement>(".sec-card.is-blank");
+  if (!select || !cardEl || cardsPlayer === null || cardsMode !== "draw" || !canEdit(cardsPlayer) || !select.value) return;
+  select.disabled = true;
+  // Already picked elsewhere: the lists come back with what is left in the deck
+  if (!pickDrawnCard(cardsPlayer, cardEl.dataset.cardId!, select.value, cardEl)) renderCards();
 });
 
 function renderTurnDots(): void {
@@ -6296,8 +6777,21 @@ function resume(): void {
 }
 
 btnReset.addEventListener("click", () => {
-  if (inGame(game)) openTurnConfirmModal("reset");
+  if (inGame(game) && !isOver()) openEndGame();
+  else if (inGame(game)) openTurnConfirmModal("reset");
   else reset();
+});
+btnEndGameCancel.addEventListener("click", closeEndGame);
+endGameOverlay.addEventListener("click", (e) => {
+  if (e.target === endGameOverlay) closeEndGame();
+});
+for (const player of [1, 2] as const) {
+  app.querySelector("#end-game-concede-" + player)!.addEventListener("click", () => concede(player));
+}
+app.querySelector("#end-game-untimed")!.addEventListener("click", finishWithoutClocks);
+app.querySelector("#end-game-erase")!.addEventListener("click", () => {
+  closeEndGame();
+  reset();
 });
 btnFullscreen.addEventListener("click", toggleFullscreen);
 btnTurnConfirmOk.addEventListener("click", applyTurnConfirm);
@@ -6490,7 +6984,8 @@ function handleSpaceLikeInput(): void {
 
   if (online && game.clock.active !== online.seat) return;
   const now = performance.now();
-  if (lastSpaceTime > 0 && now - lastSpaceTime < DOUBLE_SPACE_MS) {
+  // Two quick presses pause, unless the tournament leaves that to the judge: then each one switches
+  if (!pauseLocked() && lastSpaceTime > 0 && now - lastSpaceTime < DOUBLE_SPACE_MS) {
     delete game.clockLog[lastSwitchLog];
     setActiveClock(game.clock, activeBeforeSpaceSequence);
     pause();
@@ -6507,6 +7002,14 @@ window.addEventListener("keydown", (e) => {
     toggleMute();
     return;
   }
+  // The tournament dialog is a form: its keys type, Escape closes it
+  if (eventOverlay.classList.contains("is-visible")) {
+    if (e.key === "Escape") {
+      e.preventDefault();
+      closeEventSetup();
+    }
+    return;
+  }
   // The end screen's dialogs are forms and a photo viewer: keys keep their usual meaning there
   if (viewerOverlay.classList.contains("is-visible")) {
     if (e.key === "Escape") closeViewer();
@@ -6514,6 +7017,13 @@ window.addEventListener("keydown", (e) => {
     else if (e.key === "ArrowRight") stepViewer(1);
     else return;
     e.preventDefault();
+    return;
+  }
+  if (endGameOverlay.classList.contains("is-visible")) {
+    if (e.key === "Escape") {
+      e.preventDefault();
+      closeEndGame();
+    } else if (e.code === "Space") e.preventDefault();
     return;
   }
   if (mvpOverlay.classList.contains("is-visible")) {
@@ -6597,6 +7107,8 @@ window.addEventListener("keydown", (e) => {
     if (e.code === "Enter" && !e.repeat) {
       e.preventDefault();
       continueCards();
+    } else if ((e.key === "Escape" || sameView) && drawPending()) {
+      e.preventDefault();
     } else if (e.key === "Escape" || sameView) {
       e.preventDefault();
       closeCards();
@@ -6878,6 +7390,7 @@ async function pushState(): Promise<void> {
     if (roomSession()?.room !== room) return;
     synced = unpackState(stored);
     sent = true;
+    room.played(isOver());
     // Changes made here while the write was on its way go on top of what the server kept
     const now = JSON.stringify(game);
     const next = merge(synced.json, local, now);
@@ -6901,6 +7414,7 @@ function receiveState(remote: Synced): void {
   const next = joining ? remote.json : merge(remote.json, synced.json, local);
   synced = remote;
   if (next !== local) applyState(next, joining);
+  roomSession()?.room?.played(isOver());
   if (next !== remote.json) void pushState();
   if (joining) claimArmy();
 }
@@ -6925,6 +7439,7 @@ function renderState(prev: GameState, joining: boolean): void {
   photoBreaksToggle.checked = game.options.photoBreaks;
   secondaryCardsToggle.checked = game.options.cards;
   deployClockToggle.checked = deploymentTimed();
+  renderEvent();
   const pre = game.preBattle;
   const prevPre = prev.preBattle;
   if (!inGame(game)) {
@@ -6961,7 +7476,7 @@ function renderState(prev: GameState, joining: boolean): void {
     }
     setBattleMusic(true);
   }
-  if (game.phase === "over" && prev.phase !== "over") showGameOverScreen();
+  if (game.phase === "over" && prev.phase !== "over") showGameOverScreen(joining);
   // A game started on another device: the photos of the one before go here too
   if (game.gameId && game.gameId !== prev.gameId) void keepOnlyGame(game.gameId);
   if (resultOverlay.classList.contains("is-visible") && JSON.stringify(game.mvp) !== JSON.stringify(prev.mvp)) renderMvpSection();
@@ -7000,6 +7515,10 @@ function renderState(prev: GameState, joining: boolean): void {
     if (game.photoBreak) {
       if (!online || online.seat === player) pendingDraw = { player, drawn: ids };
     } else showDraw(player, ids);
+  } else if (cardsMode === "draw" && cardsPlayer === game.lastDraw.player && game.lastDraw.ids.join() !== prev.lastDraw.ids.join()) {
+    // The same draw, a card of it picked or replaced on another device: shown here as it is there
+    drawnIds = [...game.lastDraw.ids];
+    if (pendingDraw?.player === cardsPlayer) pendingDraw.drawn = drawnIds;
   }
 
   applyTimesToDisplay();
@@ -7034,14 +7553,22 @@ function resetScreen(): void {
   closeAbilities();
 }
 
-/** The game ended on the other phone: the same result shows here */
-function showGameOverScreen(): void {
+/**
+ * The game ended on the other phone: the same result shows here. Found over (a room joined, the
+ * app reopened), it shows without the fanfare: it would only sound at the first tap
+ */
+function showGameOverScreen(quiet = false): void {
+  if (game.concededBy) {
+    closeEndGame();
+    pendingDraw = null;
+    if (cardsPlayer !== null) closeCards(false);
+  }
   lastSpaceTime = 0;
   void releaseWakeLock();
   stopLoop();
   hideTurnConfirmModal();
   setBattleMusic(false);
-  playSound("victory");
+  if (!quiet) playSound("victory");
   showResultOverlay();
 }
 
@@ -7093,6 +7620,14 @@ async function connectRoom(seat: Seat, code?: string, resume = false): Promise<v
       closeOnlineDialog();
       renderAll();
       showToast(t("onlineEnded"), true);
+    },
+    onGone: () => {
+      if (roomSession() !== session) return;
+      // The game stays on this device, its end screen too: only a game still going says so
+      leaveRoom();
+      closeOnlineDialog();
+      renderAll();
+      if (!isOver()) showToast(t("onlineGone"), true);
     },
   };
   let room: Room;
@@ -7151,7 +7686,36 @@ for (const type of ["pointerdown", "click", "keydown", "input", "change"]) {
     true,
   );
 }
-window.setInterval(() => void pushState(), 500);
+window.setInterval(() => {
+  void pushState();
+  keepFinished();
+}, 500);
+
+/*
+ * A game over is kept on the device: reopened, the app shows its end screen, report and photos,
+ * without going back to its room. A new game lets it go
+ */
+const FINISHED_STORAGE_KEY = "warhammerClock.finished";
+let finishedJson = stored(FINISHED_STORAGE_KEY);
+
+function keepFinished(): void {
+  const json = isOver() ? JSON.stringify(game) : null;
+  if (json === finishedJson) return;
+  if (json) store(FINISHED_STORAGE_KEY, json);
+  else forget(FINISHED_STORAGE_KEY);
+  finishedJson = json;
+}
+
+/** At start, the game over this device last showed */
+function restoreFinished(): void {
+  if (!finishedJson) return;
+  try {
+    applyState(finishedJson, true);
+  } catch {
+    forget(FINISHED_STORAGE_KEY);
+    finishedJson = null;
+  }
+}
 
 /* ---------- Online: this phone's player ---------- */
 
@@ -7314,7 +7878,7 @@ function renderSeat(): void {
   app.querySelector<HTMLElement>("#seat-mission")!.hidden = !secondaryCardsOn() || !primaryCard(me);
   app.querySelector<HTMLElement>("#seat-opp-primary")!.hidden = !secondaryCardsOn() || !primaryCard(them);
   const pauseBtn = app.querySelector<HTMLButtonElement>("#seat-pause")!;
-  pauseBtn.hidden = !playing;
+  pauseBtn.hidden = !playing || pauseLocked();
   pauseBtn.textContent = t(running ? "seatPause" : "seatResume");
   app.querySelector<HTMLElement>("#seat-judge")!.hidden = !playing;
   slideRow(app.querySelector<HTMLElement>("#seat-end")!, running && game.turnPlayer === me);
@@ -7348,7 +7912,7 @@ const seatActions: [string, (me: Player) => void][] = [
   [
     "seat-pause",
     () => {
-      if (isRunning()) pause();
+      if (isRunning() && !pauseLocked()) pause();
       else if (game.phase === "paused") resume();
     },
   ],
@@ -7362,7 +7926,8 @@ const seatActions: [string, (me: Player) => void][] = [
     "seat-reset",
     () => {
       closePopovers();
-      if (inGame(game)) openTurnConfirmModal("reset");
+      if (inGame(game) && !isOver()) openEndGame();
+      else if (inGame(game)) openTurnConfirmModal("reset");
     },
   ],
   ["seat-room", () => openOnlineDialog()],
@@ -7639,6 +8204,143 @@ async function goOnline(seat: Seat, code?: string): Promise<void> {
 app.querySelector("#online-remote-create")!.addEventListener("click", () => void goOnline(1));
 btnOnline.addEventListener("click", () => openOnlineDialog());
 stripRoom.addEventListener("click", () => openOnlineDialog());
+eventLeaveBtn.addEventListener("click", leaveEvent);
+eventHereBtn.addEventListener("click", closeOnlineDialog);
+
+/* ---------- The organiser's side: a tournament's settings, its link, QR code and poster ---------- */
+
+function readEventForm(): EventPreset {
+  const preset = Object.fromEntries(EVENT_TOGGLES.map(({ id, field }) => [field, eventToggle(id).checked])) as Pick<
+    EventPreset,
+    (typeof EVENT_TOGGLES)[number]["field"]
+  >;
+  const minutes = Number(eventMinutesInput.value) || DEFAULT_TIME_SEC / 60;
+  return {
+    ...preset,
+    manualDraw: preset.cards && preset.manualDraw,
+    name: eventNameInput.value.trim(),
+    seconds: Math.min(EVENT_MAX_MINUTES, Math.max(EVENT_MIN_MINUTES, Math.round(minutes))) * 60,
+  };
+}
+
+/** The address tables open: the app's own, wherever it runs (the tests' local one too) */
+const currentEventLink = (): string => eventLink(`${location.origin}${location.pathname}`, readEventForm());
+
+let shownEventLink = "";
+
+function renderEventSetup(): void {
+  const preset = readEventForm();
+  eventToggle("event-manual-draw").disabled = !preset.cards;
+  const link = currentEventLink();
+  app.querySelector<HTMLElement>("#event-link")!.textContent = link;
+  app.querySelector<HTMLElement>("#event-poster-name")!.textContent = preset.name || t("eventUnnamed");
+  app.querySelector<HTMLElement>("#event-poster-rules")!.textContent = eventRules(preset);
+  if (link === shownEventLink) return;
+  shownEventLink = link;
+  void eventQrSvg(link).then((svg) => {
+    if (shownEventLink === link) app.querySelector<HTMLElement>("#event-qr")!.innerHTML = svg;
+  });
+}
+
+async function eventQrSvg(link: string): Promise<string> {
+  const { default: qrcode } = await import("qrcode-generator");
+  const qr = qrcode(0, "M");
+  qr.addData(link);
+  qr.make();
+  return qr.createSvgTag({ cellSize: 4, margin: 2, scalable: true });
+}
+
+/** Opened with the settings of the game on the board, a sensible start for most tournaments */
+function openEventSetup(): void {
+  closePopovers();
+  eventMinutesInput.value = String(Math.round(timeLeft(1) / 60));
+  eventToggle("event-cards").checked = game.options.cards;
+  eventToggle("event-manual-draw").checked = manualDraw();
+  eventToggle("event-photo-breaks").checked = game.options.photoBreaks;
+  eventToggle("event-deploy-clock").checked = deploymentTimed();
+  eventToggle("event-judge-pause").checked = true;
+  eventToggle("event-music-off").checked = true;
+  eventToggle("event-sounds-on").checked = true;
+  renderEventSetup();
+  eventOverlay.classList.add("is-visible");
+  eventOverlay.setAttribute("aria-hidden", "false");
+  eventNameInput.focus();
+}
+
+function closeEventSetup(): void {
+  eventOverlay.classList.remove("is-visible");
+  eventOverlay.setAttribute("aria-hidden", "true");
+  (document.activeElement as HTMLElement | null)?.blur();
+}
+
+/** Said on the button itself, where the eyes are, then back to its label */
+function flashButton(button: HTMLElement, text: string): void {
+  button.dataset.label ??= button.textContent ?? "";
+  button.textContent = text;
+  window.clearTimeout(Number(button.dataset.timer));
+  button.dataset.timer = String(
+    window.setTimeout(() => {
+      button.textContent = button.dataset.label ?? "";
+      delete button.dataset.label;
+    }, 2200),
+  );
+}
+
+/** The poster for the tables: the tournament's name, its settings and the QR code, as a picture */
+async function eventPosterImage(): Promise<Blob | null> {
+  const preset = readEventForm();
+  const sheet = document.createElement("div");
+  sheet.className = "event-print";
+  sheet.innerHTML = `
+    <p class="event-print__kicker"></p>
+    <h2 class="event-print__name"></h2>
+    <p class="event-print__rules"></p>
+    <div class="event-print__qr">${await eventQrSvg(currentEventLink())}</div>
+    <p class="event-print__scan"></p>
+    <p class="event-print__brand"><b>Chronicum</b> · ${APP_URL.replace(/^https:\/\/|\/$/g, "")}</p>`;
+  sheet.querySelector(".event-print__kicker")!.textContent = t("eventKicker");
+  sheet.querySelector(".event-print__name")!.textContent = preset.name || t("eventUnnamed");
+  sheet.querySelector(".event-print__rules")!.textContent = eventRules(preset);
+  sheet.querySelector(".event-print__scan")!.textContent = t("eventScan");
+  document.body.append(sheet);
+  try {
+    const { toBlob } = await import("html-to-image");
+    return await toBlob(sheet, { pixelRatio: 2, backgroundColor: "#ffffff", style: { position: "static", left: "auto" } });
+  } finally {
+    sheet.remove();
+  }
+}
+
+app.querySelector("#btn-event-setup")!.addEventListener("click", openEventSetup);
+app.querySelector("#event-close")!.addEventListener("click", closeEventSetup);
+eventForm.addEventListener("input", renderEventSetup);
+eventForm.addEventListener("change", renderEventSetup);
+eventForm.addEventListener("submit", (e) => e.preventDefault());
+eventOverlay.addEventListener("click", (e) => {
+  if (e.target === eventOverlay) closeEventSetup();
+});
+app.querySelector<HTMLButtonElement>("#event-copy")!.addEventListener("click", (e) => {
+  const button = e.currentTarget as HTMLButtonElement;
+  void copyText(currentEventLink()).then((copied) => flashButton(button, t(copied ? "onlineCopied" : "onlineCopyFailed")));
+  track("Tournoi préparé", { action: "lien" });
+});
+app.querySelector<HTMLButtonElement>("#event-download")!.addEventListener("click", (e) => {
+  const button = e.currentTarget as HTMLButtonElement;
+  button.disabled = true;
+  void eventPosterImage()
+    .then(async (blob) => {
+      if (!blob) return;
+      const slug = (readEventForm().name || "tournoi").toLowerCase().replace(/[^\p{L}\p{N}]+/gu, "-").replace(/^-|-$/g, "");
+      const file = new File([blob], `chronicum-${slug || "tournoi"}.png`, { type: "image/png" });
+      if (PHONE.matches && navigator.canShare?.({ files: [file] })) await navigator.share({ files: [file] }).catch(() => undefined);
+      else download(file);
+      track("Tournoi préparé", { action: "affiche" });
+    })
+    .catch(() => showToast(t("eventPosterFailed")))
+    .finally(() => {
+      button.disabled = false;
+    });
+});
 app.querySelector("#online-create")!.addEventListener("click", () => void goOnline(createSeat()));
 app.querySelector("#online-join")!.addEventListener("click", () => {
   const code = onlineCodeInput.value.trim().toUpperCase();
@@ -7687,6 +8389,19 @@ const parseSeat = (value: unknown): Seat | null =>
 /** Back in the game this device was in, or the one a shared link points to */
 function resumeOnline(): void {
   const params = new URLSearchParams(location.search);
+  // A tournament's QR code: its settings for a new game, then the start of the online game. The
+  // room this device was in before belongs to an earlier game, it is not resumed
+  if (params.has(EVENT_PARAM)) {
+    const preset = decodeEvent(params.get(EVENT_PARAM));
+    history.replaceState(null, "", location.pathname);
+    if (preset) {
+      forget(ONLINE_STORAGE_KEY);
+      joinEvent(preset);
+      track("Tournoi ouvert", { tournoi: preset.name || "sans nom" });
+      openOnlineDialog();
+      return;
+    }
+  }
   const linkCode = params.get("room")?.trim().toUpperCase() ?? "";
   const linkSeat = parseSeat(params.get("seat"));
   if (linkCode) history.replaceState(null, "", location.pathname);
@@ -7703,10 +8418,20 @@ function resumeOnline(): void {
     } catch {
       /* nothing saved */
     }
+    // A game over is not picked up again: its end screen stays here, the next game gets a new room
+    if (target && isOver()) {
+      forget(ONLINE_STORAGE_KEY);
+      return;
+    }
   }
   if (!target) return;
   const { code, seat, resume } = target;
-  connectRoom(seat, code, resume).catch((error: unknown) => {
+  connectRoom(seat, code, resume).then(() => {
+    // A player brought in by the opponent's QR code or link: how Chronicum spreads at the table
+    if (linkCode) track("Rejoint par QR", { place: seat === "board" ? "écran partagé" : "joueur" });
+  }, (error: unknown) => {
+    // This device's last room, gone a day after the game: forgotten without a word
+    if (!linkCode && error instanceof Error && error.message === "not-found") return;
     openOnlineDialog(code);
     showOnlineError(roomErrorText(error));
   });
@@ -7771,6 +8496,9 @@ window.addEventListener("pageshow", (e) => {
 
 // Paused or over still counts as a game: its board stays until a reset
 setupPwa(() => inGame(game));
+restoreFinished();
+// Before the links' parameters are read and cleared: the visit's source is in them
+startAnalytics();
 resumeOnline();
 
 // A phone's browser often brings back a tab opened before this device joined its game: the game

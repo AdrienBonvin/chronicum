@@ -28,7 +28,7 @@ import {
   type DatabaseReference,
   type DataSnapshot,
 } from "firebase/database";
-import { setClockOffset, type Player } from "./game";
+import { nowMs, setClockOffset, type Player } from "./game";
 
 const FIREBASE_CONFIG = {
   apiKey: "AIzaSyDfM0MqUsMA3t-TWIuJEtPTDfpezP8lX3k",
@@ -62,6 +62,20 @@ export type PhotoValue = { at: number; data: string };
  */
 const PHOTO_KEEP_MS = 2 * 24 * 60 * 60 * 1000;
 
+/**
+ * A room only serves while the game is played: the report and the photos stay on each device.
+ * A room left a day without a connection or a move goes whole, cleared by the next device to open
+ * any room. Each connection and each move dates it again (`roomsSeen`): a game still going keeps it
+ */
+const ROOM_KEEP_MS = 24 * 60 * 60 * 1000;
+/**
+ * A game over leaves its room five minutes later: long enough for the end screen, short enough
+ * for the next round of a tournament. Its date is set back to match
+ */
+const OVER_KEEP_MS = 5 * 60 * 1000;
+/** Moves in a row date the room once a minute, not once each */
+const DATE_EVERY_MS = 60 * 1000;
+
 export type RoomEvents = {
   /** The shared state, each time it changes on the server */
   onState: (json: string) => void;
@@ -71,6 +85,8 @@ export type RoomEvents = {
   onSeats: (seats: Seats) => void;
   /** The game was ended online from another device: this one is out of the room */
   onEnded: () => void;
+  /** The room itself is gone, swept once over or left too long: this device carries on alone */
+  onGone: () => void;
   /** A photo came in or changed (`value`), or went (null); the key says which game and turn */
   onPhoto: (key: string, value: PhotoValue | null) => void;
 };
@@ -80,6 +96,8 @@ export type Room = {
   seat: Seat;
   /** Replaces the state with `update(remote)`, retried until no other phone wrote in between */
   transact: (update: (remote: string | null) => string) => Promise<string>;
+  /** The game moved, here or on another device: the room is dated again, set back once `over` */
+  played: (over: boolean) => void;
   leave: () => void;
   /** Ends the game online for every device in the room, then leaves it */
   end: () => void;
@@ -152,13 +170,25 @@ const photoValue = (snap: DataSnapshot): PhotoValue | null => {
 
 let swept = false;
 
-/** Rooms left with photos two days after the last one: their photos go, once per visit to the app */
-async function sweepStalePhotos(db: Database): Promise<void> {
+/** The rooms an index (`photoRooms`, `roomsSeen`) dates before `keepMs` ago, 20 at a time */
+const staleIn = (db: Database, index: string, keepMs: number): Promise<DataSnapshot | null> =>
+  get(query(ref(db, index), orderByValue(), endAt(Date.now() - keepMs), limitToFirst(20))).catch(() => null);
+
+/**
+ * What rooms left behind goes, once per visit to the app: old photos, then whole rooms. Never the
+ * room this device is opening: dated a day ago, it was just picked up again
+ */
+async function sweepStale(db: Database, own: string): Promise<void> {
   if (swept) return;
   swept = true;
-  const stale = await get(query(ref(db, "photoRooms"), orderByValue(), endAt(Date.now() - PHOTO_KEEP_MS), limitToFirst(20))).catch(() => null);
-  stale?.forEach((room) => {
+  (await staleIn(db, "photoRooms", PHOTO_KEEP_MS))?.forEach((room) => {
     void remove(ref(db, `rooms/${room.key}/photos`))
+      .then(() => remove(room.ref))
+      .catch(() => undefined);
+  });
+  (await staleIn(db, "roomsSeen", ROOM_KEEP_MS))?.forEach((room) => {
+    if (room.key === own) return;
+    void remove(ref(db, `rooms/${room.key}`))
       .then(() => remove(room.ref))
       .catch(() => undefined);
   });
@@ -167,7 +197,15 @@ async function sweepStalePhotos(db: Database): Promise<void> {
 function open(db: Database, uid: string, code: string, seat: Seat, events: RoomEvents): Room {
   const stateRef = ref(db, `rooms/${code}/state`);
   const photosRef = ref(db, `rooms/${code}/photos`);
-  void sweepStalePhotos(db);
+  const seenRef = ref(db, `roomsSeen/${code}`);
+  let over = false;
+  let datedAt = -Infinity;
+  /** Now, or set back so that a game over goes five minutes from now. Only a device in the room may */
+  const date = (): Promise<void> => {
+    datedAt = Date.now();
+    return set(seenRef, over ? nowMs() - ROOM_KEEP_MS + OVER_KEEP_MS : serverTimestamp());
+  };
+  let hadState = false;
   // A shared screen counts among the boards, a phone among the phones present: both while connected
   const hereRef = seat === "board" ? placeRef(db, code, "board", uid) : presenceRef(db, code, uid);
   let seats: Record<string, unknown> = {};
@@ -183,18 +221,27 @@ function open(db: Database, uid: string, code: string, seat: Seat, events: RoomE
   const stops = [
     onValue(stateRef, (snap) => {
       const value: unknown = snap.val();
-      if (typeof value === "string") events.onState(value);
+      if (typeof value === "string") {
+        hadState = true;
+        events.onState(value);
+      } else if (hadState) {
+        hadState = false;
+        events.onGone();
+      }
     }),
     onValue(ref(db, ".info/connected"), (snap) => {
       const connected = snap.val() === true;
       events.onConnection(connected);
       // Here while connected, gone with the connection: once no shared screen is left the phones
-      // play the music again, and a phone gone shows its code again on the shared screen
+      // play the music again, and a phone gone shows its code again on the shared screen.
+      // Each connection dates the room again, before any sweep: one in use is never swept
       if (connected) {
         void onDisconnect(hereRef)
           .remove()
           .then(() => set(hereRef, true))
-          .catch(() => undefined);
+          .then(date)
+          .catch(() => undefined)
+          .finally(() => sweepStale(db, code));
       }
     }),
     onValue(ref(db, `rooms/${code}/seats`), (snap) => {
@@ -228,10 +275,17 @@ function open(db: Database, uid: string, code: string, seat: Seat, events: RoomE
       });
       return result.snapshot.val() as string;
     },
+    played(isOver) {
+      const changed = isOver !== over;
+      over = isOver;
+      if (changed || Date.now() - datedAt >= DATE_EVERY_MS) void date().catch(() => undefined);
+    },
     end() {
       // Written before this device lets go of its place, which is what allows it to write
       stopAll();
       void set(ref(db, `rooms/${code}/ended`), true).catch(() => undefined);
+      over = true;
+      void date().catch(() => undefined);
       this.clearPhotos();
       this.leave();
     },
