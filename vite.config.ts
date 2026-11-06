@@ -12,9 +12,9 @@ export default defineConfig({
       registerType: "prompt",
       injectRegister: false,
       manifest: {
-        name: "Warhammer Clock",
-        short_name: "WH Clock",
-        description: "Chess clock, command points and scores for Warhammer 40,000",
+        name: "Chronicum",
+        short_name: "Chronicum",
+        description: "The battle companion for Warhammer 40,000: clock, mission cards, photos, battle report. Unofficial, not affiliated with Games Workshop",
         start_url: "./",
         scope: "./",
         display: "standalone",

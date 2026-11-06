@@ -7670,6 +7670,35 @@ h2.report-hero__result {
   text-transform: uppercase;
 }
 
+/* What the app is, under its name */
+.phone-home__tagline {
+  margin: -0.35rem 0 0;
+  color: var(--muted);
+  font-size: 0.85rem;
+  text-align: center;
+}
+
+/* Unofficial, said where the name shows: the phone's home and the settings */
+.brand-unofficial {
+  margin: 0;
+  color: var(--faint);
+  font-size: 0.7rem;
+  line-height: 1.45;
+  text-align: center;
+}
+
+.settings__about {
+  align-items: center;
+}
+
+.settings__brand {
+  color: var(--muted);
+  font-size: 0.72rem;
+  font-weight: 700;
+  letter-spacing: 0.18em;
+  text-transform: uppercase;
+}
+
 .phone-home__start {
   padding: 1.1rem;
   border: 1px solid var(--line);

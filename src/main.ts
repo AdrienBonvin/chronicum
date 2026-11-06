@@ -425,6 +425,10 @@ app.innerHTML = `
               </div>
             </div>
           </div>
+          <div class="settings__section settings__about">
+            <span class="settings__brand">Chronicum</span>
+            <p class="brand-unofficial" data-i18n="unofficial"></p>
+          </div>
         </div>
       </div>
       <button type="button" class="btn-icon" id="btn-fullscreen">
@@ -465,11 +469,13 @@ app.innerHTML = `
   <section class="phone-home" id="phone-home">
     <div class="phone-home__brand">
       <img class="phone-home__logo" src="icon.svg" alt="" />
-      <h1>Warhammer Clock</h1>
+      <h1>Chronicum</h1>
+      <p class="phone-home__tagline" data-i18n="homeTagline"></p>
     </div>
     <div class="phone-home__start" id="phone-home-start"></div>
     <p class="phone-home__note" data-i18n="homeScan"></p>
     <p class="phone-home__note" data-i18n="homeBoard"></p>
+    <p class="brand-unofficial" data-i18n="unofficial"></p>
   </section>
   <section class="seat" id="seat" aria-live="polite">
     <header class="seat-bar">
@@ -1813,7 +1819,7 @@ async function reportImage(): Promise<Blob | null> {
   const sheet = document.createElement("div");
   sheet.className = "report-export";
   const spent = timeByRound();
-  sheet.innerHTML = `<article class="report">${reportHeroHtml(false)}${mvpImageHtml()}<div class="report-players">${reportPlayer(1, spent, true)}${reportPlayer(2, spent, true)}</div>${reportLegend()}</article><p class="report-export__foot">Warhammer Clock</p>`;
+  sheet.innerHTML = `<article class="report">${reportHeroHtml(false)}${mvpImageHtml()}<div class="report-players">${reportPlayer(1, spent, true)}${reportPlayer(2, spent, true)}</div>${reportLegend()}</article><p class="report-export__foot">Chronicum</p>`;
   document.body.append(sheet);
   try {
     const { toBlob } = await import("html-to-image");
@@ -1840,7 +1846,7 @@ async function exportBattleReport(): Promise<void> {
   try {
     const blob = await reportImage();
     if (!blob) return;
-    const file = new File([blob], `warhammer-clock-${battleDay()}.png`, { type: "image/png" });
+    const file = new File([blob], `chronicum-${battleDay()}.png`, { type: "image/png" });
     if (PHONE.matches && navigator.canShare?.({ files: [file] })) {
       await navigator.share({ files: [file] }).catch(() => undefined);
       return;
@@ -3366,7 +3372,7 @@ function copyClockLog(): void {
   const rows = clockEvents().map((event) =>
     [logTime(event.at), event.round, LOG_TEXT[event.kind](event), formatTime(event.left[1]), formatTime(event.left[2])].join("\t"),
   );
-  const text = [`Warhammer Clock · ${t("clockLog")}`, head.join("\t"), ...rows].join("\n");
+  const text = [`Chronicum · ${t("clockLog")}`, head.join("\t"), ...rows].join("\n");
   void navigator.clipboard?.writeText(text).then(
     () => showToast(t("logCopied")),
     () => undefined,
