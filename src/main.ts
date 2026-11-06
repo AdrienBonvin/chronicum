@@ -29,7 +29,6 @@ import {
   secondsLeft,
   setActiveClock,
   stopClock,
-  swapSides,
   type Ability,
   type AbilityKind,
   type ClockEvent,
@@ -129,6 +128,9 @@ const UI_SIZE_DEFAULT = "auto";
 
 const LAYOUT_STORAGE_KEY = "warhammerClock.layout";
 const LAYOUT_DEFAULT = "auto";
+
+/** "21": Player 2 on the left (or on top), for players sitting the other way round at the screen */
+const SIDES_STORAGE_KEY = "warhammerClock.sides";
 
 const LANG_STORAGE_KEY = "warhammerClock.lang";
 
@@ -407,6 +409,17 @@ app.innerHTML = `
                 <button type="button" class="segmented__option" data-value="columns" data-i18n-title="layoutColumns" data-i18n-aria="layoutColumns">${ICON_COLUMNS}</button>
               </div>
             </div>
+            <div class="settings-row settings-row--sides">
+              <span class="settings-row__label" data-i18n="sides"></span>
+              <div class="segmented" id="sides-options" role="group" data-i18n-aria="sidesAria">
+                ${(["12", "21"] as const)
+                  .map(
+                    (order) =>
+                      `<button type="button" class="segmented__option" data-value="${order}"><span class="sides-icon" aria-hidden="true">${[...order].map((n) => `<i class="is-p${n}">${n}</i>`).join("")}</span></button>`,
+                  )
+                  .join("")}
+              </div>
+            </div>
             <div class="settings-row">
               <span class="settings-row__label" data-i18n="uiSizeShort"></span>
               <div class="segmented" id="ui-size-options" role="group" data-i18n-aria="uiSizeAria">
@@ -568,9 +581,7 @@ app.innerHTML = `
       <button type="button" class="btn-primary" id="seat-end" data-i18n="seatEndTurn"></button>
       <button type="button" class="btn-primary" id="seat-deploy-done" data-i18n="deployDone" hidden></button>
     </nav>
-    <div class="seat-setup" id="seat-setup">
-      <button type="button" class="seat-swap" id="seat-swap">${ICON_SWAP}<span id="seat-swap-label"></span></button>
-    </div>
+    <div class="seat-setup" id="seat-setup"></div>
   </section>
   <div class="cp-burn" id="cp-burn" aria-hidden="true">
     <div class="cp-burn__veil"></div>
@@ -854,6 +865,7 @@ const chapterWrap: Record<Player, HTMLElement> = {
   2: app.querySelector<HTMLElement>("#p2-chapter-wrap")!,
 };
 const layoutOptions = app.querySelector<HTMLElement>("#layout-options")!;
+const sidesOptions = app.querySelector<HTMLElement>("#sides-options")!;
 const uiSizeOptions = app.querySelector<HTMLElement>("#ui-size-options")!;
 const langOptions = app.querySelector<HTMLElement>("#lang-options")!;
 const sfxToggle = app.querySelector<HTMLInputElement>("#sfx-toggle")!;
@@ -2616,16 +2628,34 @@ function fitScreen(): void {
 
 window.addEventListener("resize", fitScreen);
 
+/** Player 2 first on the board, on the left or on top: set by hand on a screen both players face */
+let sidesSwapped = false;
+
 /**
  * A player's PC shows the whole board: its own side marked, the opponent's to read, and turned so
- * its own side is the nearest one, at the bottom or on the left
+ * its own side is the nearest one, at the bottom or on the left. A screen for both players puts
+ * each player on the side they sit
  */
 function renderMe(): void {
   const root = document.documentElement;
   const me = online && !online.phone ? online.seat : null;
   if (me) root.dataset.me = String(me);
   else delete root.dataset.me;
-  root.toggleAttribute("data-flip", me !== null && (root.dataset.layout === "columns" ? me === 2 : me === 1));
+  const columns = root.dataset.layout === "columns";
+  root.toggleAttribute("data-flip", me !== null ? (columns ? me === 2 : me === 1) : sidesSwapped);
+  // Said the way the board is split: left and right, or top and bottom
+  sidesOptions.querySelectorAll<HTMLElement>(".segmented__option").forEach((option) => {
+    const label = t(columns ? "sidesLeft" : "sidesTop", { n: option.dataset.value![0] });
+    option.title = label;
+    option.setAttribute("aria-label", label);
+  });
+}
+
+function applySides(order: string): void {
+  sidesSwapped = order === "21";
+  setSegmentedValue(sidesOptions, sidesSwapped ? "21" : "12");
+  store(SIDES_STORAGE_KEY, sidesSwapped ? "21" : "12");
+  renderMe();
 }
 const THEMES = new Set(["clean", "warzone", "factions"]);
 
@@ -3066,6 +3096,7 @@ function applyLang(value: string, remember = false): void {
   renderCards();
   renderDispositions();
   syncFullscreenLabel();
+  renderMe();
   renderSeat();
   renderOnlineDialog();
   renderJudgeCall();
@@ -6745,6 +6776,7 @@ volumeInput.addEventListener("input", () => applyVolume(Number(volumeInput.value
 window.addEventListener("pointerdown", unlockAudio);
 window.addEventListener("keydown", unlockAudio);
 onSegmentedPick(layoutOptions, applyLayout);
+onSegmentedPick(sidesOptions, applySides);
 onSegmentedPick(langOptions, (value) => applyLang(value, true));
 
 btnSettings.addEventListener("click", () => togglePopover(btnSettings, settingsPanel));
@@ -7017,12 +7049,6 @@ async function connectRoom(seat: Seat, code?: string, resume = false): Promise<v
     onPhoto: (key, value) => {
       if (roomSession() === session) void receivePhoto(key, value);
     },
-    onSeat: (seat) => {
-      if (roomSession() !== session || !online) return;
-      takeSeat(seat);
-      // On the phone that swapped, said once the swap went through
-      if (!swapping) showToast(t("onlineSwapped", { n: seat }), true);
-    },
     onEnded: () => {
       if (roomSession() !== session) return;
       leaveRoom();
@@ -7054,52 +7080,14 @@ async function connectRoom(seat: Seat, code?: string, resume = false): Promise<v
   }
   session.room = room;
   if (online && room.seat !== "board" && room.seat !== online.seat) {
-    takeSeat(room.seat);
+    online.seat = room.seat;
+    if (online.phone) document.documentElement.dataset.seat = String(room.seat);
+    renderMe();
     showToast(t("onlineSeatSwitched", { n: room.seat }), true);
   }
   store(ONLINE_STORAGE_KEY, JSON.stringify({ code: room.code, seat: room.seat }));
   renderSeat();
   renderOnlineDialog();
-}
-
-/** This device plays `seat` from now on: another one than it asked for, or the players swapped */
-function takeSeat(seat: Player): void {
-  if (!online) return;
-  online.seat = seat;
-  if (online.phone) document.documentElement.dataset.seat = String(seat);
-  if (online.room) store(ONLINE_STORAGE_KEY, JSON.stringify({ code: online.room.code, seat }));
-  renderMe();
-  renderSeat();
-  renderOnlineDialog();
-}
-
-let swapping = false;
-/** Before the battle, nothing of it chosen yet: the two players may still swap seats */
-const canSwap = (): boolean =>
-  !!online?.room && online.connected && game.phase === "setup" && !game.preBattle && !game.choosing && !game.primaries[1];
-
-/** The two players swap seats, each keeping their own time and units: both phones follow */
-async function swapPlayers(): Promise<void> {
-  const room = online?.room;
-  if (!room || swapping || !canSwap()) return;
-  swapping = true;
-  renderSeat();
-  try {
-    await room.swap();
-    // The seats moved (onSeat): what each player set up goes with them
-    if (online?.room === room) {
-      const prev = game;
-      game = swapSides(game);
-      renderState(prev, false);
-      void pushState();
-      showToast(t("onlineSwapped", { n: online.seat }), true);
-    }
-  } catch {
-    showToast(t("onlineSwapFailed"), true);
-  } finally {
-    swapping = false;
-    renderSeat();
-  }
 }
 
 /** Back to one screen for both players, with the game as it stands */
@@ -7219,11 +7207,6 @@ function renderSeat(): void {
   if (!online?.phone) return;
   seatSetup.hidden = inGame(game) || inPreBattle();
   const me = online.seat;
-  const swap = app.querySelector<HTMLButtonElement>("#seat-swap")!;
-  swap.hidden = !online.room || !canSwap();
-  swap.disabled = swapping;
-  seatText("seat-swap-label", t("seatSwap", { n: other(me) }));
-  swap.title = t("seatSwapHint");
   // Before the battle, on the player's own screen: the moment to say which units generate CP
   const cpInvite = !seatSetup.hidden && game.abilities[me].length === 0;
   const cpButton = app.querySelector<HTMLElement>("#seat-abilities-btn")!;
@@ -7297,8 +7280,6 @@ function renderSeat(): void {
   app.querySelector<HTMLElement>("#seat-reset")!.hidden = !inGame(game);
 }
 
-app.querySelector("#seat-swap")!.addEventListener("click", () => void swapPlayers());
-
 /** A tap on this phone's own running clock passes it to the opponent */
 seatClock.addEventListener("click", () => {
   if (isDeploying()) {
@@ -7359,7 +7340,7 @@ for (const [id, action] of seatActions) {
 
 /**
  * A phone that creates the game plays Player 1, one that joins it Player 2 (or the seat left
- * free); the two can swap before the battle. A PC or a tablet is the shared screen
+ * free). A PC or a tablet is the shared screen
  */
 const createSeat = (): Seat => (PHONE.matches ? 1 : "board");
 const joinSeat = (): Seat => (PHONE.matches ? 2 : "board");
@@ -7712,6 +7693,7 @@ loadLang();
 loadTheme();
 loadFactions();
 loadLayout();
+applySides(stored(SIDES_STORAGE_KEY) ?? "12");
 loadUiSize();
 loadSound();
 updateManualInputsVisibility();

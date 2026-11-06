@@ -1704,6 +1704,32 @@ kbd {
   flex-direction: row-reverse;
 }
 
+/* The order of the board's sides, in the players' colors */
+.sides-icon {
+  display: inline-flex;
+  gap: 2px;
+}
+
+.sides-icon i {
+  display: grid;
+  place-items: center;
+  width: 1.15rem;
+  height: 0.95rem;
+  border-radius: 2px;
+  color: var(--bg);
+  font-size: 0.62rem;
+  font-style: normal;
+  font-weight: 700;
+}
+
+.sides-icon .is-p1 {
+  background: var(--p1);
+}
+
+.sides-icon .is-p2 {
+  background: var(--p2);
+}
+
 .time {
   font-family: var(--font-num);
   font-weight: 700;
@@ -7953,7 +7979,12 @@ h2.report-hero__result {
 }
 
 /* The board's layout says nothing about a player's screen. Its size does: dialogs and cards */
-:root[data-seat] .settings-row--layout {
+:root[data-seat] :is(.settings-row--layout, .settings-row--sides) {
+  display: none;
+}
+
+/* A player's PC turns the board its own way: no sides to pick there */
+:root[data-me] .settings-row--sides {
   display: none;
 }
 
@@ -8134,43 +8165,6 @@ h2.report-hero__result {
 
 .seat-setup[hidden] {
   display: none;
-}
-
-/* Online, before the battle: a small link at the top, to play the other player if need be */
-.seat-swap {
-  display: inline-flex;
-  align-items: center;
-  align-self: flex-end;
-  gap: 0.4rem;
-  min-height: 2rem;
-  margin: -0.35rem -0.35rem -0.2rem 0;
-  padding: 0.2rem 0.45rem;
-  border: 0;
-  border-radius: 4px;
-  background: none;
-  color: var(--muted);
-  font-size: 0.66rem;
-  font-weight: 600;
-  letter-spacing: 0.12em;
-  text-transform: uppercase;
-}
-
-.seat-swap:hover,
-.seat-swap:focus-visible {
-  color: var(--them);
-}
-
-.seat-swap:disabled {
-  opacity: 0.5;
-}
-
-.seat-swap[hidden] {
-  display: none;
-}
-
-.seat-swap .icon {
-  width: 0.95rem;
-  height: 0.95rem;
 }
 
 /*
@@ -8953,6 +8947,11 @@ h2.report-hero__result {
   grid-template-columns: 1fr 1fr;
   gap: 1.25rem;
   margin-top: 0.75rem;
+}
+
+/* Each player's code on their side of the screen, as the board */
+:root[data-flip][data-layout="columns"] .online-qrs__seat.is-p1 {
+  order: 1;
 }
 
 .online-qrs__seat {

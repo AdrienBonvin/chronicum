@@ -1,8 +1,7 @@
 /*
  * An online game: a room on Firebase Realtime Database, under a short code. Each device signs in
  * anonymously, takes a seat (Player 1 or 2, or the shared screen) and shares one state, kept as a
- * JSON string. The phone that creates the game plays Player 1, the one that joins it Player 2;
- * the two can swap.
+ * JSON string. The phone that creates the game plays Player 1, the one that joins it Player 2.
  * Loaded only when a game goes online: the single-screen clock never pulls Firebase in.
  */
 import { initializeApp } from "firebase/app";
@@ -25,7 +24,6 @@ import {
   runTransaction,
   serverTimestamp,
   set,
-  update,
   type Database,
   type DatabaseReference,
   type DataSnapshot,
@@ -75,14 +73,11 @@ export type RoomEvents = {
   onEnded: () => void;
   /** A photo came in or changed (`value`), or went (null); the key says which game and turn */
   onPhoto: (key: string, value: PhotoValue | null) => void;
-  /** The players swapped: this phone now plays `seat` */
-  onSeat: (seat: Player) => void;
 };
 
 export type Room = {
   code: string;
-  /** Changes when the two players swap */
-  readonly seat: Seat;
+  seat: Seat;
   /** Replaces the state with `update(remote)`, retried until no other phone wrote in between */
   transact: (update: (remote: string | null) => string) => Promise<string>;
   leave: () => void;
@@ -92,8 +87,6 @@ export type Room = {
   removePhoto: (key: string) => void;
   /** A new game: the photos of the last one go */
   clearPhotos: () => void;
-  /** This phone takes the other player's seat, and the phone there takes this one */
-  swap: () => Promise<void>;
 };
 
 export class RoomError extends Error {
@@ -172,7 +165,6 @@ async function sweepStalePhotos(db: Database): Promise<void> {
 }
 
 function open(db: Database, uid: string, code: string, seat: Seat, events: RoomEvents): Room {
-  let current = seat;
   const stateRef = ref(db, `rooms/${code}/state`);
   const photosRef = ref(db, `rooms/${code}/photos`);
   void sweepStalePhotos(db);
@@ -207,14 +199,6 @@ function open(db: Database, uid: string, code: string, seat: Seat, events: RoomE
     }),
     onValue(ref(db, `rooms/${code}/seats`), (snap) => {
       seats = (snap.val() ?? {}) as Record<string, unknown>;
-      // The players swapped, from this phone or the other one: told before who is in the room
-      if (current !== "board" && seats[current] !== uid) {
-        const moved = ([1, 2] as const).find((player) => seats[player] === uid);
-        if (moved) {
-          current = moved;
-          events.onSeat(moved);
-        }
-      }
       tellSeats("seats");
     }),
     onValue(ref(db, `rooms/${code}/phones`), (snap) => {
@@ -237,11 +221,9 @@ function open(db: Database, uid: string, code: string, seat: Seat, events: RoomE
   };
   return {
     code,
-    get seat() {
-      return current;
-    },
-    async transact(next) {
-      const result = await runTransaction(stateRef, (remote: unknown) => next(typeof remote === "string" ? remote : null), {
+    seat,
+    async transact(update) {
+      const result = await runTransaction(stateRef, (remote: unknown) => update(typeof remote === "string" ? remote : null), {
         applyLocally: false,
       });
       return result.snapshot.val() as string;
@@ -265,14 +247,6 @@ function open(db: Database, uid: string, code: string, seat: Seat, events: RoomE
       void remove(photosRef)
         .then(() => remove(ref(db, `photoRooms/${code}`)))
         .catch(() => undefined);
-    },
-    async swap() {
-      if (current === "board") return;
-      const them: Player = current === 1 ? 2 : 1;
-      // Both seats in one write, which the rules allow a player to make: the opponent's phone in
-      // this seat (or nobody, before they join), this phone in theirs
-      const holder = typeof seats[them] === "string" ? (seats[them] as string) : null;
-      await update(ref(db, `rooms/${code}/seats`), { [current]: holder, [them]: uid });
     },
     leave() {
       stopAll();
@@ -318,7 +292,7 @@ export async function peekSeats(code: string): Promise<Seats> {
 
 /**
  * The seat a phone takes in a room it joins, `wanted` first. A phone already in the room keeps its
- * own seat, wherever a swap put it. With `resume`, the phone comes back to its game: `wanted` is
+ * own seat. With `resume`, the phone comes back to its game: `wanted` is
  * the seat it had, taken again even from a phone that replaced it. Otherwise a free seat, then the
  * seat of a phone gone (its battery dead, the player goes on with another phone), then `wanted`
  */
