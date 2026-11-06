@@ -6,6 +6,7 @@ import { FACTION_BY_ID, FACTIONS, SPACE_MARINES, SPACE_MARINES_NAME, type Factio
 import { applyUpdateIfIdle, setupPwa } from "./pwa";
 import type { Room, RoomEvents, Seat, Seats } from "./room";
 import { merge } from "./sync";
+import { startAnalytics, track } from "./analytics";
 import {
   EVENT_MAX_MINUTES,
   EVENT_MIN_MINUTES,
@@ -2119,10 +2120,15 @@ async function exportBattleReport(): Promise<void> {
     if (!blob) return;
     const file = new File([blob], `chronicum-${String(chronicleNo()).padStart(3, "0")}-${battleDay()}.png`, { type: "image/png" });
     if (PHONE.matches && navigator.canShare?.({ files: [file] })) {
-      await navigator.share({ files: [file] }).catch(() => undefined);
+      const shared = await navigator.share({ files: [file] }).then(
+        () => true,
+        () => false,
+      );
+      if (shared) track("Récap partagé", { via: "partage" });
       return;
     }
     download(file);
+    track("Récap partagé", { via: "téléchargement" });
   } catch {
     showToast(t("reportExportFailed"));
   } finally {
@@ -2149,10 +2155,29 @@ function showResultOverlay(): void {
   void refreshEndPhotos();
 }
 
+/** How the game is played, for the audience measure: one screen, phones, a shared screen, apart */
+function playMode(): string {
+  if (table) return "écran partagé";
+  if (!online) return "un écran";
+  if (!online.phone) return "à distance";
+  return online.seats?.board ? "téléphones et écran" : "deux téléphones";
+}
+
+const cardsLabel = (): string => (!game.options.cards ? "sans" : manualDraw() ? "vrai paquet" : "app");
+
+/** This device's battles so far, in steps: whether players come back, without knowing who they are */
+function chronicleStep(n: number): string {
+  if (n <= 1) return "1";
+  if (n <= 5) return "2-5";
+  return n <= 20 ? "6-20" : "21+";
+}
+
 function finishGameByScore(): void {
   game.phase = "over";
   stopClock(game.clock);
   logClock("end");
+  // Counted once, by the device that ends the battle
+  track("Partie terminée", { chronique: chronicleStep(chronicleNo()), mode: playMode(), abandon: !!game.concededBy });
   lastSpaceTime = 0;
   stopLoop();
   syncInputsFromState();
@@ -3856,6 +3881,8 @@ function start(): void {
   // The log began with the first toss
   if (!game.preBattle) game.clockLog = {};
   logClock("start");
+  // Counted once, by the device that starts the battle
+  track("Partie lancée", { mode: playMode(), cartes: cardsLabel(), tournoi: eventLocked() });
   // A new game: its photos (unless the deployment's already started them) and its MVPs start afresh
   newGamePhotos();
   game.mvp = { 1: null, 2: null };
@@ -8230,6 +8257,7 @@ eventOverlay.addEventListener("click", (e) => {
 app.querySelector<HTMLButtonElement>("#event-copy")!.addEventListener("click", (e) => {
   const button = e.currentTarget as HTMLButtonElement;
   void copyText(currentEventLink()).then((copied) => flashButton(button, t(copied ? "onlineCopied" : "onlineCopyFailed")));
+  track("Tournoi préparé", { action: "lien" });
 });
 app.querySelector<HTMLButtonElement>("#event-download")!.addEventListener("click", (e) => {
   const button = e.currentTarget as HTMLButtonElement;
@@ -8241,6 +8269,7 @@ app.querySelector<HTMLButtonElement>("#event-download")!.addEventListener("click
       const file = new File([blob], `chronicum-${slug || "tournoi"}.png`, { type: "image/png" });
       if (PHONE.matches && navigator.canShare?.({ files: [file] })) await navigator.share({ files: [file] }).catch(() => undefined);
       else download(file);
+      track("Tournoi préparé", { action: "affiche" });
     })
     .catch(() => showToast(t("eventPosterFailed")))
     .finally(() => {
@@ -8303,6 +8332,7 @@ function resumeOnline(): void {
     if (preset) {
       forget(ONLINE_STORAGE_KEY);
       joinEvent(preset);
+      track("Tournoi ouvert", { tournoi: preset.name || "sans nom" });
       openOnlineDialog();
       return;
     }
@@ -8332,7 +8362,10 @@ function resumeOnline(): void {
   if (!target) return;
   if (target.seat !== "board") pickedSeat = target.seat;
   const { code, seat } = target;
-  connectRoom(seat, code).catch((error: unknown) => {
+  connectRoom(seat, code).then(() => {
+    // A player brought in by the opponent's QR code or link: how Chronicum spreads at the table
+    if (linkCode) track("Rejoint par QR", { place: seat === "board" ? "écran partagé" : "joueur" });
+  }, (error: unknown) => {
     // This device's last room, gone a day after the game: forgotten without a word
     if (!linkCode && error instanceof Error && error.message === "not-found") return;
     openOnlineDialog(code);
@@ -8401,6 +8434,8 @@ window.addEventListener("pageshow", (e) => {
 // Paused or over still counts as a game: its board stays until a reset
 setupPwa(() => inGame(game));
 restoreFinished();
+// Before the links' parameters are read and cleared: the visit's source is in them
+startAnalytics();
 resumeOnline();
 
 // A phone's browser often brings back a tab opened before this device joined its game: the game
