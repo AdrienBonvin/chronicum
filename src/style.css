@@ -8136,6 +8136,43 @@ h2.report-hero__result {
   display: none;
 }
 
+/* Online, before the battle: a small link at the top, to play the other player if need be */
+.seat-swap {
+  display: inline-flex;
+  align-items: center;
+  align-self: flex-end;
+  gap: 0.4rem;
+  min-height: 2rem;
+  margin: -0.35rem -0.35rem -0.2rem 0;
+  padding: 0.2rem 0.45rem;
+  border: 0;
+  border-radius: 4px;
+  background: none;
+  color: var(--muted);
+  font-size: 0.66rem;
+  font-weight: 600;
+  letter-spacing: 0.12em;
+  text-transform: uppercase;
+}
+
+.seat-swap:hover,
+.seat-swap:focus-visible {
+  color: var(--them);
+}
+
+.seat-swap:disabled {
+  opacity: 0.5;
+}
+
+.seat-swap[hidden] {
+  display: none;
+}
+
+.seat-swap .icon {
+  width: 0.95rem;
+  height: 0.95rem;
+}
+
 /*
  * Packed under the game it sets up: the time, the photo breaks and the cards side by side, three
  * tiles of one height, the start button under them. The screen above already shows the game
@@ -8765,39 +8802,6 @@ h2.report-hero__result {
 }
 
 /* ---------- Online dialog ---------- */
-
-.online-seat {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  gap: 1rem;
-  margin-top: 1.25rem;
-}
-
-.online-seat__label {
-  color: var(--muted);
-  font-size: 0.75rem;
-  font-weight: 600;
-  letter-spacing: 0.12em;
-  text-transform: uppercase;
-}
-
-.online-seat .segmented__option.is-p1[aria-pressed="true"] {
-  background: var(--p1);
-  color: var(--bg);
-}
-
-.online-seat .segmented__option.is-p2[aria-pressed="true"] {
-  background: var(--p2);
-  color: var(--bg);
-}
-
-/* A PC or a tablet is the shared screen: no player to pick there */
-@media (min-width: 641px) {
-  .online-seat {
-    display: none;
-  }
-}
 
 .online-create {
   width: 100%;

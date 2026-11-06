@@ -12,7 +12,7 @@
         "seats": {
           "$seat": {
             ".write": "auth != null && ($seat === '1' || $seat === '2') && root.child('rooms').child($code).child('createdAt').exists()",
-            ".validate": "newData.isString() && newData.val() === auth.uid"
+            ".validate": "newData.isString() && (newData.val() === auth.uid || (data.val() === auth.uid && newData.val() === root.child('rooms').child($code).child('seats').child($seat === '1' ? '2' : '1').val()))"
           }
         },
         "boards": {

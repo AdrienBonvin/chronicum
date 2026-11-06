@@ -29,6 +29,7 @@ import {
   secondsLeft,
   setActiveClock,
   stopClock,
+  swapSides,
   type Ability,
   type AbilityKind,
   type ClockEvent,
@@ -567,7 +568,9 @@ app.innerHTML = `
       <button type="button" class="btn-primary" id="seat-end" data-i18n="seatEndTurn"></button>
       <button type="button" class="btn-primary" id="seat-deploy-done" data-i18n="deployDone" hidden></button>
     </nav>
-    <div class="seat-setup" id="seat-setup"></div>
+    <div class="seat-setup" id="seat-setup">
+      <button type="button" class="seat-swap" id="seat-swap">${ICON_SWAP}<span id="seat-swap-label"></span></button>
+    </div>
   </section>
   <div class="cp-burn" id="cp-burn" aria-hidden="true">
     <div class="cp-burn__veil"></div>
@@ -791,13 +794,6 @@ app.innerHTML = `
       <div class="online-start" id="online-start">
         <p class="online-mode" data-i18n="onlineTableTitle"></p>
         <p class="overlay-msg" id="online-intro"></p>
-        <div class="online-seat">
-          <span class="online-seat__label" data-i18n="onlinePlayAs"></span>
-          <div class="segmented" id="online-seat" role="group" data-i18n-aria="onlinePlayAs">
-            <button type="button" class="segmented__option is-p1" data-value="1" data-i18n="player" data-v-n="1"></button>
-            <button type="button" class="segmented__option is-p2" data-value="2" data-i18n="player" data-v-n="2"></button>
-          </div>
-        </div>
         <button type="button" class="btn-primary online-create" id="online-create"></button>
         <div class="online-remote">
           <p class="online-mode" data-i18n="onlineRemoteTitle"></p>
@@ -999,7 +995,6 @@ const seatTime = app.querySelector<HTMLElement>("#seat-time")!;
 const seatOppTime = app.querySelector<HTMLElement>("#seat-opp-time")!;
 const seatAbilities = app.querySelector<HTMLElement>("#seat-abilities")!;
 const onlineOverlay = app.querySelector<HTMLElement>("#online-overlay")!;
-const onlineSeatPicker = app.querySelector<HTMLElement>("#online-seat")!;
 const onlineCodeInput = app.querySelector<HTMLInputElement>("#online-code")!;
 const onlineError = app.querySelector<HTMLElement>("#online-error")!;
 
@@ -6982,8 +6977,8 @@ function showGameOverScreen(): void {
   showResultOverlay();
 }
 
-/** Creates a room with this game (no code), or joins one; this device takes `seat` (see joinRoom for `preferFree`) */
-async function connectRoom(seat: Seat, code?: string, preferFree = false): Promise<void> {
+/** Creates a room with this game (no code), or joins one; this device takes `seat`, or the one joinRoom finds (see seatFor for `resume`) */
+async function connectRoom(seat: Seat, code?: string, resume = false): Promise<void> {
   leaveRoom();
   // A room being created holds this device alone; a room joined tells who is in it
   const seats: Seats | null = code ? null : { 1: seat === 1, 2: seat === 2, board: seat === "board", away: { 1: false, 2: false } };
@@ -7022,6 +7017,12 @@ async function connectRoom(seat: Seat, code?: string, preferFree = false): Promi
     onPhoto: (key, value) => {
       if (roomSession() === session) void receivePhoto(key, value);
     },
+    onSeat: (seat) => {
+      if (roomSession() !== session || !online) return;
+      takeSeat(seat);
+      // On the phone that swapped, said once the swap went through
+      if (!swapping) showToast(t("onlineSwapped", { n: seat }), true);
+    },
     onEnded: () => {
       if (roomSession() !== session) return;
       leaveRoom();
@@ -7037,7 +7038,7 @@ async function connectRoom(seat: Seat, code?: string, preferFree = false): Promi
     const { createRoom, joinRoom } = await import("./room");
     if (code) {
       synced = { rev: 0, json: "" };
-      room = await joinRoom(code, seat, events, preferFree);
+      room = await joinRoom(code, seat, events, resume);
     } else {
       synced = { rev: 1, json: JSON.stringify(game) };
       room = await createRoom(seat, packState(synced), events);
@@ -7053,15 +7054,52 @@ async function connectRoom(seat: Seat, code?: string, preferFree = false): Promi
   }
   session.room = room;
   if (online && room.seat !== "board" && room.seat !== online.seat) {
-    online.seat = room.seat;
-    pickedSeat = room.seat;
-    if (online.phone) document.documentElement.dataset.seat = String(room.seat);
-    renderMe();
+    takeSeat(room.seat);
     showToast(t("onlineSeatSwitched", { n: room.seat }), true);
   }
   store(ONLINE_STORAGE_KEY, JSON.stringify({ code: room.code, seat: room.seat }));
   renderSeat();
   renderOnlineDialog();
+}
+
+/** This device plays `seat` from now on: another one than it asked for, or the players swapped */
+function takeSeat(seat: Player): void {
+  if (!online) return;
+  online.seat = seat;
+  if (online.phone) document.documentElement.dataset.seat = String(seat);
+  if (online.room) store(ONLINE_STORAGE_KEY, JSON.stringify({ code: online.room.code, seat }));
+  renderMe();
+  renderSeat();
+  renderOnlineDialog();
+}
+
+let swapping = false;
+/** Before the battle, nothing of it chosen yet: the two players may still swap seats */
+const canSwap = (): boolean =>
+  !!online?.room && online.connected && game.phase === "setup" && !game.preBattle && !game.choosing && !game.primaries[1];
+
+/** The two players swap seats, each keeping their own time and units: both phones follow */
+async function swapPlayers(): Promise<void> {
+  const room = online?.room;
+  if (!room || swapping || !canSwap()) return;
+  swapping = true;
+  renderSeat();
+  try {
+    await room.swap();
+    // The seats moved (onSeat): what each player set up goes with them
+    if (online?.room === room) {
+      const prev = game;
+      game = swapSides(game);
+      renderState(prev, false);
+      void pushState();
+      showToast(t("onlineSwapped", { n: online.seat }), true);
+    }
+  } catch {
+    showToast(t("onlineSwapFailed"), true);
+  } finally {
+    swapping = false;
+    renderSeat();
+  }
 }
 
 /** Back to one screen for both players, with the game as it stands */
@@ -7181,6 +7219,11 @@ function renderSeat(): void {
   if (!online?.phone) return;
   seatSetup.hidden = inGame(game) || inPreBattle();
   const me = online.seat;
+  const swap = app.querySelector<HTMLButtonElement>("#seat-swap")!;
+  swap.hidden = !online.room || !canSwap();
+  swap.disabled = swapping;
+  seatText("seat-swap-label", t("seatSwap", { n: other(me) }));
+  swap.title = t("seatSwapHint");
   // Before the battle, on the player's own screen: the moment to say which units generate CP
   const cpInvite = !seatSetup.hidden && game.abilities[me].length === 0;
   const cpButton = app.querySelector<HTMLElement>("#seat-abilities-btn")!;
@@ -7254,6 +7297,8 @@ function renderSeat(): void {
   app.querySelector<HTMLElement>("#seat-reset")!.hidden = !inGame(game);
 }
 
+app.querySelector("#seat-swap")!.addEventListener("click", () => void swapPlayers());
+
 /** A tap on this phone's own running clock passes it to the opponent */
 seatClock.addEventListener("click", () => {
   if (isDeploying()) {
@@ -7312,9 +7357,12 @@ for (const [id, action] of seatActions) {
 
 /* ---------- Online: the dialog to create or join a game ---------- */
 
-/** The player picked on a phone, before going online. A PC or a tablet is the shared screen */
-let pickedSeat: Player = 1;
-const screenSeat = (): Seat => (PHONE.matches ? pickedSeat : "board");
+/**
+ * A phone that creates the game plays Player 1, one that joins it Player 2 (or the seat left
+ * free); the two can swap before the battle. A PC or a tablet is the shared screen
+ */
+const createSeat = (): Seat => (PHONE.matches ? 1 : "board");
+const joinSeat = (): Seat => (PHONE.matches ? 2 : "board");
 let shownQrCode = "";
 let shownBoardQrCode = "";
 
@@ -7348,7 +7396,6 @@ function renderOnlineDialog(): void {
   // On a PC or a tablet, no player to pick: it shows the players' codes, each may scan theirs (style.css)
   seatText("online-intro", t(PHONE.matches ? "onlineIntro" : "onlineBoardIntro"));
   seatText("online-create", t(PHONE.matches ? "onlineCreate" : "onlineShowQr"));
-  setSegmentedValue(onlineSeatPicker, String(pickedSeat));
   app.querySelector<HTMLElement>("#online-qrs")!.hidden = !table;
   app.querySelector<HTMLElement>("#online-qr")!.hidden = !online?.phone;
   if (table) {
@@ -7410,8 +7457,8 @@ function renderSeatInvite(them: Player): void {
 
 /** The code the opponent scans: in the dialog, and on this phone's screen while their seat is empty */
 function renderRoomQr(code: string, them: Player): void {
-  if (shownQrCode === code) return;
-  shownQrCode = code;
+  if (shownQrCode === `${code}|${them}`) return;
+  shownQrCode = `${code}|${them}`;
   void import("qrcode-generator").then(({ default: qrcode }) => {
     const qr = qrcode(0, "M");
     qr.addData(shareLink(code, them));
@@ -7549,10 +7596,10 @@ async function goOnline(seat: Seat, code?: string): Promise<void> {
     timer = window.setTimeout(() => reject(new Error("unavailable")), ROOM_TIMEOUT_MS);
   });
   try {
-    // A code typed by hand may come with the wrong player picked
+    // A PC joining with a code: a player's seat, or the shared screen
     const join = async (): Promise<Seat> => {
       const taken = code && seat === "board" ? await pcSeatIn(code) : seat;
-      await connectRoom(taken, code, !!code);
+      await connectRoom(taken, code);
       return taken;
     };
     const taken = await Promise.race([join(), timeout]);
@@ -7566,22 +7613,18 @@ async function goOnline(seat: Seat, code?: string): Promise<void> {
   }
 }
 
-onSegmentedPick(onlineSeatPicker, (value) => {
-  pickedSeat = value === "2" ? 2 : 1;
-  setSegmentedValue(onlineSeatPicker, value);
-});
 // Apart, the one who creates the game plays player 1, the one who joins it player 2
 app.querySelector("#online-remote-create")!.addEventListener("click", () => void goOnline(1));
 btnOnline.addEventListener("click", () => openOnlineDialog());
 stripRoom.addEventListener("click", () => openOnlineDialog());
-app.querySelector("#online-create")!.addEventListener("click", () => void goOnline(screenSeat()));
+app.querySelector("#online-create")!.addEventListener("click", () => void goOnline(createSeat()));
 app.querySelector("#online-join")!.addEventListener("click", () => {
   const code = onlineCodeInput.value.trim().toUpperCase();
   if (code.length !== ONLINE_CODE_LENGTH) {
     showOnlineError(t("onlineNotFound"));
     return;
   }
-  void goOnline(screenSeat(), code);
+  void goOnline(joinSeat(), code);
 });
 onlineCodeInput.addEventListener("keydown", (e) => {
   e.stopPropagation();
@@ -7625,7 +7668,7 @@ function resumeOnline(): void {
   const linkCode = params.get("room")?.trim().toUpperCase() ?? "";
   const linkSeat = parseSeat(params.get("seat"));
   if (linkCode) history.replaceState(null, "", location.pathname);
-  let target: { code: string; seat: Seat } | null = null;
+  let target: { code: string; seat: Seat; resume?: boolean } | null = null;
   if (linkCode && linkSeat) target = { code: linkCode, seat: linkSeat };
   else if (linkCode) {
     openOnlineDialog(linkCode);
@@ -7634,15 +7677,14 @@ function resumeOnline(): void {
     try {
       const saved = JSON.parse(stored(ONLINE_STORAGE_KEY) ?? "null") as { code?: string; seat?: unknown } | null;
       const seat = parseSeat(saved?.seat);
-      if (saved?.code && seat) target = { code: saved.code, seat };
+      if (saved?.code && seat) target = { code: saved.code, seat, resume: true };
     } catch {
       /* nothing saved */
     }
   }
   if (!target) return;
-  if (target.seat !== "board") pickedSeat = target.seat;
-  const { code, seat } = target;
-  connectRoom(seat, code).catch((error: unknown) => {
+  const { code, seat, resume } = target;
+  connectRoom(seat, code, resume).catch((error: unknown) => {
     openOnlineDialog(code);
     showOnlineError(roomErrorText(error));
   });

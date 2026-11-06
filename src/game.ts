@@ -232,6 +232,35 @@ export function newGame(seconds: number = DEFAULT_TIME_SEC): GameState {
   };
 }
 
+/** What each player brings to a game before it starts: it follows them when they swap seats */
+const SIDES = [
+  "cp",
+  "cpHistory",
+  "scoreByTurn",
+  "endBonus",
+  "abilities",
+  "bonusCpGained",
+  "secondaries",
+  "cardRounds",
+  "newCardUsed",
+  "dispositions",
+  "primaries",
+  "primaryScored",
+  "primaryFull",
+  "mvp",
+] as const satisfies readonly (keyof GameState)[];
+
+/** Online, before the battle: the two players swap seats, each keeping their own time and units */
+export function swapSides(game: GameState): GameState {
+  const next = structuredClone(game);
+  for (const key of SIDES) {
+    const sides = next[key] as Record<Player, unknown>;
+    [sides[1], sides[2]] = [sides[2], sides[1]];
+  }
+  next.clock.left = { 1: game.clock.left[2], 2: game.clock.left[1] };
+  return next;
+}
+
 /* ---------- Phase ---------- */
 
 /** Started and not reset: running, paused or over */
