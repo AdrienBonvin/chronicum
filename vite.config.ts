@@ -14,7 +14,7 @@ export default defineConfig({
       manifest: {
         name: "Chronicum",
         short_name: "Chronicum",
-        description: "The battle companion for Warhammer 40,000: clock, mission cards, photos, battle report. Unofficial, not affiliated with Games Workshop",
+        description: "The battle companion for Warhammer 40,000, 11th edition: clock, mission cards, photos, battle report. Unofficial, not affiliated with Games Workshop",
         start_url: "./",
         scope: "./",
         display: "standalone",
