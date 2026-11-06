@@ -711,17 +711,17 @@ app.innerHTML = `
       </svg>
       <img class="photo-shot" id="photo-shot" alt="" />
       <span class="pause-badge" data-i18n="clocksPaused"></span>
-      <h2 id="photo-title" data-i18n="photoTitle"></h2>
+      <h2 id="photo-title"><span class="photo-for-turn" data-i18n="photoTitle"></span><span class="photo-for-deploy" data-i18n="photoDeployTitle"></span></h2>
       <p class="overlay-msg" id="photo-msg"></p>
       <div class="photo-camera">
         <input type="file" id="photo-input" accept="image/*" capture="environment" hidden />
         <button type="button" class="btn-primary photo-take" id="btn-photo-take">${ICON_CAMERA}<span data-i18n="photoTake"></span></button>
-        <button type="button" class="btn-primary photo-save" id="btn-photo-save" data-i18n="photoSaveResume"></button>
+        <button type="button" class="btn-primary photo-save" id="btn-photo-save"><span class="photo-for-turn" data-i18n="photoSaveResume"></span><span class="photo-for-deploy" data-i18n="photoSaveStart"></span></button>
         <button type="button" class="btn-secondary photo-retake" id="btn-photo-retake">${ICON_CAMERA}<span data-i18n="photoRetake"></span></button>
-        <button type="button" class="photo-skip" id="btn-photo-skip"><span class="photo-skip__first" data-i18n="photoSkip"></span><span class="photo-skip__again" data-i18n="photoSkipUnsaved"></span></button>
+        <button type="button" class="photo-skip" id="btn-photo-skip"><span class="photo-skip__first" data-i18n="photoSkip"></span><span class="photo-skip__again"><span class="photo-for-turn" data-i18n="photoSkipUnsaved"></span><span class="photo-for-deploy" data-i18n="photoSkipStart"></span></span></button>
       </div>
       <div class="overlay-actions">
-        <button type="button" class="btn-primary" id="btn-photo-resume"><span data-i18n="resumeClocks"></span> <kbd data-i18n="keyEnter"></kbd></button>
+        <button type="button" class="btn-primary" id="btn-photo-resume"><span class="photo-for-turn" data-i18n="resumeClocks"></span><span class="photo-for-deploy" data-i18n="startBattle"></span> <kbd data-i18n="keyEnter"></kbd></button>
       </div>
     </div>
   </div>
@@ -1235,7 +1235,22 @@ function startBattle(): void {
   if (app.querySelector<HTMLButtonElement>("#btn-toss-start")!.disabled) return;
   hideToss();
   if (cardsPlayer !== null) closeCards();
+  // With photo breaks, the deployed table is photographed first: the battle starts once it is done
+  if (game.options.photoBreaks) {
+    newGamePhotos();
+    game.photoBreak = true;
+    showPhotoBreak();
+    return;
+  }
   start();
+}
+
+/** A new game: its photos go under a new id, and the last game's go, here and in the room */
+function newGamePhotos(): void {
+  if (game.gameId) return;
+  game.gameId = newGameId();
+  void keepOnlyGame(game.gameId);
+  roomSession()?.room?.clearPhotos();
 }
 
 /** The board and the phones during the deployment: who places a unit, the clock it runs on */
@@ -1538,6 +1553,13 @@ function playedTurns(): PhotoTurn[] {
 }
 
 const turnId = ({ round, player }: PhotoTurn): string => `${round}_${player}`;
+/** The table once deployed, photographed before the battle starts: "round 0" */
+const DEPLOYMENT: PhotoTurn = { round: 0, player: 1 };
+const isDeployment = (turn: PhotoTurn): boolean => turn.round === 0;
+/** A photo's short name: "R2 · P1", or the deployment */
+const shotLabel = (turn: PhotoTurn): string =>
+  isDeployment(turn) ? t("photoDeployShort") : `R${turn.round} · ${t("playerShort", { n: turn.player })}`;
+const shotTitle = (turn: PhotoTurn): string => (isDeployment(turn) ? t("photoDeployTurn") : t("photoTurn", { r: turn.round, n: turn.player }));
 const sameTurn = (a: PhotoTurn, b: PhotoTurn): boolean => a.round === b.round && a.player === b.player;
 const lastTurn = (): PhotoTurn => playedTurns().pop() ?? { round: 1, player: game.firstPlayer };
 const turnPoints = ({ round, player }: PhotoTurn): number =>
@@ -1575,20 +1597,25 @@ async function refreshEndPhotos(): Promise<void> {
   if (viewerOverlay.classList.contains("is-visible") && viewerTurn && !endPhotos.has(turnId(viewerTurn))) closeViewer();
 }
 
-const storyTurns = (): PhotoTurn[] => playedTurns().filter((turn) => endPhotos.has(turnId(turn)));
+/** The deployment, then every player turn played */
+const storySlots = (): PhotoTurn[] => [DEPLOYMENT, ...playedTurns()];
+const storyTurns = (): PhotoTurn[] => storySlots().filter((turn) => endPhotos.has(turnId(turn)));
 
-/** The battle story: one photo per player turn, in order, with the points that turn scored */
+/** The battle story: the deployment, then one photo per player turn, in order, with the points that turn scored */
 function storyHtml(): string {
-  const turns = playedTurns();
+  const turns = storySlots();
   const last = lastTurn();
   const canShoot = CAN_SHOOT.matches && !!game.gameId;
   if (endPhotos.size === 0 && !(game.options.photoBreaks && (canShoot || roomSession()))) return "";
   const count = turns.filter((turn) => endPhotos.has(turnId(turn))).length;
   const cells = turns.map((turn) => {
-    const pos = `grid-column:${turn.round + 1};grid-row:${turn.player === game.firstPlayer ? 2 : 3}`;
+    // The deployment in its own column, across both players' rows
+    const pos = isDeployment(turn) ? "grid-column:2;grid-row:2 / span 2" : `grid-column:${turn.round + 2};grid-row:${turn.player === game.firstPlayer ? 2 : 3}`;
+    const kind = isDeployment(turn) ? "is-deploy" : `is-p${turn.player}`;
     const entry = endPhotos.get(turnId(turn));
     if (entry) {
-      return `<button type="button" class="story-shot is-p${turn.player}" style="${pos}" data-story-turn="${turnId(turn)}" aria-label="${t("photoTurn", { r: turn.round, n: turn.player })}"><img src="${entry.thumb}" alt="" /><span class="story-shot__label">R${turn.round} · ${t("playerShort", { n: turn.player })}</span><span class="story-shot__gain">+${turnPoints(turn)}</span></button>`;
+      const gain = isDeployment(turn) ? "" : `<span class="story-shot__gain">+${turnPoints(turn)}</span>`;
+      return `<button type="button" class="story-shot ${kind}" style="${pos}" data-story-turn="${turnId(turn)}" aria-label="${shotTitle(turn)}"><img src="${entry.thumb}" alt="" /><span class="story-shot__label">${shotLabel(turn)}</span>${gain}</button>`;
     }
     if (sameTurn(turn, last) && canShoot) {
       return `<button type="button" class="story-shot is-empty is-p${turn.player}" style="${pos}" id="btn-final-photo">${ICON_CAMERA}<b>${t("reportFinalPhoto")}</b><small>${t("reportFinalTake")}</small></button>`;
@@ -1596,10 +1623,11 @@ function storyHtml(): string {
     if (sameTurn(turn, last) && roomSession()) {
       return `<span class="story-shot is-empty is-p${turn.player}" style="${pos}">${ICON_PHONE}<b>${t("reportFinalPhoto")}</b><small>${t("reportFinalFromPhone")}</small></span>`;
     }
-    return `<span class="story-shot is-missing is-p${turn.player}" style="${pos}"><small>${t("reportNoPhoto")}</small></span>`;
+    return `<span class="story-shot is-missing ${kind}" style="${pos}"><small>${t("reportNoPhoto")}</small></span>`;
   });
   const labels =
-    ROUNDS.map((round) => `<span class="story-round" style="grid-row:1;grid-column:${round + 1}">R${round}</span>`).join("") +
+    `<span class="story-round" style="grid-row:1;grid-column:2">${t("photoDeployShort")}</span>` +
+    ROUNDS.map((round) => `<span class="story-round" style="grid-row:1;grid-column:${round + 2}">R${round}</span>`).join("") +
     [game.firstPlayer, other(game.firstPlayer)]
       .map((player, i) => `<span class="story-player is-p${player}" style="grid-row:${i + 2};grid-column:1">${t("playerShort", { n: player })}</span>`)
       .join("");
@@ -1697,7 +1725,7 @@ function renderMvpPicks(): void {
         ${turns
           .map(
             (turn) =>
-              `<button type="button" role="radio" data-mvp-pick="${player}" data-turn="${turnId(turn)}" aria-checked="${!!chosen && sameTurn(chosen, turn)}" aria-label="${t("photoTurn", { r: turn.round, n: turn.player })}"><img src="${endPhotos.get(turnId(turn))!.thumb}" alt="" /><span>R${turn.round} · ${t("playerShort", { n: turn.player })}</span></button>`,
+              `<button type="button" role="radio" data-mvp-pick="${player}" data-turn="${turnId(turn)}" aria-checked="${!!chosen && sameTurn(chosen, turn)}" aria-label="${shotTitle(turn)}"><img src="${endPhotos.get(turnId(turn))!.thumb}" alt="" /><span>${shotLabel(turn)}</span></button>`,
           )
           .join("")}
       </div>`;
@@ -1825,10 +1853,11 @@ async function exportBattleReport(): Promise<void> {
   }
 }
 
+/** Accents dropped from the name: some browsers save a download named "Déploiement" as "download" */
 function download(file: File): void {
   const link = document.createElement("a");
   link.href = URL.createObjectURL(file);
-  link.download = file.name;
+  link.download = file.name.normalize("NFD").replace(/\p{M}/gu, "");
   link.click();
   window.setTimeout(() => URL.revokeObjectURL(link.href), 1000);
 }
@@ -1922,8 +1951,12 @@ function showPhotoBreak(): void {
   playSound("photo");
   stopLoop();
   app.classList.add("is-photo-break");
-  photoMsg.textContent = t("photoMsg", { n: game.turnPlayer });
-  breakTurn = turnJustPlayed();
+  // Before the battle, the deployed table; then the table as each player turn left it
+  const deployment = !inGame(game);
+  photoOverlay.classList.toggle("is-deploy", deployment);
+  photoMsg.textContent = deployment ? t("photoDeployMsg") : t("photoMsg", { n: game.turnPlayer });
+  breakTurn = deployment ? DEPLOYMENT : turnJustPlayed();
+  if (deployment) hideToss();
   // The last break's photo went with it as it faded out: this one starts with the camera
   showPhotoShot(null);
   photoOverlay.classList.add("is-visible");
@@ -1934,6 +1967,12 @@ function showPhotoBreak(): void {
 function endPhotoBreak(): void {
   if (!game.photoBreak) return;
   game.photoBreak = false;
+  // The deployment photo is in: the battle starts
+  if (!inGame(game)) {
+    hidePhotoBreak();
+    start();
+    return;
+  }
   handClock(game.clock.active);
   hidePhotoBreak();
 }
@@ -2004,7 +2043,7 @@ async function sharePhoto(photo: Photo): Promise<void> {
 
 /** A photo taken on another device of the room, or left out there */
 async function receivePhoto(key: string, value: { at: number; data: string } | null): Promise<void> {
-  const match = /^([a-z0-9]+)_([1-5])_([12])$/.exec(key);
+  const match = /^([a-z0-9]+)_([0-5])_([12])$/.exec(key);
   if (!match) return;
   const [, gameId, round, player] = match;
   const turn: PhotoTurn = { round: Number(round), player: player === "1" ? 1 : 2 };
@@ -2058,12 +2097,14 @@ function renderViewer(): void {
   viewerImg.style.opacity = "0";
   viewerImg.onload = () => (viewerImg.style.opacity = "1");
   viewerImg.src = viewerUrl;
-  viewerImg.alt = t("photoTurn", { r: turn.round, n: turn.player });
+  viewerImg.alt = shotTitle(turn);
   viewerOverlay.setAttribute("aria-label", viewerImg.alt);
-  app.querySelector<HTMLElement>("#viewer")!.className = `viewer is-p${turn.player}`;
+  app.querySelector<HTMLElement>("#viewer")!.className = `viewer ${isDeployment(turn) ? "is-deploy" : `is-p${turn.player}`}`;
   app.querySelector("#viewer-count")!.textContent = `${at + 1} / ${turns.length}`;
-  app.querySelector("#viewer-turn")!.textContent = `${t("photoTurn", { r: turn.round, n: turn.player })}${final ? ` · ${t("photoGameEnd")}` : ""}`;
-  app.querySelector("#viewer-line")!.textContent = t(final ? "photoLineFinal" : "photoLine", { vp: turnPoints(turn), score: scoreAfter(turn) });
+  app.querySelector("#viewer-turn")!.textContent = `${shotTitle(turn)}${final ? ` · ${t("photoGameEnd")}` : ""}`;
+  app.querySelector("#viewer-line")!.textContent = isDeployment(turn)
+    ? t("photoDeployLine", { n: game.firstPlayer })
+    : t(final ? "photoLineFinal" : "photoLine", { vp: turnPoints(turn), score: scoreAfter(turn) });
   app.querySelector("#viewer-hint")!.textContent = t(CAN_SHOOT.matches ? "photoHintTouch" : "photoHintMouse");
   app.querySelector<HTMLButtonElement>("#btn-viewer-prev")!.disabled = at <= 0;
   app.querySelector<HTMLButtonElement>("#btn-viewer-next")!.disabled = at >= turns.length - 1;
@@ -2179,15 +2220,17 @@ const extension = (blob: Blob): string => ({ "image/png": "png", "image/heic": "
 
 /** The photos in turn order, then the report: names that sort right in a gallery and in a folder */
 function saveFiles(gallery: boolean): { name: string; blob: Blob | null }[] {
-  const turns = playedTurns();
+  const slots = storySlots();
   const last = lastTurn();
   const files: { name: string; blob: Blob | null }[] = storyTurns().map((turn) => {
     const blob = endPhotos.get(turnId(turn))!.photo.full;
     const final = sameTurn(turn, last) ? t("photoFileFinal") : "";
-    const index = String(turns.findIndex((each) => sameTurn(each, turn)) + 1).padStart(2, "0");
+    // 00 the deployment, then 01, 02… the turns in order
+    const index = String(slots.findIndex((each) => sameTurn(each, turn))).padStart(2, "0");
+    const what = isDeployment(turn) ? t("photoFileDeploy") : "";
     const name = gallery
-      ? `WH ${battleDay()} R${turn.round} ${t("playerShort", { n: turn.player })}${final ? ` ${final}` : ""}`
-      : `${index} ${t("photoFileTurn", { r: turn.round, n: turn.player })}${final ? ` (${final})` : ""}`;
+      ? `WH ${battleDay()} ${what || `R${turn.round} ${t("playerShort", { n: turn.player })}${final ? ` ${final}` : ""}`}`
+      : `${index} ${what || `${t("photoFileTurn", { r: turn.round, n: turn.player })}${final ? ` (${final})` : ""}`}`;
     return { name: `${name}.${extension(blob)}`, blob };
   });
   if (saveWithReport && saveReport.state !== "failed") {
@@ -3408,11 +3451,9 @@ function start(): void {
   // The log began with the first toss
   if (!game.preBattle) game.clockLog = {};
   logClock("start");
-  // A new game: its photos and MVPs start afresh, the last game's photos go
-  game.gameId = newGameId();
+  // A new game: its photos (unless the deployment's already started them) and its MVPs start afresh
+  newGamePhotos();
   game.mvp = { 1: null, 2: null };
-  void keepOnlyGame(game.gameId);
-  roomSession()?.room?.clearPhotos();
   game.cp = { 1: 1, 2: 1 };
   game.cpHistory = { 1: emptyCpHistory(), 2: emptyCpHistory() };
   renderMiniCounters();
@@ -3532,6 +3573,8 @@ function reset(): void {
   game.judgeCall = null;
   game.clockLog = {};
   game.mvp = { 1: null, 2: null };
+  // The next game gets its own photos
+  game.gameId = "";
   hideJudgeCall();
   closeClockLog();
   game.round = 1;
@@ -3548,7 +3591,12 @@ function reset(): void {
   setActivePanels();
   updateButtons();
   renderTurnDots();
-  endPhotoBreak();
+  // Ended without starting anything: a deployment photo would start the battle
+  if (game.photoBreak) {
+    game.photoBreak = false;
+    pendingDraw = null;
+    hidePhotoBreak();
+  }
   game.scoreByTurn = { 1: emptyTurnScores(), 2: emptyTurnScores() };
   game.endBonus = { 1: 0, 2: 0 };
   // No command point before the game: each player gets theirs when it starts
@@ -6092,7 +6140,7 @@ mvpOverlay.addEventListener("click", (e) => {
   if (!pick || !mvpDraft) return;
   const player: Player = pick.dataset.mvpPick === "2" ? 2 : 1;
   const [round, by] = (pick.dataset.turn ?? "").split("_").map(Number);
-  mvpDraft[player].photo = round ? { round, player: by === 2 ? 2 : 1 } : null;
+  mvpDraft[player].photo = pick.dataset.turn ? { round, player: by === 2 ? 2 : 1 } : null;
   pick.parentElement!.querySelectorAll("[data-mvp-pick]").forEach((each) => each.setAttribute("aria-checked", String(each === pick)));
 });
 app.querySelector("#btn-mvp-cancel")!.addEventListener("click", closeMvp);
