@@ -4867,6 +4867,7 @@ button.sec-option:hover:not(:disabled) {
   gap: 0.45rem;
   padding: 0.3rem 0.7rem;
   font-size: 0.72rem;
+  white-space: nowrap;
 }
 
 .strip-reset .icon {
@@ -9782,4 +9783,66 @@ h2.report-hero__result {
   #seat-end {
     min-height: 3rem;
   }
+}
+
+/* ---------- Ending a game early: give up, finish without clocks, erase ---------- */
+
+.overlay.overlay--end-game {
+  z-index: 13;
+}
+
+.end-game-options {
+  display: grid;
+  gap: 0.55rem;
+  margin-top: 1.2rem;
+}
+
+.end-game-option {
+  display: grid;
+  gap: 0.2rem;
+  padding: 0.75rem 0.9rem;
+  text-align: left;
+  text-transform: none;
+  letter-spacing: 0;
+  border-color: var(--line-strong);
+  background: transparent;
+  color: var(--text);
+}
+
+.end-game-option[hidden] {
+  display: none;
+}
+
+.end-game-option b {
+  font-size: 1rem;
+  font-weight: 600;
+}
+
+.end-game-option span {
+  color: var(--muted);
+  font-size: 0.85rem;
+  font-weight: 400;
+  line-height: 1.35;
+}
+
+.end-game-option:hover:not(:disabled),
+.end-game-option:focus-visible {
+  border-color: var(--accent);
+}
+
+.end-game-option.is-danger b {
+  color: var(--danger);
+}
+
+.end-game-option.is-danger:hover:not(:disabled),
+.end-game-option.is-danger:focus-visible {
+  border-color: color-mix(in srgb, var(--danger) 55%, transparent);
+}
+
+/* Without clocks: the times stay where they stopped, dimmed */
+#app.is-untimed #t1,
+#app.is-untimed #t2,
+#app.is-untimed #seat-time,
+#app.is-untimed #seat-opp-time {
+  opacity: 0.35;
 }

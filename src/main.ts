@@ -598,6 +598,21 @@ app.innerHTML = `
       </div>
     </div>
   </div>
+  <div class="overlay overlay--end-game" id="end-game-overlay" role="dialog" aria-modal="true" aria-labelledby="end-game-title" aria-hidden="true">
+    <div class="overlay-inner">
+      <h2 id="end-game-title" data-i18n="endGameTitle"></h2>
+      <p class="overlay-msg" data-i18n="endGameMsg"></p>
+      <div class="end-game-options">
+        <button type="button" class="end-game-option" id="end-game-concede-1"><b></b><span></span></button>
+        <button type="button" class="end-game-option" id="end-game-concede-2"><b></b><span></span></button>
+        <button type="button" class="end-game-option" id="end-game-untimed"><b data-i18n="untimed"></b><span data-i18n="untimedHint"></span></button>
+        <button type="button" class="end-game-option is-danger" id="end-game-erase"><b data-i18n="eraseGame"></b><span data-i18n="resetMsg"></span></button>
+      </div>
+      <div class="overlay-actions">
+        <button type="button" class="btn-secondary" id="btn-end-game-cancel"><span data-i18n="cancel"></span> <kbd data-i18n="keyEsc"></kbd></button>
+      </div>
+    </div>
+  </div>
   <div class="overlay overlay--result" id="result-overlay" role="dialog" aria-modal="true" aria-labelledby="result-title" aria-hidden="true">
     <div class="overlay-inner">
       <article class="report" id="battle-report"></article>
@@ -940,6 +955,8 @@ const turnConfirmTitle = app.querySelector<HTMLElement>("#turn-confirm-title")!;
 const turnConfirmMsg = app.querySelector<HTMLElement>("#turn-confirm-msg")!;
 const btnTurnConfirmOk = app.querySelector<HTMLButtonElement>("#btn-turn-confirm-ok")!;
 const btnTurnConfirmCancel = app.querySelector<HTMLButtonElement>("#btn-turn-confirm-cancel")!;
+const endGameOverlay = app.querySelector<HTMLElement>("#end-game-overlay")!;
+const btnEndGameCancel = app.querySelector<HTMLButtonElement>("#btn-end-game-cancel")!;
 const resultOverlay = app.querySelector<HTMLElement>("#result-overlay")!;
 const mvpOverlay = app.querySelector<HTMLElement>("#mvp-overlay")!;
 const btnMvpCrown = app.querySelector<HTMLButtonElement>("#btn-mvp-crown")!;
@@ -1074,6 +1091,89 @@ function hideTurnConfirmModal(): void {
   turnConfirmKind = null;
   turnConfirmOverlay.classList.remove("is-visible");
   turnConfirmOverlay.setAttribute("aria-hidden", "true");
+}
+
+/* ---------- Ending a game before its last round ---------- */
+
+/** Who won: the opponent of a player who gave up, else the higher score */
+function gameWinner(): Player | null {
+  if (game.concededBy) return other(game.concededBy);
+  const [total1, total2] = [scoreOf(1), scoreOf(2)];
+  return total1 > total2 ? 1 : total2 > total1 ? 2 : null;
+}
+
+const untimed = (): boolean => game.clock.offFrom !== undefined;
+
+/**
+ * Give up, play the end fast without clocks, or erase the game. A player's phone gives up for
+ * its own player only; a shared screen, for either
+ */
+function openEndGame(): void {
+  closePopovers();
+  const me = online?.seat;
+  for (const player of [1, 2] as const) {
+    const button = app.querySelector<HTMLButtonElement>(`#end-game-concede-${player}`)!;
+    button.hidden = me !== undefined && me !== player;
+    button.querySelector("b")!.textContent = me === player ? t("concedeMine") : t("concede", { n: player });
+    button.querySelector("span")!.textContent = t("concedeHint", { n: other(player) });
+  }
+  app.querySelector<HTMLElement>("#end-game-untimed")!.hidden = untimed();
+  endGameOverlay.classList.add("is-visible");
+  endGameOverlay.setAttribute("aria-hidden", "false");
+  btnEndGameCancel.focus();
+}
+
+function closeEndGame(): void {
+  endGameOverlay.classList.remove("is-visible");
+  endGameOverlay.setAttribute("aria-hidden", "true");
+}
+
+/** A player gives the game up: whatever was on screen goes, the result shows */
+function concede(player: Player): void {
+  closeEndGame();
+  if (cardsPlayer !== null) closeCards(false);
+  if (game.photoBreak) {
+    game.photoBreak = false;
+    hidePhotoBreak();
+  }
+  if (game.judgeCall !== null) {
+    game.judgeCall = null;
+    hideJudgeCall();
+  }
+  hideTimeOut();
+  // A draw waiting for the break to end would open over the result
+  pendingDraw = null;
+  game.concededBy = player;
+  logClock("concede", { player });
+  finishGameByScore();
+}
+
+/** The rest of the game is played fast: the clocks stop for good, no more photo breaks */
+function finishWithoutClocks(): void {
+  closeEndGame();
+  stopClock(game.clock);
+  game.clock.offFrom = game.round;
+  game.options.photoBreaks = false;
+  photoBreaksToggle.checked = false;
+  logClock("untimed");
+  stopLoop();
+  hideTimeOut();
+  if (game.phase === "paused") resume();
+  applyTimesToDisplay();
+  setActivePanels();
+  updateButtons();
+}
+
+/** In a game still going, the reset buttons end it instead: they open the choices above */
+function renderResetLabels(): void {
+  const key = inGame(game) && !isOver() ? "endGame" : "reset";
+  for (const id of ["btn-reset", "seat-reset"]) {
+    const label = app.querySelector<HTMLElement>(`#${id} span`)!;
+    label.dataset.i18n = key;
+    label.textContent = t(key);
+  }
+  btnReset.dataset.i18nTitle = key;
+  btnReset.title = t(key);
 }
 
 function hideResultOverlay(): void {
@@ -1838,12 +1938,18 @@ function reportSignHtml(): string {
 
 function reportHeroHtml(title: boolean): string {
   const [total1, total2] = [scoreOf(1), scoreOf(2)];
-  const winner: Player | null = total1 > total2 ? 1 : total2 > total1 ? 2 : null;
+  const winner = gameWinner();
   const events = clockEvents();
   const started = events.find((event) => event.kind === "start");
   const ended = events.filter((event) => event.kind === "end").pop();
   const date = new Date(started?.at ?? Date.now()).toLocaleDateString(getLang(), { day: "numeric", month: "short", year: "numeric" });
-  const meta = [date, started && ended ? formatDuration((ended.at - started.at) / 1000) : "", `${t("round")} ${game.round}`]
+  const offFrom = game.clock.offFrom;
+  const meta = [
+    date,
+    started && ended ? formatDuration((ended.at - started.at) / 1000) : "",
+    `${t("round")} ${game.round}`,
+    offFrom !== undefined ? t("reportUntimed", { n: offFrom }) : "",
+  ]
     .filter(Boolean)
     .join(" · ");
   const side = (player: Player): string => {
@@ -1851,7 +1957,10 @@ function reportHeroHtml(title: boolean): string {
     return `<div class="report-side is-p${player}"><span class="report-side__name">${t("player", { n: player })}</span>${faction ? `<span class="report-side__faction">${faction}</span>` : ""}</div>`;
   };
   const score = (player: Player): string => `<b class="is-p${player}${winner && winner !== player ? " is-behind" : ""}">${scoreOf(player)}</b>`;
-  const result = `<span class="report-pill${winner ? ` is-p${winner}` : ""}">${winner ? t("wins", { n: winner }) : t("draw")}</span><span class="report-wtc">${t("reportWtc", { a: wtcPoints(total1, total2), b: wtcPoints(total2, total1) })}</span>`;
+  const result = `<span class="report-pill${winner ? ` is-p${winner}` : ""}">${winner ? t("wins", { n: winner }) : t("draw")}</span><span class="report-wtc">${
+    // A game given up has no WTC score to read from its points
+    game.concededBy ? t("reportConceded", { n: game.concededBy }) : t("reportWtc", { a: wtcPoints(total1, total2), b: wtcPoints(total2, total1) })
+  }</span>`;
   return `
     <header class="report-hero${winner ? ` is-p${winner}-wins` : ""}">
       <p class="report-hero__chronicle">${chronicleTitle()}</p>
@@ -1998,6 +2107,8 @@ function applyConfirmed(kind: TurnConfirmKind): void {
     return;
   }
   if (kind === "reset") {
+    // After a game over, the next one never starts in its room: in a tournament, the last opponent is still there
+    if (isOver()) leaveRoom();
     reset();
     return;
   }
@@ -3196,7 +3307,8 @@ function renderKeyHint(): void {
     const hand = secondaryCardsOn()
       ? ` ${sep} <kbd>${HAND_KEY}</kbd> ${t("hintHand")} <kbd>${PRIMARY_KEY}</kbd> ${t("hintPrimary")}`
       : "";
-    keyHint.innerHTML = `${enter} ${t("hintEndTurn")} ${sep} ${space} ${t("hintSwitch")} ${sep} ${space}${space} ${t("hintPause")}${hand}${judge}`;
+    const off = untimed() ? `<span class="key-hint__status">${t("untimedBadge")}</span> ` : "";
+    keyHint.innerHTML = `${off}${enter} ${t("hintEndTurn")} ${sep} ${space} ${t("hintSwitch")} ${sep} ${space}${space} ${t("hintPause")}${hand}${judge}`;
   } else if (isOver()) {
     keyHint.innerHTML = `<span class="key-hint__status">${t("gameOver")}</span> ${t("hintPlayAgain")}`;
   } else if (isStopped(game)) {
@@ -3214,6 +3326,8 @@ function updateButtons(): void {
   btnJudge.hidden = !inGame(game) || isOver();
   app.classList.toggle("is-deploying", isDeploying());
   app.classList.toggle("is-pre-battle", inPreBattle());
+  app.classList.toggle("is-untimed", untimed() && !isOver());
+  renderResetLabels();
   renderKeyHint();
   renderSeat();
 }
@@ -3366,6 +3480,8 @@ const LOG_TEXT: Record<ClockEventKind, (event: ClockEvent) => string> = {
   judgeEnd: ({ seconds }) => t("logJudgeEnd", { time: formatSpan(seconds ?? 0) }),
   adjust: ({ player, seconds }) => t("logAdjust", { n: player ?? "", delta: formatDelta(seconds ?? 0) }),
   timeOut: ({ player }) => t("logTimeOut", { n: player ?? "" }),
+  untimed: () => t("logUntimed"),
+  concede: ({ player }) => t("logConcede", { n: player ?? "" }),
   end: () => t("logEnd"),
 };
 
@@ -3678,6 +3794,7 @@ function reset(): void {
   hideTurnConfirmModal();
   hideResultOverlay();
   game.judgeCall = null;
+  game.concededBy = null;
   game.clockLog = {};
   game.mvp = { 1: null, 2: null };
   // The next game gets its own photos
@@ -4436,6 +4553,7 @@ function cardKeyMode(e: KeyboardEvent): "hand" | "mission" | null {
 const anyModalOpen = (): boolean =>
   resultOverlay.classList.contains("is-visible") ||
   turnConfirmOverlay.classList.contains("is-visible") ||
+  endGameOverlay.classList.contains("is-visible") ||
   timeOutOverlay.classList.contains("is-visible");
 
 /** Card ids of the primary cards, to deal them like the others */
@@ -6224,8 +6342,21 @@ function resume(): void {
 }
 
 btnReset.addEventListener("click", () => {
-  if (inGame(game)) openTurnConfirmModal("reset");
+  if (inGame(game) && !isOver()) openEndGame();
+  else if (inGame(game)) openTurnConfirmModal("reset");
   else reset();
+});
+btnEndGameCancel.addEventListener("click", closeEndGame);
+endGameOverlay.addEventListener("click", (e) => {
+  if (e.target === endGameOverlay) closeEndGame();
+});
+for (const player of [1, 2] as const) {
+  app.querySelector("#end-game-concede-" + player)!.addEventListener("click", () => concede(player));
+}
+app.querySelector("#end-game-untimed")!.addEventListener("click", finishWithoutClocks);
+app.querySelector("#end-game-erase")!.addEventListener("click", () => {
+  closeEndGame();
+  reset();
 });
 btnFullscreen.addEventListener("click", toggleFullscreen);
 btnTurnConfirmOk.addEventListener("click", applyTurnConfirm);
@@ -6442,6 +6573,13 @@ window.addEventListener("keydown", (e) => {
     else if (e.key === "ArrowRight") stepViewer(1);
     else return;
     e.preventDefault();
+    return;
+  }
+  if (endGameOverlay.classList.contains("is-visible")) {
+    if (e.key === "Escape") {
+      e.preventDefault();
+      closeEndGame();
+    } else if (e.code === "Space") e.preventDefault();
     return;
   }
   if (mvpOverlay.classList.contains("is-visible")) {
@@ -6806,6 +6944,7 @@ async function pushState(): Promise<void> {
     if (roomSession()?.room !== room) return;
     synced = unpackState(stored);
     sent = true;
+    room.played(isOver());
     // Changes made here while the write was on its way go on top of what the server kept
     const now = JSON.stringify(game);
     const next = merge(synced.json, local, now);
@@ -6829,6 +6968,7 @@ function receiveState(remote: Synced): void {
   const next = joining ? remote.json : merge(remote.json, synced.json, local);
   synced = remote;
   if (next !== local) applyState(next, joining);
+  roomSession()?.room?.played(isOver());
   if (next !== remote.json) void pushState();
 }
 
@@ -6887,7 +7027,7 @@ function renderState(prev: GameState, joining: boolean): void {
     }
     setBattleMusic(true);
   }
-  if (game.phase === "over" && prev.phase !== "over") showGameOverScreen();
+  if (game.phase === "over" && prev.phase !== "over") showGameOverScreen(joining);
   // A game started on another device: the photos of the one before go here too
   if (game.gameId && game.gameId !== prev.gameId) void keepOnlyGame(game.gameId);
   if (resultOverlay.classList.contains("is-visible") && JSON.stringify(game.mvp) !== JSON.stringify(prev.mvp)) renderMvpSection();
@@ -6960,14 +7100,22 @@ function resetScreen(): void {
   closeAbilities();
 }
 
-/** The game ended on the other phone: the same result shows here */
-function showGameOverScreen(): void {
+/**
+ * The game ended on the other phone: the same result shows here. Found over (a room joined, the
+ * app reopened), it shows without the fanfare: it would only sound at the first tap
+ */
+function showGameOverScreen(quiet = false): void {
+  if (game.concededBy) {
+    closeEndGame();
+    pendingDraw = null;
+    if (cardsPlayer !== null) closeCards(false);
+  }
   lastSpaceTime = 0;
   void releaseWakeLock();
   stopLoop();
   hideTurnConfirmModal();
   setBattleMusic(false);
-  playSound("victory");
+  if (!quiet) playSound("victory");
   showResultOverlay();
 }
 
@@ -7019,6 +7167,14 @@ async function connectRoom(seat: Seat, code?: string, preferFree = false): Promi
       closeOnlineDialog();
       renderAll();
       showToast(t("onlineEnded"), true);
+    },
+    onGone: () => {
+      if (roomSession() !== session) return;
+      // The game stays on this device, its end screen too: only a game still going says so
+      leaveRoom();
+      closeOnlineDialog();
+      renderAll();
+      if (!isOver()) showToast(t("onlineGone"), true);
     },
   };
   let room: Room;
@@ -7078,7 +7234,36 @@ for (const type of ["pointerdown", "click", "keydown", "input", "change"]) {
     true,
   );
 }
-window.setInterval(() => void pushState(), 500);
+window.setInterval(() => {
+  void pushState();
+  keepFinished();
+}, 500);
+
+/*
+ * A game over is kept on the device: reopened, the app shows its end screen, report and photos,
+ * without going back to its room. A new game lets it go
+ */
+const FINISHED_STORAGE_KEY = "warhammerClock.finished";
+let finishedJson = stored(FINISHED_STORAGE_KEY);
+
+function keepFinished(): void {
+  const json = isOver() ? JSON.stringify(game) : null;
+  if (json === finishedJson) return;
+  if (json) store(FINISHED_STORAGE_KEY, json);
+  else forget(FINISHED_STORAGE_KEY);
+  finishedJson = json;
+}
+
+/** At start, the game over this device last showed */
+function restoreFinished(): void {
+  if (!finishedJson) return;
+  try {
+    applyState(finishedJson, true);
+  } catch {
+    forget(FINISHED_STORAGE_KEY);
+    finishedJson = null;
+  }
+}
 
 /* ---------- Online: this phone's player ---------- */
 
@@ -7284,7 +7469,8 @@ const seatActions: [string, (me: Player) => void][] = [
     "seat-reset",
     () => {
       closePopovers();
-      if (inGame(game)) openTurnConfirmModal("reset");
+      if (inGame(game) && !isOver()) openEndGame();
+      else if (inGame(game)) openTurnConfirmModal("reset");
     },
   ],
   ["seat-room", () => openOnlineDialog()],
@@ -7627,6 +7813,11 @@ function resumeOnline(): void {
     } catch {
       /* nothing saved */
     }
+    // A game over is not picked up again: its end screen stays here, the next game gets a new room
+    if (target && isOver()) {
+      forget(ONLINE_STORAGE_KEY);
+      return;
+    }
   }
   if (!target) return;
   if (target.seat !== "board") pickedSeat = target.seat;
@@ -7699,6 +7890,7 @@ window.addEventListener("pageshow", (e) => {
 
 // Paused or over still counts as a game: its board stays until a reset
 setupPwa(() => inGame(game));
+restoreFinished();
 resumeOnline();
 
 // A phone's browser often brings back a tab opened before this device joined its game: the game

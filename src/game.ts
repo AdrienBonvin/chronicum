@@ -63,6 +63,8 @@ export type Clock = {
   active: Player;
   /** Wall-clock ms when the active clock started running; null while the clocks are stopped */
   since: number | null;
+  /** The round from which the end is played fast, without clocks: they never run again */
+  offFrom?: number;
 };
 
 export type ClockEventKind =
@@ -79,6 +81,8 @@ export type ClockEventKind =
   | "judgeEnd"
   | "adjust"
   | "timeOut"
+  | "untimed"
+  | "concede"
   | "end";
 
 /**
@@ -126,6 +130,8 @@ export type GameState = {
   options: { photoBreaks: boolean; cards: boolean; deployClock: boolean };
   /** A judge called to the table: both clocks frozen since then (wall-clock ms) */
   judgeCall: number | null;
+  /** The player who gave the game up: the other one wins, whatever the score. Absent from older states */
+  concededBy?: Player | null;
   /**
    * What happened to the clocks, to settle a dispute. Keyed rather than listed: two phones
    * logging at once both keep their line
@@ -209,6 +215,7 @@ export function newGame(seconds: number = DEFAULT_TIME_SEC): GameState {
     photoBreak: false,
     options: { photoBreaks: false, cards: true, deployClock: true },
     judgeCall: null,
+    concededBy: null,
     clockLog: {},
     cp: { 1: 0, 2: 0 },
     cpHistory: { 1: emptyCpHistory(), 2: emptyCpHistory() },
@@ -270,7 +277,7 @@ export function stopClock(clock: Clock, now = nowMs()): void {
 }
 
 export function runClock(clock: Clock, now = nowMs()): void {
-  if (clock.since === null) clock.since = now;
+  if (clock.since === null && clock.offFrom === undefined) clock.since = now;
 }
 
 /** The other clock runs from now on (or will, once resumed) */
