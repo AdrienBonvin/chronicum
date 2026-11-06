@@ -1,10 +1,11 @@
 <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512">
   <rect width="512" height="512" fill="#07090d"/>
-  <!-- One dial, shared by the two players: blue on the left, red on the right -->
-  <path d="M256 104 A152 152 0 0 0 256 408" fill="none" stroke="#4a9bff" stroke-width="34" stroke-linecap="butt"/>
-  <path d="M256 104 A152 152 0 0 1 256 408" fill="none" stroke="#ff5d77" stroke-width="34" stroke-linecap="butt"/>
-  <rect x="244" y="78" width="24" height="52" rx="4" fill="#e6ebf2"/>
-  <rect x="244" y="382" width="24" height="52" rx="4" fill="#e6ebf2"/>
-  <line x1="256" y1="256" x2="330" y2="182" stroke="#e6ebf2" stroke-width="22" stroke-linecap="round"/>
-  <circle cx="256" cy="256" r="22" fill="#e6ebf2"/>
+  <!-- The chronicler's seal: a C that is also a dial, open where the hand points. Bone and brass,
+       never the players' colors. Kept inside the maskable safe zone (40 % of the size) -->
+  <g transform="translate(256 256) scale(4.2) translate(-50 -50)" fill="none" stroke="#e8dfcb">
+    <path d="M74.04 25.96 A34 34 0 1 0 74.04 74.04" stroke-width="8"/>
+    <path d="M50 22 V28 M22 50 H28 M50 72 V78" stroke-width="3"/>
+    <path d="M50 50 L74 41" stroke="#b08d57" stroke-width="5" stroke-linecap="round"/>
+    <circle cx="50" cy="50" r="5" fill="#b08d57" stroke="none"/>
+  </g>
 </svg>

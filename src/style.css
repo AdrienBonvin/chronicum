@@ -34,6 +34,11 @@
   --p2-glow: color-mix(in srgb, var(--p2) 30%, transparent);
   --font-ui: "Chakra Petch", system-ui, sans-serif;
   --font-num: "JetBrains Mono", ui-monospace, monospace;
+  /* The brand, the same in every theme: bone and brass, never the players' colors, never on the
+     board during a battle. Cinzel only for the name and the chronicle's titles */
+  --bone: #e8dfcb;
+  --brass: #b08d57;
+  --font-brand: "Cinzel", Georgia, serif;
   font-family: var(--font-ui);
 }
 
@@ -2837,6 +2842,13 @@ kbd {
   text-shadow: 0 1px 8px rgba(0, 0, 0, 0.8);
 }
 
+.cards-sub.is-chronicle {
+  color: var(--bone);
+  font-family: var(--font-brand);
+  font-weight: 700;
+  letter-spacing: 0.12em;
+}
+
 /*
  * At a turn end: the turn's points out of the 15 it allows, primary and secondary apart. The bars
  * stay in place and fill as points come in
@@ -4967,8 +4979,18 @@ button.sec-option:hover:not(:disabled) {
   );
 }
 
-.report-hero__meta {
+/* The battle's number in the chronicles: the brand's one line on the report */
+.report-hero__chronicle {
   margin: 0;
+  color: var(--bone);
+  font-family: var(--font-brand);
+  font-size: 1rem;
+  font-weight: 700;
+  letter-spacing: 0.12em;
+}
+
+.report-hero__meta {
+  margin: -0.4rem 0 0;
   color: var(--muted);
   font-size: 0.62rem;
   font-weight: 600;
@@ -5320,14 +5342,74 @@ h2.report-hero__result {
   grid-template-columns: 1fr;
 }
 
-.report-export__foot {
+/* The picture's signature: the seal and the name, a code to start one's own chronicle */
+.report-sign {
+  display: flex;
+  align-items: center;
+  gap: 14px;
   margin: 16px 0 0;
-  color: var(--faint);
-  font-size: 0.7rem;
-  font-weight: 600;
-  letter-spacing: 0.2em;
-  text-align: center;
+  padding: 16px 4px 0;
+  border-top: 1px solid var(--line);
+}
+
+.report-sign__seal svg {
+  display: block;
+  width: 40px;
+  height: 40px;
+}
+
+.report-sign__name,
+.report-sign__scan {
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+}
+
+.report-sign__name {
+  flex: 1;
+}
+
+.report-sign__name b {
+  color: var(--bone);
+  font-family: var(--font-brand);
+  font-size: 1.05rem;
+  letter-spacing: 0.12em;
+}
+
+.report-sign__name small {
+  color: var(--brass);
+  font-family: var(--font-num);
+  font-size: 0.62rem;
+  letter-spacing: 0.14em;
   text-transform: uppercase;
+}
+
+.report-sign__scan {
+  align-items: flex-end;
+  order: 1;
+  text-align: right;
+}
+
+.report-sign__scan b {
+  color: var(--text);
+  font-size: 0.8rem;
+}
+
+.report-sign__scan small {
+  color: var(--muted);
+  font-family: var(--font-num);
+  font-size: 0.66rem;
+}
+
+.report-sign__qr {
+  order: 2;
+}
+
+.report-sign__qr svg {
+  display: block;
+  width: 72px;
+  height: 72px;
+  border-radius: 4px;
 }
 
 /* ---------- End screen: the MVPs, the battle story, the folded secondaries ---------- */
@@ -7664,15 +7746,26 @@ h2.report-hero__result {
 
 .phone-home__brand h1 {
   margin: 0;
-  color: var(--text);
-  font-size: 1.15rem;
-  letter-spacing: 0.18em;
+  color: var(--bone);
+  font-family: var(--font-brand);
+  font-size: 1.6rem;
+  font-weight: 700;
+  letter-spacing: 0.12em;
+}
+
+/* The promise, in brass, then what the app is */
+.phone-home__motto {
+  margin: -0.4rem 0 0;
+  color: var(--brass);
+  font-family: var(--font-num);
+  font-size: 0.68rem;
+  letter-spacing: 0.14em;
+  text-align: center;
   text-transform: uppercase;
 }
 
-/* What the app is, under its name */
 .phone-home__tagline {
-  margin: -0.35rem 0 0;
+  margin: -0.2rem 0 0;
   color: var(--muted);
   font-size: 0.85rem;
   text-align: center;
@@ -7692,11 +7785,11 @@ h2.report-hero__result {
 }
 
 .settings__brand {
-  color: var(--muted);
-  font-size: 0.72rem;
+  color: var(--bone);
+  font-family: var(--font-brand);
+  font-size: 0.85rem;
   font-weight: 700;
-  letter-spacing: 0.18em;
-  text-transform: uppercase;
+  letter-spacing: 0.12em;
 }
 
 .phone-home__start {

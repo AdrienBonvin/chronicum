@@ -470,6 +470,7 @@ app.innerHTML = `
     <div class="phone-home__brand">
       <img class="phone-home__logo" src="icon.svg" alt="" />
       <h1>Chronicum</h1>
+      <p class="phone-home__motto" data-i18n="brandLine"></p>
       <p class="phone-home__tagline" data-i18n="homeTagline"></p>
     </div>
     <div class="phone-home__start" id="phone-home-start"></div>
@@ -1765,6 +1766,58 @@ function crownMvps(): void {
   }
 }
 
+/* ---------- The chronicle: each battle this device sees to its end gets the next number ---------- */
+
+const CHRONICLES_STORAGE_KEY = "warhammerClock.chronicles";
+/** Where a shared report leads: its QR code and the address under it */
+const APP_URL = "https://warhammerclock.web.app/";
+/** The brand's seal: a C that is also a dial, bone and brass (public/icon.svg without its square) */
+const SEAL_SVG = `<svg viewBox="0 0 100 100" aria-hidden="true"><g fill="none" stroke="#e8dfcb"><path d="M74.04 25.96 A34 34 0 1 0 74.04 74.04" stroke-width="8"/><path d="M50 22 V28 M22 50 H28 M50 72 V78" stroke-width="3"/><path d="M50 50 L74 41" stroke="#b08d57" stroke-width="5" stroke-linecap="round"/><circle cx="50" cy="50" r="5" fill="#b08d57" stroke="none"/></g></svg>`;
+
+type Chronicles = { count: number; byStart: Record<string, number> };
+
+function readChronicles(): Chronicles {
+  try {
+    const saved = JSON.parse(stored(CHRONICLES_STORAGE_KEY) ?? "null") as Chronicles | null;
+    if (saved && typeof saved.count === "number" && saved.byStart) return saved;
+  } catch {
+    /* broken: counting starts over */
+  }
+  return { count: 0, byStart: {} };
+}
+
+/** This battle's number. Fixed once the battle is over, so a second export says the same; before, the one it will get */
+function chronicleNo(): number {
+  const chronicles = readChronicles();
+  const started = clockEvents().find((event) => event.kind === "start");
+  const known = started && chronicles.byStart[started.at];
+  if (known) return known;
+  const next = chronicles.count + 1;
+  if (!started || !isOver()) return next;
+  // Only the last battles are kept: an old one is not reopened
+  const byStart = Object.fromEntries([...Object.entries(chronicles.byStart).slice(-19), [started.at, next]]);
+  store(CHRONICLES_STORAGE_KEY, JSON.stringify({ count: next, byStart }));
+  return next;
+}
+
+const chronicleTitle = (): string => t("chronicle", { n: String(chronicleNo()).padStart(3, "0") });
+
+/** At the foot of the shared picture: who made it, and a code to start one's own */
+async function reportSignHtml(): Promise<string> {
+  const { default: qrcode } = await import("qrcode-generator");
+  const qr = qrcode(0, "M");
+  qr.addData(APP_URL);
+  qr.make();
+  // Ink on bone: the dark image keeps a code every camera reads
+  const code = qr.createSvgTag({ cellSize: 4, margin: 2, scalable: true }).replace('fill="white"', 'fill="#e8dfcb"').replace('fill="black"', 'fill="#07090d"');
+  return `<footer class="report-sign">
+    <span class="report-sign__seal">${SEAL_SVG}</span>
+    <span class="report-sign__name"><b>Chronicum</b><small>${t("brandLine")}</small></span>
+    <span class="report-sign__qr">${code}</span>
+    <span class="report-sign__scan"><b>${t("scanToPlay")}</b><small>${APP_URL.replace(/^https:\/\/|\/$/g, "")}</small></span>
+  </footer>`;
+}
+
 /* ---------- The report, on screen and as a picture ---------- */
 
 function reportHeroHtml(title: boolean): string {
@@ -1774,7 +1827,7 @@ function reportHeroHtml(title: boolean): string {
   const started = events.find((event) => event.kind === "start");
   const ended = events.filter((event) => event.kind === "end").pop();
   const date = new Date(started?.at ?? Date.now()).toLocaleDateString(getLang(), { day: "numeric", month: "short", year: "numeric" });
-  const meta = [t("reportTitle"), date, started && ended ? formatDuration((ended.at - started.at) / 1000) : "", `${t("round")} ${game.round}`]
+  const meta = [date, started && ended ? formatDuration((ended.at - started.at) / 1000) : "", `${t("round")} ${game.round}`]
     .filter(Boolean)
     .join(" · ");
   const side = (player: Player): string => {
@@ -1785,6 +1838,7 @@ function reportHeroHtml(title: boolean): string {
   const result = `<span class="report-pill${winner ? ` is-p${winner}` : ""}">${winner ? t("wins", { n: winner }) : t("draw")}</span><span class="report-wtc">${t("reportWtc", { a: wtcPoints(total1, total2), b: wtcPoints(total2, total1) })}</span>`;
   return `
     <header class="report-hero${winner ? ` is-p${winner}-wins` : ""}">
+      <p class="report-hero__chronicle">${chronicleTitle()}</p>
       <p class="report-hero__meta">${meta}</p>
       <div class="report-hero__score">${side(1)}<div class="report-score">${score(1)}<span>–</span>${score(2)}</div>${side(2)}</div>
       ${title ? `<h2 id="result-title" class="report-hero__result">${result}</h2>` : `<p class="report-hero__result">${result}</p>`}
@@ -1819,7 +1873,7 @@ async function reportImage(): Promise<Blob | null> {
   const sheet = document.createElement("div");
   sheet.className = "report-export";
   const spent = timeByRound();
-  sheet.innerHTML = `<article class="report">${reportHeroHtml(false)}${mvpImageHtml()}<div class="report-players">${reportPlayer(1, spent, true)}${reportPlayer(2, spent, true)}</div>${reportLegend()}</article><p class="report-export__foot">Chronicum</p>`;
+  sheet.innerHTML = `<article class="report">${reportHeroHtml(false)}${mvpImageHtml()}<div class="report-players">${reportPlayer(1, spent, true)}${reportPlayer(2, spent, true)}</div>${reportLegend()}</article>${await reportSignHtml()}`;
   document.body.append(sheet);
   try {
     const { toBlob } = await import("html-to-image");
@@ -1846,7 +1900,7 @@ async function exportBattleReport(): Promise<void> {
   try {
     const blob = await reportImage();
     if (!blob) return;
-    const file = new File([blob], `chronicum-${battleDay()}.png`, { type: "image/png" });
+    const file = new File([blob], `chronicum-${String(chronicleNo()).padStart(3, "0")}-${battleDay()}.png`, { type: "image/png" });
     if (PHONE.matches && navigator.canShare?.({ files: [file] })) {
       await navigator.share({ files: [file] }).catch(() => undefined);
       return;
@@ -4511,9 +4565,11 @@ function renderCards(dealIds: string[] = []): void {
   btnCardsClose.disabled = waitsForP1;
   renderCardsSwitch();
   renderCapMeters(player);
+  // Before the battle, the chronicle it opens: a brand moment, the board stays plain afterwards
+  cardsSub.classList.toggle("is-chronicle", cardsMode === "primary");
   if (cardsMode === "primary") {
     cardsTitle.textContent = t("primaryTitle");
-    cardsSub.textContent = "";
+    cardsSub.textContent = chronicleTitle();
     // The two missions face off: they rush in from each side and clash on a "VS"
     const versus = document.createElement("div");
     versus.className = "versus";
