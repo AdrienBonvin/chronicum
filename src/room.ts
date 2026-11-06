@@ -1,7 +1,7 @@
 /*
  * An online game: a room on Firebase Realtime Database, under a short code. Each device signs in
  * anonymously, takes a seat (Player 1 or 2, or the shared screen) and shares one state, kept as a
- * JSON string.
+ * JSON string. The phone that creates the game plays Player 1, the one that joins it Player 2.
  * Loaded only when a game goes online: the single-screen clock never pulls Firebase in.
  */
 import { initializeApp } from "firebase/app";
@@ -345,12 +345,30 @@ export async function peekSeats(code: string): Promise<Seats> {
 }
 
 /**
- * Takes `seat` in the room: a phone that joins a seat already taken replaces the one there,
- * so a player whose battery dies goes on with another phone. With `preferFree`, a code typed by
- * hand: the player picked is taken by another device and the other seat is free, so the wrong
- * player was picked, and the free seat is taken instead (the room's seat says which)
+ * The seat a phone takes in a room it joins, `wanted` first. A phone already in the room keeps its
+ * own seat. With `resume`, the phone comes back to its game: `wanted` is
+ * the seat it had, taken again even from a phone that replaced it. Otherwise a free seat, then the
+ * seat of a phone gone (its battery dead, the player goes on with another phone), then `wanted`
  */
-export async function joinRoom(code: string, seat: Seat, events: RoomEvents, preferFree = false): Promise<Room> {
+async function seatFor(db: Database, uid: string, code: string, wanted: Player, resume: boolean): Promise<Player> {
+  const [seatsSnap, phonesSnap] = await Promise.all([get(ref(db, `rooms/${code}/seats`)), get(ref(db, `rooms/${code}/phones`))]).catch(() => {
+    throw new RoomError("unavailable");
+  });
+  const seats = (seatsSnap.val() ?? {}) as Record<string, unknown>;
+  const phones = (phonesSnap.val() ?? {}) as Record<string, unknown>;
+  const order: Player[] = [wanted, wanted === 1 ? 2 : 1];
+  const own = order.find((player) => seats[player] === uid);
+  if (own) return own;
+  if (resume) return wanted;
+  return order.find((player) => !seats[player]) ?? order.find((player) => !phones[String(seats[player])]) ?? wanted;
+}
+
+/**
+ * Takes a seat in the room (see seatFor): a phone that joins a seat already taken replaces the
+ * one there, so a player whose battery dies goes on with another phone. The room's seat says
+ * which one it got
+ */
+export async function joinRoom(code: string, seat: Seat, events: RoomEvents, resume = false): Promise<Room> {
   const { db, uid } = await connect().catch(() => {
     throw new RoomError("unavailable");
   });
@@ -358,12 +376,7 @@ export async function joinRoom(code: string, seat: Seat, events: RoomEvents, pre
     throw new RoomError("unavailable");
   });
   if (!snap.exists() || ended.exists()) throw new RoomError("not-found");
-  let taken = seat;
-  if (preferFree && seat !== "board") {
-    const seats = ((await get(ref(db, `rooms/${code}/seats`)).catch(() => null))?.val() ?? {}) as Record<string, unknown>;
-    const free: Player = seat === 1 ? 2 : 1;
-    if (seats[seat] && seats[seat] !== uid && !seats[free]) taken = free;
-  }
+  const taken = seat === "board" ? seat : await seatFor(db, uid, code, seat, resume);
   await set(placeRef(db, code, taken, uid), taken === "board" ? true : uid);
   return open(db, uid, code, taken, events);
 }

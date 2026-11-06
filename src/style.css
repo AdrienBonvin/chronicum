@@ -4,7 +4,7 @@
   box-sizing: border-box;
 }
 
-/* Theme tokens. A theme (data-theme on <html>) only changes these values */
+/* Tokens: a neutral dark base, each player's colors from their army once picked */
 :root {
   --bg: #07090d;
   --surface: #0d1118;
@@ -42,43 +42,17 @@
   font-family: var(--font-ui);
 }
 
-/* Factions: a neutral dark base, each player's colors come from their army (set from factions.ts) */
-:root[data-theme="factions"] {
+/* The armies picked (set from factions.ts), or blue and red until then */
+:root {
   --bg: #08090b;
   --surface: #111317;
   --text: #ecebe7;
   --muted: #8a8b90;
   --faint: #43454b;
-  --p1: var(--fx1, #f5c518);
-  --p1-time: var(--fx1-time, #fff2c2);
-  --p2: var(--fx2, #b45fe0);
-  --p2-time: var(--fx2-time, #f1e5cf);
-}
-
-/* War zone: dark warm greys, orange, and hazard tape on the no man's land between the players */
-:root[data-theme="warzone"] {
-  --bg: #0b0b0a;
-  --surface: #151513;
-  --line: rgba(255, 240, 220, 0.08);
-  --line-strong: rgba(255, 240, 220, 0.17);
-  --text: #ece7df;
-  --muted: #8d877d;
-  --faint: #47433d;
-  --accent: #ff7a1a;
-  --on-accent: #0b0b0a;
-  --p1: #ff7a1a;
-  --p1-time: #ffe2cc;
-  --p2: #8fb3cc;
-  --p2-time: #e1ebf2;
-  --hazard: repeating-linear-gradient(-45deg, #f2b705 0 8px, #0b0b0a 8px 16px);
-}
-
-/* Switching theme: every color changes in the same frame. Otherwise the buttons' hover fades all
-   replay at once over the page, a flicker on phones (applyTheme sets this for one style pass) */
-:root.is-retheming *,
-:root.is-retheming *::before,
-:root.is-retheming *::after {
-  transition: none !important;
+  --p1: var(--fx1, #4a9bff);
+  --p1-time: var(--fx1-time, #d4e6ff);
+  --p2: var(--fx2, #ff5d77);
+  --p2-time: var(--fx2-time, #ffdbe1);
 }
 
 html,
@@ -545,97 +519,6 @@ body {
   }
 }
 
-/* Theme preview: the board in miniature, in the theme's own colors whatever the current one */
-.theme-preview {
-  --tp-bg: #07090d;
-  --tp-p1: #4a9bff;
-  --tp-p2: #ff5d77;
-  --tp-time1: #d4e6ff;
-  --tp-time2: #ffdbe1;
-  position: relative;
-  display: grid;
-  grid-template-rows: 1fr 1fr;
-  width: 4.6rem;
-  height: 2.9rem;
-  overflow: hidden;
-  border: 1px solid rgba(255, 255, 255, 0.14);
-  border-radius: 4px;
-  background: var(--tp-bg);
-}
-
-.theme-preview__half {
-  position: relative;
-  display: grid;
-  place-items: center;
-  font-family: var(--font-num);
-  font-size: 0.66rem;
-  font-weight: 700;
-  line-height: 1;
-}
-
-/* Player 1's clock runs: lit, with the wash of its color, as on the board */
-.theme-preview__half:first-child {
-  color: var(--tp-time1);
-  background: linear-gradient(0deg, color-mix(in srgb, var(--tp-p1) 26%, transparent), transparent 85%);
-  box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--tp-p1) 55%, transparent);
-  text-shadow: 0 0 8px color-mix(in srgb, var(--tp-p1) 70%, transparent);
-}
-
-.theme-preview__half:last-child {
-  color: color-mix(in srgb, var(--tp-time2) 45%, transparent);
-}
-
-.theme-preview--warzone {
-  --tp-bg: #0b0b0a;
-  --tp-p1: #ff7a1a;
-  --tp-p2: #8fb3cc;
-  --tp-time1: #ffe2cc;
-  --tp-time2: #e1ebf2;
-}
-
-/* War zone: hazard tape on the no man's land */
-.theme-preview--warzone::after {
-  content: "";
-  position: absolute;
-  top: calc(50% - 2px);
-  left: 0;
-  right: 0;
-  height: 4px;
-  background: repeating-linear-gradient(-45deg, #f2b705 0 3px, #0b0b0a 3px 6px);
-}
-
-.theme-preview--factions {
-  --tp-bg: #08090b;
-  --tp-p1: #f5c518;
-  --tp-p2: #b45fe0;
-  --tp-time1: #fff2c2;
-  --tp-time2: #f1e5cf;
-}
-
-/* Factions: each army on its own edge, Imperial Fists chevrons against Tyranid spines */
-.theme-preview--factions::before,
-.theme-preview--factions::after {
-  content: "";
-  position: absolute;
-  left: 0;
-  right: 0;
-  height: 4px;
-}
-
-.theme-preview--factions::before {
-  top: 0;
-  background: repeating-linear-gradient(-45deg, #f5c518 0 3px, #0b0b0a 3px 6px);
-}
-
-.theme-preview--factions::after {
-  bottom: 0;
-  background: radial-gradient(circle at 50% 100%, #b45fe0 0 2px, transparent 2.5px) 0 0 / 7px 4px repeat-x;
-}
-
-#theme-options {
-  grid-template-columns: repeat(3, 1fr);
-}
-
 /* The menu's rows: what it sets on the left, its control on the right */
 .settings-row {
   display: grid;
@@ -769,44 +652,20 @@ body {
   transform: translate(-50%, 0);
 }
 
-.settings__section--theme .segmented--tiles .segmented__option {
-  gap: 0.3rem;
-  padding: 0.4rem 0.4rem 0.35rem;
-  font-size: 0.66rem;
-}
 
-
-/* Factions: a sub-menu hanging from its tile, its arrow pointing at it */
+/* The two armies, one list per side of the board */
 .faction-menu {
   --menu-bg: color-mix(in srgb, var(--text) 4%, var(--surface));
   position: relative;
   display: flex;
   flex-direction: column;
   gap: 0.45rem;
-  margin-top: 0.4rem;
   padding: 0.7rem 0.75rem;
   border: 1px solid var(--line-strong);
   border-radius: 4px;
   background: var(--menu-bg);
 }
 
-.faction-menu[hidden] {
-  display: none;
-}
-
-/* The Factions tile is the last of three: the arrow sits under its middle */
-.faction-menu::before {
-  content: "";
-  position: absolute;
-  top: -0.45rem;
-  right: calc(100% / 6 - 0.45rem);
-  width: 0.8rem;
-  height: 0.8rem;
-  border-top: 1px solid var(--line-strong);
-  border-left: 1px solid var(--line-strong);
-  background: var(--menu-bg);
-  transform: rotate(45deg);
-}
 
 .faction-row {
   display: grid;
@@ -883,6 +742,14 @@ body {
   transition: border-color 0.15s ease;
 }
 
+/* An army list is its button alone: the frame of the game length picker is not for it */
+.faction-row .select.picker {
+  display: flex;
+  padding: 0;
+  border: 0;
+  background: none;
+}
+
 .faction-row:has(.is-p1) .picker__button {
   border-left: 3px solid var(--p1);
 }
@@ -891,9 +758,22 @@ body {
   border-left: 3px solid var(--p2);
 }
 
-.picker__button:hover,
+.picker__button:hover:not(:disabled),
 .picker__button[aria-expanded="true"] {
   border-color: rgba(255, 255, 255, 0.35);
+}
+
+/* Online, the opponent's army: picked on their own device, read here */
+.picker__button:disabled {
+  opacity: 0.6;
+}
+
+.picker__button:disabled .icon {
+  display: none;
+}
+
+.faction-row.is-empty .picker__label {
+  color: var(--muted);
 }
 
 .picker__label {
@@ -1347,33 +1227,33 @@ kbd {
  * along the edge (--fx-band, --fx-band-v when the halves sit side by side).
  * --edge is that edge, for the gradients that start from it.
  */
-:root[data-theme="factions"] .panel {
+.panel {
   --edge: 50% 0%;
   --glow-size: 120% 70%;
 }
 
-:root[data-theme="factions"] .panel--b {
+.panel--b {
   --edge: 50% 100%;
 }
 
-:root[data-theme="factions"][data-layout="columns"] .panel {
+:root[data-layout="columns"] .panel {
   --edge: 0% 50%;
   --glow-size: 80% 110%;
 }
 
-:root[data-theme="factions"][data-layout="columns"] .panel--b {
+:root[data-layout="columns"] .panel--b {
   --edge: 100% 50%;
 }
 
-:root[data-theme="factions"] .panel::before,
-:root[data-theme="factions"] .panel::after {
+.panel::before,
+.panel::after {
   content: "";
   position: absolute;
   z-index: -1;
   pointer-events: none;
 }
 
-:root[data-theme="factions"] .panel::before {
+.panel::before {
   inset: 0;
   background:
     radial-gradient(var(--glow-size) at var(--edge), color-mix(in srgb, var(--fx-a, transparent) 13%, transparent), transparent 60%),
@@ -1381,7 +1261,7 @@ kbd {
 }
 
 /* The band runs along the player's own edge of the screen */
-:root[data-theme="factions"] .panel::after {
+.panel::after {
   left: 0;
   right: 0;
   height: 10px;
@@ -1389,15 +1269,15 @@ kbd {
   opacity: 0.85;
 }
 
-:root[data-theme="factions"] .panel--a::after {
+.panel--a::after {
   top: 0;
 }
 
-:root[data-theme="factions"] .panel--b::after {
+.panel--b::after {
   bottom: 0;
 }
 
-:root[data-theme="factions"][data-layout="columns"] .panel::after {
+:root[data-layout="columns"] .panel::after {
   top: 0;
   bottom: 0;
   left: auto;
@@ -1407,11 +1287,11 @@ kbd {
   background: var(--fx-band-v, var(--fx-band, none));
 }
 
-:root[data-theme="factions"][data-layout="columns"] .panel--a::after {
+:root[data-layout="columns"] .panel--a::after {
   left: 0;
 }
 
-:root[data-theme="factions"][data-layout="columns"] .panel--b::after {
+:root[data-layout="columns"] .panel--b::after {
   right: 0;
 }
 
@@ -4873,31 +4753,6 @@ button.sec-option:hover:not(:disabled) {
   z-index: 2;
 }
 
-:root[data-theme="warzone"] .turn-tracker {
-  position: relative;
-  border-color: transparent;
-}
-
-:root[data-theme="warzone"] .turn-tracker::before,
-:root[data-theme="warzone"] .turn-tracker::after {
-  content: "";
-  position: absolute;
-  left: 0;
-  right: 0;
-  height: 4px;
-  background: var(--hazard);
-  opacity: 0.85;
-  pointer-events: none;
-}
-
-:root[data-theme="warzone"] .turn-tracker::before {
-  top: 0;
-}
-
-:root[data-theme="warzone"] .turn-tracker::after {
-  bottom: 0;
-}
-
 /* Reset sits in the round strip during a match, the setup bar being hidden */
 .turn-tracker__controls {
   grid-column: 1;
@@ -5740,8 +5595,39 @@ h2.report-hero__result {
 /* The deployment first, in its own column across both rows, then the five rounds */
 .report-story__grid {
   display: grid;
-  grid-template-columns: 1.6rem repeat(6, minmax(0, 1fr));
+  grid-template-columns: repeat(6, minmax(0, 1fr));
   gap: 0.5rem;
+}
+
+/* Over each row of photos, the army it belongs to, in its color */
+.story-who {
+  display: flex;
+  align-items: center;
+  gap: 0.4rem;
+  min-width: 0;
+  margin-bottom: -0.25rem;
+  overflow: hidden;
+  font-size: 0.68rem;
+  font-weight: 600;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.story-who::before {
+  content: "";
+  flex: none;
+  width: 0.5rem;
+  height: 0.5rem;
+  border-radius: 50%;
+  background: currentColor;
+}
+
+.story-who.is-p1 {
+  color: var(--p1);
+}
+
+.story-who.is-p2 {
+  color: var(--p2);
 }
 
 .story-round {
@@ -5750,21 +5636,6 @@ h2.report-hero__result {
   font-weight: 600;
   letter-spacing: 0.12em;
   text-align: center;
-}
-
-.story-player {
-  align-self: center;
-  font-family: var(--font-num);
-  font-size: 0.7rem;
-  font-weight: 700;
-}
-
-.story-player.is-p1 {
-  color: var(--p1);
-}
-
-.story-player.is-p2 {
-  color: var(--p2);
 }
 
 .story-shot {
@@ -5814,6 +5685,7 @@ h2.report-hero__result {
 .story-shot__label {
   position: absolute;
   inset: auto 0 0;
+  overflow: hidden;
   padding: 1rem 0.45rem 0.4rem;
   background: linear-gradient(transparent, rgba(0, 0, 0, 0.78));
   color: var(--text);
@@ -5821,6 +5693,13 @@ h2.report-hero__result {
   font-size: 0.62rem;
   font-weight: 600;
   text-align: left;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+/* In the grid, the row says whose turn it is: the army goes from the photo's name */
+.report-story__grid .shot-who {
+  display: none;
 }
 
 .story-shot__gain {
@@ -6101,12 +5980,15 @@ h2.report-hero__result {
 .mvp-pick button span {
   position: absolute;
   inset: auto 0 0;
+  overflow: hidden;
   padding: 0.5rem 0.25rem 0.1rem;
   background: linear-gradient(transparent, rgba(0, 0, 0, 0.8));
   color: var(--text);
   font-family: var(--font-num);
   font-size: 0.55rem;
   text-align: left;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 
 /* The camera, until the MVP's own photo is taken: a choice, not a photo */
@@ -6471,10 +6353,15 @@ h2.report-hero__result {
   }
 
   .story-round,
-  .story-player,
+  .story-who,
   .story-shot.is-missing,
   .report-fold__n {
     display: none;
+  }
+
+  /* One strip, no rows: each photo names its army again */
+  .report-story__grid .shot-who {
+    display: inline;
   }
 
   .story-shot {
@@ -6823,25 +6710,6 @@ h2.report-hero__result {
 
 :root[data-layout="columns"] .turn-tracker {
   position: relative;
-}
-
-/* Left / right: the hazard tape runs down both sides of the strip */
-:root[data-theme="warzone"][data-layout="columns"] .turn-tracker::before,
-:root[data-theme="warzone"][data-layout="columns"] .turn-tracker::after {
-  top: 0;
-  bottom: 0;
-  left: auto;
-  right: auto;
-  width: 4px;
-  height: auto;
-}
-
-:root[data-theme="warzone"][data-layout="columns"] .turn-tracker::before {
-  left: 0;
-}
-
-:root[data-theme="warzone"][data-layout="columns"] .turn-tracker::after {
-  right: 0;
 }
 
 /* The vertical strip is narrow: Reset, the menu and the judge keep only their icon, at the top */
@@ -7745,9 +7613,11 @@ h2.report-hero__result {
     display: none;
   }
 
+  /* The event on the first line, the two clocks sharing the second */
   .clock-log tbody tr {
-    display: grid;
-    grid-template-columns: auto auto 1fr;
+    display: flex;
+    flex-wrap: wrap;
+    align-items: baseline;
     gap: 0.15rem 0.6rem;
     padding: 0.45rem 0.6rem;
     border-top: 1px solid var(--line);
@@ -7759,14 +7629,16 @@ h2.report-hero__result {
   }
 
   .clock-log td:nth-child(3) {
+    flex: 1 1 55%;
+    min-width: 0;
     white-space: normal;
   }
 
-  .clock-log td:nth-child(4) {
-    grid-column: 1 / 3;
-  }
-
   .clock-log td:nth-child(n + 4) {
+    display: flex;
+    flex: 1 1 calc(50% - 0.3rem);
+    gap: 0.4rem;
+    min-width: 0;
     color: var(--muted);
     text-align: left;
   }
@@ -7774,6 +7646,23 @@ h2.report-hero__result {
   .clock-log td[data-label]::before {
     content: attr(data-label) " ";
     color: var(--muted);
+  }
+
+  /* Each clock under its army's name, in its color, cut short before the time */
+  .clock-log td:nth-child(n + 4)::before {
+    content: attr(data-label);
+    overflow: hidden;
+    min-width: 0;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
+
+  .clock-log td:nth-child(4)::before {
+    color: var(--p1);
+  }
+
+  .clock-log td:nth-child(5)::before {
+    color: var(--p2);
   }
 }
 
@@ -7956,6 +7845,25 @@ h2.report-hero__result {
 /* The board's layout says nothing about a player's screen. Its size does: dialogs and cards */
 :root[data-seat] .settings-row--layout {
   display: none;
+}
+
+/* A player's phone picks its own army in its setup: the menu's two lists are a screen's */
+:root[data-seat] .settings__section--armies {
+  display: none;
+}
+
+.seat-setup .faction-row {
+  grid-template-columns: 6.5rem 1fr;
+}
+
+.seat-setup .faction-row__player {
+  color: var(--me);
+}
+
+/* No army yet: the list asks for it, in the player's color */
+.seat-setup .faction-row.is-empty .picker__button {
+  border-color: var(--me);
+  box-shadow: 0 0 0 3px color-mix(in srgb, var(--me) 22%, transparent);
 }
 
 /* On a player's phone, Large is a real step above Auto (1.25) */
@@ -8766,39 +8674,6 @@ h2.report-hero__result {
 }
 
 /* ---------- Online dialog ---------- */
-
-.online-seat {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  gap: 1rem;
-  margin-top: 1.25rem;
-}
-
-.online-seat__label {
-  color: var(--muted);
-  font-size: 0.75rem;
-  font-weight: 600;
-  letter-spacing: 0.12em;
-  text-transform: uppercase;
-}
-
-.online-seat .segmented__option.is-p1[aria-pressed="true"] {
-  background: var(--p1);
-  color: var(--bg);
-}
-
-.online-seat .segmented__option.is-p2[aria-pressed="true"] {
-  background: var(--p2);
-  color: var(--bg);
-}
-
-/* A PC or a tablet is the shared screen: no player to pick there */
-@media (min-width: 641px) {
-  .online-seat {
-    display: none;
-  }
-}
 
 .online-create {
   width: 100%;
