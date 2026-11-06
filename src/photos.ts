@@ -110,14 +110,17 @@ export async function keepOnlyGame(game: string): Promise<void> {
 
 /* ---------- Sent to the other devices of an online game ---------- */
 
-/** Small enough for the database (base64 under ~1 MB), sharp enough to read the table */
-const SHARE_SIDE = 1600;
+/**
+ * Sharp enough to read the table, light enough for the database: each device in the room
+ * downloads every photo, and that download is what the free plan counts
+ */
+const SHARE_SIDE = 1280;
 
 export async function shareable(full: Blob): Promise<string> {
   for (const [side, quality] of [
     [SHARE_SIDE, 0.78],
-    [1280, 0.7],
-    [1024, 0.6],
+    [1024, 0.7],
+    [800, 0.6],
   ] as const) {
     const url = await blobToDataUrl(await scaled(full, side, quality));
     if (url.length < 900_000) return url;

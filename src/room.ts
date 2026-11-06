@@ -62,6 +62,13 @@ export type PhotoValue = { at: number; data: string };
  */
 const PHOTO_KEEP_MS = 2 * 24 * 60 * 60 * 1000;
 
+/**
+ * A room no device has connected to for a week: the game is long over, the whole room goes,
+ * cleared by the next device to open any room. Each connection to a room dates it again
+ * (`roomsSeen`), so a game picked up days later keeps its room
+ */
+const ROOM_KEEP_MS = 7 * 24 * 60 * 60 * 1000;
+
 export type RoomEvents = {
   /** The shared state, each time it changes on the server */
   onState: (json: string) => void;
@@ -152,13 +159,21 @@ const photoValue = (snap: DataSnapshot): PhotoValue | null => {
 
 let swept = false;
 
-/** Rooms left with photos two days after the last one: their photos go, once per visit to the app */
-async function sweepStalePhotos(db: Database): Promise<void> {
+/** The rooms an index (`photoRooms`, `roomsSeen`) dates before `keepMs` ago, 20 at a time */
+const staleIn = (db: Database, index: string, keepMs: number): Promise<DataSnapshot | null> =>
+  get(query(ref(db, index), orderByValue(), endAt(Date.now() - keepMs), limitToFirst(20))).catch(() => null);
+
+/** What rooms left behind goes, once per visit to the app: old photos, then whole rooms */
+async function sweepStale(db: Database): Promise<void> {
   if (swept) return;
   swept = true;
-  const stale = await get(query(ref(db, "photoRooms"), orderByValue(), endAt(Date.now() - PHOTO_KEEP_MS), limitToFirst(20))).catch(() => null);
-  stale?.forEach((room) => {
+  (await staleIn(db, "photoRooms", PHOTO_KEEP_MS))?.forEach((room) => {
     void remove(ref(db, `rooms/${room.key}/photos`))
+      .then(() => remove(room.ref))
+      .catch(() => undefined);
+  });
+  (await staleIn(db, "roomsSeen", ROOM_KEEP_MS))?.forEach((room) => {
+    void remove(ref(db, `rooms/${room.key}`))
       .then(() => remove(room.ref))
       .catch(() => undefined);
   });
@@ -167,7 +182,7 @@ async function sweepStalePhotos(db: Database): Promise<void> {
 function open(db: Database, uid: string, code: string, seat: Seat, events: RoomEvents): Room {
   const stateRef = ref(db, `rooms/${code}/state`);
   const photosRef = ref(db, `rooms/${code}/photos`);
-  void sweepStalePhotos(db);
+  void sweepStale(db);
   // A shared screen counts among the boards, a phone among the phones present: both while connected
   const hereRef = seat === "board" ? placeRef(db, code, "board", uid) : presenceRef(db, code, uid);
   let seats: Record<string, unknown> = {};
@@ -189,11 +204,13 @@ function open(db: Database, uid: string, code: string, seat: Seat, events: RoomE
       const connected = snap.val() === true;
       events.onConnection(connected);
       // Here while connected, gone with the connection: once no shared screen is left the phones
-      // play the music again, and a phone gone shows its code again on the shared screen
+      // play the music again, and a phone gone shows its code again on the shared screen.
+      // Each connection dates the room again: one still in use is never swept
       if (connected) {
         void onDisconnect(hereRef)
           .remove()
           .then(() => set(hereRef, true))
+          .then(() => set(ref(db, `roomsSeen/${code}`), serverTimestamp()))
           .catch(() => undefined);
       }
     }),
