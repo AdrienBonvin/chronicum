@@ -2,6 +2,13 @@
   "projects": {
     "warhammerClock": "warhammerclock"
   },
-  "targets": {},
+  "targets": {
+    "warhammerclock": {
+      "hosting": {
+        "app": ["chronicum"],
+        "legacy": ["warhammerclock"]
+      }
+    }
+  },
   "etags": {}
 }

@@ -1794,7 +1794,7 @@ function crownMvps(): void {
 
 const CHRONICLES_STORAGE_KEY = "warhammerClock.chronicles";
 /** Where a shared report leads: its QR code and the address under it */
-const APP_URL = "https://warhammerclock.web.app/";
+const APP_URL = "https://chronicum.web.app/";
 /** The brand's seal: a C that is also a dial, bone and brass (public/icon.svg without its square) */
 const SEAL_SVG = `<svg viewBox="0 0 100 100" aria-hidden="true"><g fill="none" stroke="#e8dfcb"><path d="M74.04 25.96 A34 34 0 1 0 74.04 74.04" stroke-width="8"/><path d="M50 22 V28 M22 50 H28 M50 72 V78" stroke-width="3"/><path d="M50 50 L74 41" stroke="#b08d57" stroke-width="5" stroke-linecap="round"/><circle cx="50" cy="50" r="5" fill="#b08d57" stroke="none"/></g></svg>`;
 
