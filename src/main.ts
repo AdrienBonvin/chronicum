@@ -7632,6 +7632,8 @@ function resumeOnline(): void {
   if (target.seat !== "board") pickedSeat = target.seat;
   const { code, seat } = target;
   connectRoom(seat, code).catch((error: unknown) => {
+    // This device's last room, gone a day after the game: forgotten without a word
+    if (!linkCode && error instanceof Error && error.message === "not-found") return;
     openOnlineDialog(code);
     showOnlineError(roomErrorText(error));
   });

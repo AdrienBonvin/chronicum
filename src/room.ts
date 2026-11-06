@@ -63,11 +63,11 @@ export type PhotoValue = { at: number; data: string };
 const PHOTO_KEEP_MS = 2 * 24 * 60 * 60 * 1000;
 
 /**
- * A room no device has connected to for a week: the game is long over, the whole room goes,
- * cleared by the next device to open any room. Each connection to a room dates it again
- * (`roomsSeen`), so a game picked up days later keeps its room
+ * A room only serves while the game is played: the report and the photos stay on each device.
+ * One no device has connected to for a day goes whole, cleared by the next device to open any
+ * room. Each connection dates it again (`roomsSeen`), so a game still going keeps its room
  */
-const ROOM_KEEP_MS = 7 * 24 * 60 * 60 * 1000;
+const ROOM_KEEP_MS = 24 * 60 * 60 * 1000;
 
 export type RoomEvents = {
   /** The shared state, each time it changes on the server */
