@@ -5579,9 +5579,10 @@ h2.report-hero__result {
   height: 0.9rem;
 }
 
+/* The deployment first, in its own column across both rows, then the five rounds */
 .report-story__grid {
   display: grid;
-  grid-template-columns: 1.6rem repeat(5, minmax(0, 1fr));
+  grid-template-columns: 1.6rem repeat(6, minmax(0, 1fr));
   gap: 0.5rem;
 }
 
@@ -5625,6 +5626,11 @@ h2.report-hero__result {
 
 .story-shot.is-p2 {
   --pc: var(--p2);
+}
+
+.story-shot.is-deploy {
+  --pc: var(--muted);
+  align-self: center;
 }
 
 .story-shot img {
@@ -6121,6 +6127,10 @@ h2.report-hero__result {
   --pc: var(--p2);
 }
 
+.viewer.is-deploy {
+  --pc: var(--muted);
+}
+
 .viewer__top {
   display: flex;
   align-items: center;
@@ -6402,6 +6412,16 @@ h2.report-hero__result {
 }
 
 /* Photo break: recognisable at a glance — centered card, camera icon, camera flash */
+
+/* The same dialog photographs the deployed table before the battle, with its own words */
+.overlay--photo .photo-for-deploy,
+.overlay--photo.is-deploy .photo-for-turn {
+  display: none;
+}
+
+.overlay--photo.is-deploy .photo-for-deploy {
+  display: inline;
+}
 .overlay--photo .overlay-inner {
   position: relative;
   display: flex;
