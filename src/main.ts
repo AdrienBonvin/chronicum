@@ -2609,8 +2609,10 @@ function fitScreen(): void {
       : Math.max(0.86, Math.min(Math.max(Math.sqrt(w * h) / 1020, standard), fits, 2.12));
     root.style.setProperty("--ui-scale", scale.toFixed(3));
   } else root.style.removeProperty("--ui-scale");
-  // Twice as wide as tall, an ultrawide: the players side by side
-  if (layoutPref === "auto") root.dataset.layout = w / h >= 2 ? "columns" : "rows";
+  // The players side by side on any landscape screen, a laptop as an ultrawide or a phone turned
+  // sideways. One above the other only when the screen is about square or upright: side by side
+  // there, each clock would get a narrow strip and leave the height empty
+  if (layoutPref === "auto") root.dataset.layout = w / h >= 1.2 ? "columns" : "rows";
   renderMe();
 }
 
