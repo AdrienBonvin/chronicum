@@ -189,7 +189,6 @@ const ICON_TARGET = svgIcon('<circle cx="12" cy="12" r="7" /><circle cx="12" cy=
 const ICON_CARDS = svgIcon('<rect x="4" y="6" width="11" height="15" rx="2" /><path d="M9 3h9a2 2 0 0 1 2 2v13" />');
 const ICON_CLOCK = svgIcon('<circle cx="12" cy="13" r="8" /><path d="M12 9v4l2.5 2.5M10 2h4" />');
 const ICON_CAMERA = svgIcon('<path d="M4 8h3l2-3h6l2 3h3v11H4z" /><circle cx="12" cy="13" r="3.5" />');
-const ICON_NO_PHOTO = svgIcon('<path d="M4 8h3l2-3h6l2 3h3v11H4z" /><path d="M3 3l18 18" />');
 const ICON_SOUND = svgIcon('<path d="M4 9h4l5-4v14l-5-4H4z" /><path d="M16.5 8.5a5 5 0 0 1 0 7M19 6a8.5 8.5 0 0 1 0 12" />');
 const ICON_MUTED = svgIcon('<path d="M4 9h4l5-4v14l-5-4H4z" /><path d="M17 9.5l5 5M22 9.5l-5 5" />');
 const ICON_MUSIC = svgIcon('<path d="M9 18V5l11-2v13" /><circle cx="6" cy="18" r="3" /><circle cx="17" cy="16" r="3" />');
@@ -1745,21 +1744,25 @@ function renderMvpPicks(): void {
     const el = app.querySelector<HTMLElement>(`#mvp-photos-${player}`);
     if (!el) continue;
     const chosen = mvpDraft[player].photo;
-    // Its own photo first, taken now: the table's photos show the whole battle, rarely the unit
+    const picked = (turn: PhotoTurn): boolean => !!chosen && sameTurn(chosen, turn);
+    // One place for the MVP's own photo, first: the camera until it is taken, then the photo
+    // itself, which a tap takes again once it is the one picked. The table's photos follow
     const own = mvpShot(player);
-    const shots = [...(endPhotos.has(turnId(own)) ? [own] : []), ...turns];
-    const shoot = endPhotos.has(turnId(own)) ? t("mvpRetake") : t(CAN_SHOOT.matches ? "mvpShoot" : "mvpAddPhoto");
+    const ownTaken = endPhotos.has(turnId(own));
+    const ownSlot = ownTaken
+      ? `<button type="button" role="radio" class="mvp-pick__own" data-mvp-pick="${player}" data-turn="${turnId(own)}" aria-checked="${picked(own)}" aria-label="${picked(own) ? t("mvpRetake") : shotTitle(own)}"><img src="${endPhotos.get(turnId(own))!.thumb}" alt="" /><span>${picked(own) ? `${ICON_CAMERA}${t("mvpRetake")}` : shotLabel(own)}</span></button>`
+      : `<button type="button" class="mvp-pick__shoot" data-mvp-shoot="${player}">${ICON_CAMERA}<span>${t(CAN_SHOOT.matches ? "mvpShoot" : "mvpAddPhoto")}</span></button>`;
     el.innerHTML = `<span>${t("mvpPhoto")} <em>${t("mvpOptional")}</em></span>
       <div class="mvp-pick" role="radiogroup" aria-label="${t("mvpPhoto")}">
-        <button type="button" role="radio" class="mvp-pick__none" data-mvp-pick="${player}" data-turn="" aria-checked="${!chosen}">${ICON_NO_PHOTO}<span>${t("mvpNoPhoto")}</span></button>
-        <button type="button" class="mvp-pick__shoot" data-mvp-shoot="${player}">${ICON_CAMERA}<span>${shoot}</span></button>
-        ${shots
+        ${ownSlot}
+        ${turns
           .map(
             (turn) =>
-              `<button type="button" role="radio" data-mvp-pick="${player}" data-turn="${turnId(turn)}" aria-checked="${!!chosen && sameTurn(chosen, turn)}" aria-label="${shotTitle(turn)}"><img src="${endPhotos.get(turnId(turn))!.thumb}" alt="" /><span>${shotLabel(turn)}</span></button>`,
+              `<button type="button" role="radio" data-mvp-pick="${player}" data-turn="${turnId(turn)}" aria-checked="${picked(turn)}" aria-label="${shotTitle(turn)}"><img src="${endPhotos.get(turnId(turn))!.thumb}" alt="" /><span>${shotLabel(turn)}</span></button>`,
           )
           .join("")}
-      </div>`;
+      </div>
+      ${chosen ? `<button type="button" class="mvp-pick-clear" data-mvp-clear="${player}">${t("mvpRemovePhoto")}</button>` : ""}`;
   }
 }
 
@@ -6338,12 +6341,26 @@ mvpOverlay.addEventListener("click", (e) => {
     mvpPhotoInput.click();
     return;
   }
+  const clear = (e.target as HTMLElement).closest<HTMLButtonElement>("[data-mvp-clear]");
+  if (clear && mvpDraft) {
+    mvpDraft[clear.dataset.mvpClear === "2" ? 2 : 1].photo = null;
+    renderMvpPicks();
+    return;
+  }
   const pick = (e.target as HTMLElement).closest<HTMLButtonElement>("[data-mvp-pick]");
   if (!pick || !mvpDraft) return;
   const player: Player = pick.dataset.mvpPick === "2" ? 2 : 1;
   const [round, by] = (pick.dataset.turn ?? "").split("_").map(Number);
-  mvpDraft[player].photo = pick.dataset.turn ? { round, player: by === 2 ? 2 : 1 } : null;
-  pick.parentElement!.querySelectorAll("[data-mvp-pick]").forEach((each) => each.setAttribute("aria-checked", String(each === pick)));
+  const turn: PhotoTurn = { round, player: by === 2 ? 2 : 1 };
+  const current = mvpDraft[player].photo;
+  // The MVP's own photo, already the one picked: a tap takes it again
+  if (isMvpShot(turn) && current && sameTurn(current, turn)) {
+    mvpShooting = player;
+    mvpPhotoInput.click();
+    return;
+  }
+  mvpDraft[player].photo = turn;
+  renderMvpPicks();
 });
 /** The player whose MVP the camera is shooting */
 let mvpShooting: Player = 1;

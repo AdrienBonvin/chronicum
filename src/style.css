@@ -6108,30 +6108,24 @@ h2.report-hero__result {
   text-align: left;
 }
 
-/* No photo, and the camera: drawn as choices, not as photos (a black tile read as a failed one) */
-.mvp-pick :is(.mvp-pick__none, .mvp-pick__shoot) {
+/* The camera, until the MVP's own photo is taken: a choice, not a photo */
+.mvp-pick .mvp-pick__shoot {
   display: flex;
   flex-direction: column;
   align-items: center;
   justify-content: center;
   gap: 0.25rem;
-  border: 1px dashed var(--line-strong);
-  background: none;
-  color: var(--muted);
-}
-
-.mvp-pick .mvp-pick__shoot {
-  border: 1px solid color-mix(in srgb, var(--pc) 55%, transparent);
+  border: 1px dashed color-mix(in srgb, var(--pc) 60%, transparent);
   background: color-mix(in srgb, var(--pc) 10%, transparent);
   color: var(--text);
 }
 
-.mvp-pick :is(.mvp-pick__none, .mvp-pick__shoot) svg {
+.mvp-pick .mvp-pick__shoot svg {
   width: 1.25rem;
   height: 1.25rem;
 }
 
-.mvp-pick :is(.mvp-pick__none, .mvp-pick__shoot) span {
+.mvp-pick .mvp-pick__shoot span {
   position: static;
   padding: 0 0.2rem;
   background: none;
@@ -6141,6 +6135,31 @@ h2.report-hero__result {
   font-weight: 600;
   line-height: 1.15;
   text-align: center;
+}
+
+/* The MVP's own photo, picked: its label says a tap takes it again */
+.mvp-pick .mvp-pick__own span {
+  display: flex;
+  align-items: center;
+  gap: 0.2rem;
+}
+
+.mvp-pick .mvp-pick__own span svg {
+  width: 0.8rem;
+  height: 0.8rem;
+  flex: none;
+}
+
+.mvp-pick-clear {
+  align-self: flex-start;
+  margin-top: 0.15rem;
+  padding: 0.2rem 0;
+  border: 0;
+  background: none;
+  color: var(--muted);
+  font-size: 0.72rem;
+  text-decoration: underline;
+  text-underline-offset: 2px;
 }
 
 .mvp-pick button[aria-checked="true"] {
