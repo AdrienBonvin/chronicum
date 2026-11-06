@@ -18,6 +18,7 @@ import {
   inGame,
   isStopped,
   newGame,
+  newGameId,
   newSecondaryPile,
   nowMs,
   other,
@@ -33,9 +34,22 @@ import {
   type ClockEvent,
   type ClockEventKind,
   type GameState,
+  type Mvp,
   type Player,
   type ScoreKind,
 } from "./game";
+import {
+  dataUrlToBlob,
+  deletePhoto,
+  gamePhotos,
+  getPhoto,
+  keepOnlyGame,
+  photoKey,
+  savePhoto,
+  shareable,
+  type Photo,
+  type PhotoTurn,
+} from "./photos";
 import {
   CLASH_BOOM_SEC,
   CP_BURST_SEC,
@@ -189,6 +203,17 @@ const ICON_RESET = svgIcon('<path d="M4 12a8 8 0 1 0 2.4-5.7M4 4v4h4" />');
 /** A referee's whistle: the judge call, set apart from the players' own pause */
 const ICON_WHISTLE = svgIcon('<circle cx="8.5" cy="14.5" r="5.5" /><path d="M8.5 9H21v4h-7.2" /><circle cx="8.5" cy="14.5" r="1.4" />');
 const ICON_IMAGE = svgIcon('<rect x="3" y="4" width="18" height="16" rx="2" /><circle cx="9" cy="10" r="2" /><path d="M21 16l-5-5-9 9" />');
+const ICON_MEDAL = svgIcon(
+  '<path d="M8.5 9.5L6 3h4l2 4.5L14 3h4l-2.5 6.5" /><circle cx="12" cy="14.5" r="6" /><path d="M12 11.6l.9 1.8 2 .3-1.45 1.4.35 2-1.8-.95-1.8.95.35-2-1.45-1.4 2-.3z" fill="currentColor" stroke="none" />',
+);
+const ICON_FOLDER = svgIcon('<path d="M3 6h6l2 2h10v11H3z" />');
+const ICON_FOLDER_DOWN = svgIcon('<path d="M3 6h6l2 2h10v11H3z" /><path d="M12 11v5M9.5 13.5L12 16l2.5-2.5" />');
+const ICON_DOWNLOAD = svgIcon('<path d="M12 4v11M7 10l5 5 5-5M5 20h14" />');
+const ICON_ZOOM = svgIcon('<circle cx="11" cy="11" r="6.5" /><path d="M20 20l-4.3-4.3M11 8.3v5.4M8.3 11h5.4" />');
+const ICON_CLOSE = svgIcon('<path d="M6 6l12 12M18 6L6 18" />');
+const ICON_PREV = svgIcon('<path d="M15 5l-7 7 7 7" />');
+const ICON_NEXT = svgIcon('<path d="M9 5l7 7-7 7" />');
+const ICON_PHONE = svgIcon('<rect x="7" y="3" width="10" height="18" rx="2" /><path d="M11 18h2" />');
 const ICON_SWAP = svgIcon('<path d="M8 20V4M4.5 7.5L8 4l3.5 3.5M16 4v16M12.5 16.5L16 20l3.5-3.5" />');
 const ICON_LOG = svgIcon('<path d="M9 6h11M9 12h11M9 18h11" /><path d="M4.5 6h.01M4.5 12h.01M4.5 18h.01" />');
 const ICON_ROWS = svgIcon('<rect x="2" y="2" width="24" height="7" rx="1" /><rect x="2" y="11" width="24" height="7" rx="1" />', "0 0 28 20");
@@ -567,9 +592,44 @@ app.innerHTML = `
     <div class="overlay-inner">
       <article class="report" id="battle-report"></article>
       <div class="overlay-actions">
-        <button type="button" class="btn-ghost btn-log" id="btn-result-log">${ICON_LOG}<span data-i18n="clockLog"></span></button>
-        <button type="button" class="btn-secondary btn-log" id="btn-result-export">${ICON_IMAGE}<span data-i18n="reportExport"></span></button>
-        <button type="button" class="btn-primary" id="btn-result-dismiss"><span data-i18n="ok"></span> <kbd data-i18n="keyEnter"></kbd></button>
+        <button type="button" class="btn-ghost btn-log result-log" id="btn-result-log" data-i18n-aria="clockLog">${ICON_LOG}<span data-i18n="clockLog"></span></button>
+        <button type="button" class="btn-secondary btn-log" id="btn-result-export">${ICON_IMAGE}<span class="label-long" data-i18n="reportExport"></span><span class="label-short" data-i18n="reportShort"></span></button>
+        <button type="button" class="btn-secondary btn-log" id="btn-result-photos">${ICON_DOWNLOAD}<span class="label-long" data-i18n="photosSave"></span><span class="label-short" data-i18n="photosShort"></span><span class="result-count" id="result-photo-count"></span></button>
+        <button type="button" class="btn-primary result-ok" id="btn-result-dismiss"><span data-i18n="ok"></span> <kbd data-i18n="keyEnter"></kbd></button>
+      </div>
+      <input type="file" id="final-photo-input" accept="image/*" capture="environment" hidden />
+    </div>
+  </div>
+  <div class="overlay overlay--end overlay--mvp" id="mvp-overlay" role="dialog" aria-modal="true" aria-labelledby="mvp-title" aria-hidden="true">
+    <div class="overlay-inner end-sheet">
+      <h2 id="mvp-title" data-i18n="mvpElect"></h2>
+      <p class="overlay-msg" data-i18n="mvpMsg"></p>
+      <div class="mvp-form" id="mvp-form"></div>
+      <div class="overlay-actions">
+        <button type="button" class="btn-secondary" id="btn-mvp-cancel"><span data-i18n="cancel"></span> <kbd data-i18n="keyEsc"></kbd></button>
+        <button type="button" class="btn-primary" id="btn-mvp-crown">${ICON_MEDAL}<span data-i18n="mvpCrown"></span></button>
+      </div>
+    </div>
+  </div>
+  <div class="overlay overlay--end overlay--save" id="save-overlay" role="dialog" aria-modal="true" aria-labelledby="save-title" aria-hidden="true">
+    <div class="overlay-inner end-sheet" id="save-sheet"></div>
+  </div>
+  <div class="overlay overlay--viewer" id="viewer-overlay" role="dialog" aria-modal="true" aria-label="" aria-hidden="true">
+    <div class="viewer" id="viewer">
+      <div class="viewer__top">
+        <span class="viewer__count" id="viewer-count"></span>
+        <button type="button" class="viewer__button" id="btn-viewer-zoom">${ICON_ZOOM}</button>
+        <button type="button" class="viewer__button" id="btn-viewer-close" data-i18n-aria="close">${ICON_CLOSE}</button>
+      </div>
+      <div class="viewer__stage" id="viewer-stage">
+        <img class="viewer__img" id="viewer-img" alt="" draggable="false" />
+        <button type="button" class="viewer__nav is-prev" id="btn-viewer-prev" data-i18n-aria="photoPrev">${ICON_PREV}</button>
+        <button type="button" class="viewer__nav is-next" id="btn-viewer-next" data-i18n-aria="photoNext">${ICON_NEXT}</button>
+      </div>
+      <div class="viewer__caption">
+        <p class="viewer__turn" id="viewer-turn"></p>
+        <p class="viewer__line" id="viewer-line"></p>
+        <p class="viewer__hint" id="viewer-hint"></p>
       </div>
     </div>
   </div>
@@ -869,6 +929,33 @@ const turnConfirmMsg = app.querySelector<HTMLElement>("#turn-confirm-msg")!;
 const btnTurnConfirmOk = app.querySelector<HTMLButtonElement>("#btn-turn-confirm-ok")!;
 const btnTurnConfirmCancel = app.querySelector<HTMLButtonElement>("#btn-turn-confirm-cancel")!;
 const resultOverlay = app.querySelector<HTMLElement>("#result-overlay")!;
+const mvpOverlay = app.querySelector<HTMLElement>("#mvp-overlay")!;
+const btnMvpCrown = app.querySelector<HTMLButtonElement>("#btn-mvp-crown")!;
+const finalPhotoInput = app.querySelector<HTMLInputElement>("#final-photo-input")!;
+/** Phones and tablets: a camera at hand, and a gallery to save the photos in */
+const CAN_SHOOT = window.matchMedia("(hover: none) and (pointer: coarse)");
+/** The secondaries, card by card in the report: folded to one line on a phone, open on a computer */
+const REPORT_DETAIL_STORAGE_KEY = "warhammerClock.reportDetail";
+let reportDetailOpen: boolean | null = null;
+/** This game's photos, by turn, each with its thumbnail ready to show */
+let endPhotos = new Map<string, { photo: Photo; thumb: string }>();
+let endPhotosLoad = 0;
+/** The MVPs being elected: each player's own on a phone online, both on one screen */
+let mvpDraft: Record<Player, Mvp> | null = null;
+const viewerOverlay = app.querySelector<HTMLElement>("#viewer-overlay")!;
+const viewerStage = app.querySelector<HTMLElement>("#viewer-stage")!;
+const viewerImg = app.querySelector<HTMLImageElement>("#viewer-img")!;
+let viewerTurn: PhotoTurn | null = null;
+let viewerUrl = "";
+const zoom = { s: 1, x: 0, y: 0 };
+const saveOverlay = app.querySelector<HTMLElement>("#save-overlay")!;
+const saveSheet = app.querySelector<HTMLElement>("#save-sheet")!;
+let saveStep: "form" | "writing" | "done" = "form";
+let saveWithReport = true;
+let saveFolder = "";
+/** The report picture, made as the dialog opens: a phone's share sheet must open right on the tap */
+let saveReport: { state: "pending" | "ready" | "failed"; blob: Blob | null } = { state: "pending", blob: null };
+let saveDone = { count: 0, path: "" };
 const timeOutOverlay = app.querySelector<HTMLElement>("#time-out-overlay")!;
 const btnTimeOut = app.querySelector<HTMLButtonElement>("#btn-time-out")!;
 const btnResultDismiss = app.querySelector<HTMLButtonElement>("#btn-result-dismiss")!;
@@ -977,6 +1064,9 @@ function hideTurnConfirmModal(): void {
 }
 
 function hideResultOverlay(): void {
+  closeMvp();
+  closeSave();
+  closeViewer();
   resultOverlay.classList.remove("is-visible");
   resultOverlay.setAttribute("aria-hidden", "true");
   panel1.classList.remove("is-flag");
@@ -1335,13 +1425,29 @@ function secondaryCardRows(player: Player): string {
     .join("");
 }
 
-function reportPlayer(player: Player, spent: Record<Player, number[]> | null): string {
+/** Text typed by a player, put in the page as text */
+const esc = (text: string): string =>
+  text.replace(/[&<>"']/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" })[c]!);
+
+/** Minutes only: the time row has no room for seconds */
+const formatMinutes = (seconds: number): string => `${Math.round(seconds / 60)}'`;
+
+
+const reportDetail = (): boolean => reportDetailOpen ?? (stored(REPORT_DETAIL_STORAGE_KEY) ? stored(REPORT_DETAIL_STORAGE_KEY) === "open" : !PHONE.matches);
+
+const factionName = (player: Player): string | undefined =>
+  document.documentElement.dataset.theme === "factions" ? FACTION_BY_ID.get(factionOf[player])?.name[getLang()] : undefined;
+
+/**
+ * `image`: the picture shared from the report, with every card shown. On screen, the secondaries
+ * fold to one line of points per round, and one toggle opens both players to compare them
+ */
+function reportPlayer(player: Player, spent: Record<Player, number[]> | null, image: boolean): string {
   const turns = game.scoreByTurn[player];
   const primaryTotal = scoreOf(player, "primary");
   const secondaryTotal = scoreOf(player, "secondary");
   const disposition = DISPOSITIONS.find(({ id }) => id === game.dispositions[player])?.name;
-  const faction = document.documentElement.dataset.theme === "factions" ? FACTION_BY_ID.get(factionOf[player])?.name[getLang()] : undefined;
-  const sub = [faction, disposition].filter(Boolean).join(" · ");
+  const sub = [factionName(player), disposition].filter(Boolean).join(" · ");
   const sumSpent = spent ? spent[player].reduce((total, seconds) => total + seconds, 0) : 0;
   const badges = [
     game.preBattle?.deployFirst === player ? t("reportDeployedFirst") : "",
@@ -1368,20 +1474,31 @@ function reportPlayer(player: Player, spent: Record<Player, number[]> | null): s
       String(primaryTotal - game.endBonus[player]),
     ) +
     (game.endBonus[player] > 0 ? reportRow(t("endBonus"), ROUNDS.map(() => "<td></td>").join(""), String(game.endBonus[player])) : "");
-  const secondaryRows = game.options.cards
-    ? secondaryCardRows(player)
-    : reportRow(t("reportSecondaries"), ROUNDS.map((round) => reportPoints(turns.secondary[round - 1], round)).join(""), String(secondaryTotal));
   const timeRow = spent
     ? reportRow(
         t("reportTime"),
-        ROUNDS.map((round) => `<td>${spent[player][round - 1] > 0 ? formatSpan(spent[player][round - 1]) : ""}</td>`).join(""),
-        formatSpan(sumSpent),
+        ROUNDS.map((round) => `<td>${spent[player][round - 1] > 0 ? formatMinutes(spent[player][round - 1]) : ""}</td>`).join(""),
+        formatMinutes(sumSpent),
         "report-time",
       )
     : "";
   const head = `<tr><th scope="col"><span class="report-sr">${t("logEvent")}</span></th>${ROUNDS.map((round) => `<th scope="col">R${round}</th>`).join("")}<th scope="col">${t("total")}</th></tr>`;
   const group = (label: string, total: number, rows: string): string =>
     `<tbody><tr class="report-group"><th scope="rowgroup" colspan="${MAX_GAME_TURN + 1}">${label}</th><td class="report-total">${total}</td></tr>${rows}</tbody>`;
+  let secondaries: string;
+  if (!game.options.cards) {
+    const row = reportRow(t("reportSecondaries"), ROUNDS.map((round) => reportPoints(turns.secondary[round - 1], round)).join(""), String(secondaryTotal));
+    secondaries = group(t("reportSecondaries"), secondaryTotal, row);
+  } else if (image) {
+    secondaries = group(t("reportSecondaries"), secondaryTotal, secondaryCardRows(player));
+  } else {
+    const open = reportDetail();
+    const cards = Object.keys(game.cardRounds?.[player] ?? {}).length || game.secondaries[player].scored.length;
+    const toggle = `<button type="button" class="report-fold" data-report-fold aria-expanded="${open}" aria-label="${t(open ? "reportFoldClose" : "reportFoldOpen")}">${ICON_NEXT}<span>${t("reportSecondaries")}</span>${cards ? `<span class="report-fold__n">${cards}</span>` : ""}</button>`;
+    secondaries = open
+      ? group(toggle, secondaryTotal, secondaryCardRows(player))
+      : `<tbody><tr class="report-group is-folded"><th scope="row">${toggle}</th>${ROUNDS.map((round) => reportPoints(turns.secondary[round - 1], round)).join("")}<td class="report-total">${secondaryTotal}</td></tr></tbody>`;
+  }
   return `
     <section class="report-player is-p${player}">
       <header class="report-player__head">
@@ -1394,7 +1511,7 @@ function reportPlayer(player: Player, spent: Record<Player, number[]> | null): s
       <table class="report-table">
         <thead>${head}</thead>
         ${group(t("reportPrimary"), primaryTotal, primaryRows)}
-        ${group(t("reportSecondaries"), secondaryTotal, secondaryRows)}
+        ${secondaries}
         ${group(t("battleReady"), BATTLE_READY_VP, "")}
         ${timeRow ? `<tbody>${timeRow}</tbody>` : ""}
       </table>
@@ -1407,8 +1524,216 @@ function reportPlayer(player: Player, spent: Record<Player, number[]> | null): s
     </section>`;
 }
 
-/** Everything about the battle on one page: built to be read at the table and, later, shared as an image */
-function renderBattleReport(): void {
+/* ---------- The photos of the game, on the end screen ---------- */
+
+/** The player turns played, in order: each photo shows the table as one of them left it */
+function playedTurns(): PhotoTurn[] {
+  const turns: PhotoTurn[] = [];
+  const second = other(game.firstPlayer);
+  for (let round = 1; round <= Math.min(game.round, MAX_GAME_TURN); round++) {
+    turns.push({ round, player: game.firstPlayer });
+    if (round < game.round || game.turnPlayer === second) turns.push({ round, player: second });
+  }
+  return turns;
+}
+
+const turnId = ({ round, player }: PhotoTurn): string => `${round}_${player}`;
+const sameTurn = (a: PhotoTurn, b: PhotoTurn): boolean => a.round === b.round && a.player === b.player;
+const lastTurn = (): PhotoTurn => playedTurns().pop() ?? { round: 1, player: game.firstPlayer };
+const turnPoints = ({ round, player }: PhotoTurn): number =>
+  game.scoreByTurn[player].primary[round - 1] + game.scoreByTurn[player].secondary[round - 1];
+
+/** The score as that turn ended, as the board showed it (Battle ready included); the final one at the end */
+function scoreAfter(turn: PhotoTurn): string {
+  if (sameTurn(turn, lastTurn())) return `${scoreOf(1)} – ${scoreOf(2)}`;
+  const rounds = (player: Player): number => (player === turn.player || player === game.firstPlayer ? turn.round : turn.round - 1);
+  const upTo = (player: Player): number =>
+    BATTLE_READY_VP +
+    game.scoreByTurn[player].primary.slice(0, rounds(player)).reduce((a, b) => a + b, 0) +
+    game.scoreByTurn[player].secondary.slice(0, rounds(player)).reduce((a, b) => a + b, 0);
+  return `${upTo(1)} – ${upTo(2)}`;
+}
+
+
+async function loadEndPhotos(): Promise<void> {
+  const load = ++endPhotosLoad;
+  const photos = await gamePhotos(game.gameId);
+  if (load !== endPhotosLoad) return;
+  for (const { thumb } of endPhotos.values()) URL.revokeObjectURL(thumb);
+  endPhotos = new Map(photos.map((photo) => [turnId(photo), { photo, thumb: URL.createObjectURL(photo.thumb) }]));
+}
+
+/** A photo came in or went: the end screen and its dialogs show it */
+async function refreshEndPhotos(): Promise<void> {
+  if (!resultOverlay.classList.contains("is-visible")) return;
+  await loadEndPhotos();
+  renderStory();
+  renderMvpSection();
+  renderResultActions();
+  if (mvpOverlay.classList.contains("is-visible")) renderMvpPicks();
+  if (saveOverlay.classList.contains("is-visible") && saveStep === "form") renderSaveSheet();
+  if (viewerOverlay.classList.contains("is-visible") && viewerTurn && !endPhotos.has(turnId(viewerTurn))) closeViewer();
+}
+
+const storyTurns = (): PhotoTurn[] => playedTurns().filter((turn) => endPhotos.has(turnId(turn)));
+
+/** The battle story: one photo per player turn, in order, with the points that turn scored */
+function storyHtml(): string {
+  const turns = playedTurns();
+  const last = lastTurn();
+  const canShoot = CAN_SHOOT.matches && !!game.gameId;
+  if (endPhotos.size === 0 && !(game.options.photoBreaks && (canShoot || roomSession()))) return "";
+  const count = turns.filter((turn) => endPhotos.has(turnId(turn))).length;
+  const cells = turns.map((turn) => {
+    const pos = `grid-column:${turn.round + 1};grid-row:${turn.player === game.firstPlayer ? 2 : 3}`;
+    const entry = endPhotos.get(turnId(turn));
+    if (entry) {
+      return `<button type="button" class="story-shot is-p${turn.player}" style="${pos}" data-story-turn="${turnId(turn)}" aria-label="${t("photoTurn", { r: turn.round, n: turn.player })}"><img src="${entry.thumb}" alt="" /><span class="story-shot__label">R${turn.round} · ${t("playerShort", { n: turn.player })}</span><span class="story-shot__gain">+${turnPoints(turn)}</span></button>`;
+    }
+    if (sameTurn(turn, last) && canShoot) {
+      return `<button type="button" class="story-shot is-empty is-p${turn.player}" style="${pos}" id="btn-final-photo">${ICON_CAMERA}<b>${t("reportFinalPhoto")}</b><small>${t("reportFinalTake")}</small></button>`;
+    }
+    if (sameTurn(turn, last) && roomSession()) {
+      return `<span class="story-shot is-empty is-p${turn.player}" style="${pos}">${ICON_PHONE}<b>${t("reportFinalPhoto")}</b><small>${t("reportFinalFromPhone")}</small></span>`;
+    }
+    return `<span class="story-shot is-missing is-p${turn.player}" style="${pos}"><small>${t("reportNoPhoto")}</small></span>`;
+  });
+  const labels =
+    ROUNDS.map((round) => `<span class="story-round" style="grid-row:1;grid-column:${round + 1}">R${round}</span>`).join("") +
+    [game.firstPlayer, other(game.firstPlayer)]
+      .map((player, i) => `<span class="story-player is-p${player}" style="grid-row:${i + 2};grid-column:1">${t("playerShort", { n: player })}</span>`)
+      .join("");
+  return `
+    <div class="report-section-head"><h3>${t("reportStory")}</h3><span class="report-section-count">${t("reportStoryCount", { n: count, total: turns.length })}</span></div>
+    ${!CAN_SHOOT.matches && roomSession() ? `<p class="report-story__sub">${ICON_PHONE}${t("reportStoryFromPhones")}</p>` : ""}
+    <div class="report-story__grid">${labels}${cells.join("")}</div>`;
+}
+
+function renderStory(): void {
+  const el = app.querySelector<HTMLElement>("#report-story");
+  if (!el) return;
+  el.innerHTML = storyHtml();
+  el.hidden = el.innerHTML === "";
+}
+
+/* ---------- MVP ---------- */
+
+function mvpCardHtml(player: Player): string {
+  const mvp = game.mvp?.[player];
+  const eyebrow = `<span class="mvp-card__eyebrow">${ICON_MEDAL}${t("mvpOf", { n: player })}</span>`;
+  if (!mvp) {
+    return `<button type="button" class="mvp-card is-empty is-p${player}" data-mvp-open="${player}">${eyebrow}<span class="mvp-card__empty">${t("mvpEmpty")}</span></button>`;
+  }
+  const photo = mvp.photo ? endPhotos.get(turnId(mvp.photo)) : undefined;
+  const picture = photo ? `<img class="mvp-card__photo" src="${photo.thumb}" alt="" />` : `<span class="mvp-card__photo is-none">${ICON_MEDAL}</span>`;
+  return `<button type="button" class="mvp-card is-p${player}" data-mvp-open="${player}">${picture}<span class="mvp-card__body">${eyebrow}<b class="mvp-card__unit">${esc(mvp.unit)}</b>${mvp.feat ? `<span class="mvp-card__feat">${esc(mvp.feat)}</span>` : ""}</span></button>`;
+}
+
+function mvpHtml(): string {
+  const head = `<div class="report-section-head"><h3>${t("mvpTitle")}</h3></div>`;
+  if (!game.mvp?.[1] && !game.mvp?.[2]) {
+    return `${head}<button type="button" class="mvp-cta" data-mvp-open="${online?.seat ?? 1}">${ICON_MEDAL}<span><b>${t("mvpElect")}</b><small>${t("mvpElectHint")}</small></span>${ICON_NEXT}</button>`;
+  }
+  return `${head}<div class="mvp-grid">${mvpCardHtml(1)}${mvpCardHtml(2)}</div>`;
+}
+
+/** In the shared picture: the units' names, no button */
+function mvpImageHtml(): string {
+  if (!game.mvp?.[1] && !game.mvp?.[2]) return "";
+  const item = (player: Player): string => {
+    const mvp = game.mvp[player];
+    return `<div class="report-mvp-line is-p${player}"><small>${ICON_MEDAL}${t("mvpOf", { n: player })}</small><b>${mvp ? esc(mvp.unit) : t("mvpNotElected")}</b>${mvp?.feat ? `<span>${esc(mvp.feat)}</span>` : ""}</div>`;
+  };
+  return `<div class="report-mvp-lines">${item(1)}${item(2)}</div>`;
+}
+
+function renderMvpSection(): void {
+  const el = app.querySelector<HTMLElement>("#report-mvp");
+  if (el) el.innerHTML = mvpHtml();
+}
+
+
+function openMvp(focus: Player): void {
+  const copy = (mvp: Mvp | null): Mvp => (mvp ? { ...mvp, photo: mvp.photo ? { ...mvp.photo } : null } : { unit: "", feat: "", photo: null });
+  mvpDraft = { 1: copy(game.mvp?.[1] ?? null), 2: copy(game.mvp?.[2] ?? null) };
+  const form = app.querySelector<HTMLElement>("#mvp-form")!;
+  form.innerHTML = ([1, 2] as const)
+    .map((player) => {
+      const draft = mvpDraft![player];
+      const editable = canEdit(player);
+      const faction = factionName(player);
+      return `
+      <fieldset class="mvp-field is-p${player}"${editable ? "" : " disabled"}>
+        <legend>${t("player", { n: player })}${faction ? ` <span>· ${faction}</span>` : ""}</legend>
+        ${editable ? "" : `<p class="mvp-field__note">${t("mvpOtherPhone", { n: player })}</p>`}
+        <label class="mvp-label"><span>${t("mvpUnit")}</span><input type="text" id="mvp-unit-${player}" maxlength="40" autocomplete="off" value="${esc(draft.unit)}" placeholder="${esc(t("mvpUnitPlaceholder"))}" /></label>
+        <label class="mvp-label"><span>${t("mvpFeat")} <em>${t("mvpOptional")}</em></span><input type="text" id="mvp-feat-${player}" maxlength="80" autocomplete="off" value="${esc(draft.feat)}" placeholder="${esc(t("mvpFeatPlaceholder"))}" /></label>
+        <div class="mvp-label mvp-photos" id="mvp-photos-${player}"></div>
+      </fieldset>`;
+    })
+    .join("");
+  renderMvpPicks();
+  updateMvpCrown();
+  mvpOverlay.classList.add("is-visible");
+  mvpOverlay.setAttribute("aria-hidden", "false");
+  const target = canEdit(focus) ? focus : canEdit(1) ? 1 : 2;
+  // A phone would open its keyboard over the dialog: the field is one tap away
+  if (!CAN_SHOOT.matches) window.setTimeout(() => app.querySelector<HTMLInputElement>(`#mvp-unit-${target}`)?.focus(), 60);
+  else btnMvpCrown.focus({ preventScroll: true });
+}
+
+/** The photos to pick from: the unit's moment of glory */
+function renderMvpPicks(): void {
+  if (!mvpDraft) return;
+  const turns = storyTurns();
+  for (const player of [1, 2] as const) {
+    const el = app.querySelector<HTMLElement>(`#mvp-photos-${player}`);
+    if (!el) continue;
+    const chosen = mvpDraft[player].photo;
+    el.hidden = turns.length === 0;
+    el.innerHTML = `<span>${t("mvpPhoto")} <em>${t("mvpOptional")}</em></span>
+      <div class="mvp-pick" role="radiogroup" aria-label="${t("mvpPhoto")}">
+        <button type="button" role="radio" class="mvp-pick__none" data-mvp-pick="${player}" data-turn="" aria-checked="${!chosen}">${t("mvpNoPhoto")}</button>
+        ${turns
+          .map(
+            (turn) =>
+              `<button type="button" role="radio" data-mvp-pick="${player}" data-turn="${turnId(turn)}" aria-checked="${!!chosen && sameTurn(chosen, turn)}" aria-label="${t("photoTurn", { r: turn.round, n: turn.player })}"><img src="${endPhotos.get(turnId(turn))!.thumb}" alt="" /><span>R${turn.round} · ${t("playerShort", { n: turn.player })}</span></button>`,
+          )
+          .join("")}
+      </div>`;
+  }
+}
+
+function updateMvpCrown(): void {
+  btnMvpCrown.disabled = !mvpDraft || !([1, 2] as const).some((player) => canEdit(player) && mvpDraft![player].unit.trim());
+}
+
+function closeMvp(): void {
+  mvpDraft = null;
+  mvpOverlay.classList.remove("is-visible");
+  mvpOverlay.setAttribute("aria-hidden", "true");
+}
+
+function crownMvps(): void {
+  if (!mvpDraft) return;
+  const crowned: Player[] = [];
+  for (const player of [1, 2] as const) {
+    if (!canEdit(player)) continue;
+    const { unit, feat, photo } = mvpDraft[player];
+    game.mvp[player] = unit.trim() ? { unit: unit.trim(), feat: feat.trim(), photo } : null;
+    if (game.mvp[player]) crowned.push(player);
+  }
+  closeMvp();
+  renderMvpSection();
+  if (crowned.length > 0) {
+    playSound("joined");
+    showToast(crowned.length === 2 ? t("mvpCrowned") : t("mvpCrownedOne", { n: crowned[0] }));
+  }
+}
+
+/* ---------- The report, on screen and as a picture ---------- */
+
+function reportHeroHtml(title: boolean): string {
   const [total1, total2] = [scoreOf(1), scoreOf(2)];
   const winner: Player | null = total1 > total2 ? 1 : total2 > total1 ? 2 : null;
   const events = clockEvents();
@@ -1419,57 +1744,93 @@ function renderBattleReport(): void {
     .filter(Boolean)
     .join(" · ");
   const side = (player: Player): string => {
-    const faction = document.documentElement.dataset.theme === "factions" ? FACTION_BY_ID.get(factionOf[player])?.name[getLang()] : undefined;
+    const faction = factionName(player);
     return `<div class="report-side is-p${player}"><span class="report-side__name">${t("player", { n: player })}</span>${faction ? `<span class="report-side__faction">${faction}</span>` : ""}</div>`;
   };
   const score = (player: Player): string => `<b class="is-p${player}${winner && winner !== player ? " is-behind" : ""}">${scoreOf(player)}</b>`;
-  app.querySelector("#battle-report")!.innerHTML = `
+  const result = `<span class="report-pill${winner ? ` is-p${winner}` : ""}">${winner ? t("wins", { n: winner }) : t("draw")}</span><span class="report-wtc">${t("reportWtc", { a: wtcPoints(total1, total2), b: wtcPoints(total2, total1) })}</span>`;
+  return `
     <header class="report-hero${winner ? ` is-p${winner}-wins` : ""}">
       <p class="report-hero__meta">${meta}</p>
       <div class="report-hero__score">${side(1)}<div class="report-score">${score(1)}<span>–</span>${score(2)}</div>${side(2)}</div>
-      <h2 id="result-title" class="report-hero__result"><span class="report-pill${winner ? ` is-p${winner}` : ""}">${winner ? t("wins", { n: winner }) : t("draw")}</span><span class="report-wtc">${t("reportWtc", { a: wtcPoints(total1, total2), b: wtcPoints(total2, total1) })}</span></h2>
-    </header>
-    <div class="report-players">${reportPlayer(1, timeByRound())}${reportPlayer(2, timeByRound())}</div>
-    ${game.options.cards ? `<p class="report-legend"><span>• ${t("reportDrawn")}</span><span>✕ ${t("reportDiscarded")}</span></p>` : ""}`;
+      ${title ? `<h2 id="result-title" class="report-hero__result">${result}</h2>` : `<p class="report-hero__result">${result}</p>`}
+    </header>`;
 }
 
-/**
- * The report as a picture, to share: one player under the other at a fixed width, whatever the
- * screen, from a copy drawn off screen. A phone opens its share sheet, a computer downloads it
- */
-async function exportBattleReport(): Promise<void> {
-  const button = app.querySelector<HTMLButtonElement>("#btn-result-export")!;
+const reportLegend = (): string =>
+  game.options.cards ? `<p class="report-legend"><span>• ${t("reportDrawn")}</span><span>✕ ${t("reportDiscarded")}</span></p>` : "";
+
+/** Everything about the battle on one page: built to be read at the table and, later, shared as an image */
+function renderBattleReport(): void {
+  const spent = timeByRound();
+  app.querySelector("#battle-report")!.innerHTML = `
+    ${reportHeroHtml(true)}
+    <section class="report-section" id="report-mvp">${mvpHtml()}</section>
+    <section class="report-section" id="report-story"></section>
+    <div class="report-players">${reportPlayer(1, spent, false)}${reportPlayer(2, spent, false)}</div>
+    ${reportLegend()}`;
+  renderStory();
+  renderResultActions();
+}
+
+function renderResultActions(): void {
+  const count = storyTurns().length;
+  const button = app.querySelector<HTMLButtonElement>("#btn-result-photos")!;
+  button.hidden = count === 0;
+  app.querySelector("#result-photo-count")!.textContent = String(count);
+}
+
+/** The report as a picture: one player under the other at a fixed width, whatever the screen, every card shown */
+async function reportImage(): Promise<Blob | null> {
   const sheet = document.createElement("div");
   sheet.className = "report-export";
-  sheet.innerHTML = `${app.querySelector("#battle-report")!.outerHTML}<p class="report-export__foot">Warhammer Clock</p>`;
-  for (const el of sheet.querySelectorAll("[id]")) el.removeAttribute("id");
+  const spent = timeByRound();
+  sheet.innerHTML = `<article class="report">${reportHeroHtml(false)}${mvpImageHtml()}<div class="report-players">${reportPlayer(1, spent, true)}${reportPlayer(2, spent, true)}</div>${reportLegend()}</article><p class="report-export__foot">Warhammer Clock</p>`;
   document.body.append(sheet);
-  button.disabled = true;
   try {
     const { toBlob } = await import("html-to-image");
-    const blob = await toBlob(sheet, {
+    return await toBlob(sheet, {
       pixelRatio: 2,
       backgroundColor: getComputedStyle(document.body).backgroundColor,
       style: { position: "static", left: "auto" },
     });
+  } finally {
+    sheet.remove();
+  }
+}
+
+/** The day the battle started, for file names */
+const battleDay = (): string => {
+  const at = new Date(clockEvents().find((event) => event.kind === "start")?.at ?? Date.now());
+  return `${at.getFullYear()}-${String(at.getMonth() + 1).padStart(2, "0")}-${String(at.getDate()).padStart(2, "0")}`;
+};
+
+/** A phone opens its share sheet, a computer downloads the picture */
+async function exportBattleReport(): Promise<void> {
+  const button = app.querySelector<HTMLButtonElement>("#btn-result-export")!;
+  button.disabled = true;
+  try {
+    const blob = await reportImage();
     if (!blob) return;
-    const day = new Date(clockEvents().find((event) => event.kind === "start")?.at ?? Date.now()).toISOString().slice(0, 10);
-    const file = new File([blob], `warhammer-clock-${day}.png`, { type: "image/png" });
+    const file = new File([blob], `warhammer-clock-${battleDay()}.png`, { type: "image/png" });
     if (PHONE.matches && navigator.canShare?.({ files: [file] })) {
       await navigator.share({ files: [file] }).catch(() => undefined);
       return;
     }
-    const link = document.createElement("a");
-    link.href = URL.createObjectURL(file);
-    link.download = file.name;
-    link.click();
-    window.setTimeout(() => URL.revokeObjectURL(link.href), 1000);
+    download(file);
   } catch {
     showToast(t("reportExportFailed"));
   } finally {
-    sheet.remove();
     button.disabled = false;
   }
+}
+
+function download(file: File): void {
+  const link = document.createElement("a");
+  link.href = URL.createObjectURL(file);
+  link.download = file.name;
+  link.click();
+  window.setTimeout(() => URL.revokeObjectURL(link.href), 1000);
 }
 
 function showResultOverlay(): void {
@@ -1479,6 +1840,7 @@ function showResultOverlay(): void {
   // The result is read from the top, where the score is; OK stays at hand for Enter
   resultOverlay.querySelector(".overlay-inner")!.scrollTop = 0;
   btnResultDismiss.focus({ preventScroll: true });
+  void refreshEndPhotos();
 }
 
 function finishGameByScore(): void {
@@ -1561,6 +1923,7 @@ function showPhotoBreak(): void {
   stopLoop();
   app.classList.add("is-photo-break");
   photoMsg.textContent = t("photoMsg", { n: game.turnPlayer });
+  breakTurn = turnJustPlayed();
   // The last break's photo went with it as it faded out: this one starts with the camera
   showPhotoShot(null);
   photoOverlay.classList.add("is-visible");
@@ -1586,8 +1949,10 @@ function hidePhotoBreak(): void {
   }
 }
 
-/** The photo taken during this break: kept nowhere but on screen, until saved to the phone */
+/** The photo taken during this break, shown until the break ends: it is kept in the app as soon as it is taken */
 let photoShotFile: File | null = null;
+/** The player turn the break's photo closes: the table as that player left it */
+let breakTurn: PhotoTurn | null = null;
 
 function showPhotoShot(file: File | null): void {
   if (photoShotFile) URL.revokeObjectURL(photoShot.src);
@@ -1597,29 +1962,400 @@ function showPhotoShot(file: File | null): void {
   photoOverlay.classList.toggle("has-shot", !!file);
 }
 
+/** The turn just over: the first player's of this round, or the second player's of the round before */
+const turnJustPlayed = (): PhotoTurn => ({
+  player: other(game.turnPlayer),
+  round: game.turnPlayer === game.firstPlayer ? game.round - 1 : game.round,
+});
+
+async function keepPhoto(turn: PhotoTurn, file: Blob): Promise<void> {
+  const gameId = game.gameId;
+  if (!gameId) return;
+  try {
+    const photo = await savePhoto(gameId, turn, file, Date.now(), true);
+    void sharePhoto(photo);
+    void refreshEndPhotos();
+  } catch {
+    showToast(t("photoKeepFailed"), true);
+  }
+}
+
+/** Taken, then left out: gone from this device and from the room */
+async function dropPhoto(turn: PhotoTurn): Promise<void> {
+  if (!game.gameId) return;
+  await deletePhoto(game.gameId, turn);
+  roomSession()?.room?.removePhoto(photoKey(game.gameId, turn));
+}
+
 const isIos = (): boolean =>
   /iPhone|iPad|iPod/.test(navigator.userAgent) || (/Macintosh/.test(navigator.userAgent) && navigator.maxTouchPoints > 1);
 
-/**
- * An iPhone puts a photo in its gallery only from the share sheet ("Save Image"); elsewhere it
- * is downloaded. False when the share sheet was closed without saving
- */
-async function savePhotoShot(file: File): Promise<boolean> {
-  const extension = file.name.split(".").pop() || "jpg";
-  const named = new File([file], `warhammer-clock-round-${game.round}-player-${game.turnPlayer}.${extension}`, { type: file.type });
-  if (isIos() && navigator.canShare?.({ files: [named] })) {
-    return navigator.share({ files: [named] }).then(
-      () => true,
-      () => false,
-    );
+/* ---------- Online: the photos go to the other devices of the room ---------- */
+
+async function sharePhoto(photo: Photo): Promise<void> {
+  const room = roomSession()?.room;
+  if (!room) return;
+  try {
+    room.sendPhoto(photoKey(photo.game, photo), { at: photo.at, data: await shareable(photo.full) });
+  } catch {
+    // Too large or offline: it stays on this device
   }
-  const link = document.createElement("a");
-  link.href = URL.createObjectURL(named);
-  link.download = named.name;
-  link.click();
-  window.setTimeout(() => URL.revokeObjectURL(link.href), 1000);
-  return true;
 }
+
+/** A photo taken on another device of the room, or left out there */
+async function receivePhoto(key: string, value: { at: number; data: string } | null): Promise<void> {
+  const match = /^([a-z0-9]+)_([1-5])_([12])$/.exec(key);
+  if (!match) return;
+  const [, gameId, round, player] = match;
+  const turn: PhotoTurn = { round: Number(round), player: player === "1" ? 1 : 2 };
+  const known = await getPhoto(gameId, turn);
+  if (!value) {
+    // Left out during a break on the other phone. Once the game is over, the room letting its
+    // photos go (the game ended online) takes nothing from this device's end screen
+    if (known && !known.local && game.phase !== "over") await deletePhoto(gameId, turn);
+  } else {
+    // This device's own photo, back from the room, or older than the one it holds
+    if (known && known.at >= value.at) return;
+    try {
+      await savePhoto(gameId, turn, await dataUrlToBlob(value.data), value.at, false);
+    } catch {
+      return;
+    }
+  }
+  if (gameId === game.gameId) void refreshEndPhotos();
+}
+
+/* ---------- Photo viewer: to study the table, turn after turn ---------- */
+
+
+function openViewer(turn: PhotoTurn): void {
+  viewerTurn = turn;
+  renderViewer();
+  viewerOverlay.classList.add("is-visible");
+  viewerOverlay.setAttribute("aria-hidden", "false");
+  app.querySelector<HTMLButtonElement>("#btn-viewer-close")!.focus({ preventScroll: true });
+}
+
+function closeViewer(): void {
+  viewerOverlay.classList.remove("is-visible");
+  viewerOverlay.setAttribute("aria-hidden", "true");
+  viewerTurn = null;
+  if (viewerUrl) URL.revokeObjectURL(viewerUrl);
+  viewerUrl = "";
+  viewerImg.removeAttribute("src");
+}
+
+function renderViewer(): void {
+  const turn = viewerTurn;
+  const entry = turn && endPhotos.get(turnId(turn));
+  if (!turn || !entry) return;
+  const turns = storyTurns();
+  const at = turns.findIndex((each) => sameTurn(each, turn));
+  const final = sameTurn(turn, lastTurn());
+  zoomTo(1);
+  if (viewerUrl) URL.revokeObjectURL(viewerUrl);
+  viewerUrl = URL.createObjectURL(entry.photo.full);
+  viewerImg.style.opacity = "0";
+  viewerImg.onload = () => (viewerImg.style.opacity = "1");
+  viewerImg.src = viewerUrl;
+  viewerImg.alt = t("photoTurn", { r: turn.round, n: turn.player });
+  viewerOverlay.setAttribute("aria-label", viewerImg.alt);
+  app.querySelector<HTMLElement>("#viewer")!.className = `viewer is-p${turn.player}`;
+  app.querySelector("#viewer-count")!.textContent = `${at + 1} / ${turns.length}`;
+  app.querySelector("#viewer-turn")!.textContent = `${t("photoTurn", { r: turn.round, n: turn.player })}${final ? ` · ${t("photoGameEnd")}` : ""}`;
+  app.querySelector("#viewer-line")!.textContent = t(final ? "photoLineFinal" : "photoLine", { vp: turnPoints(turn), score: scoreAfter(turn) });
+  app.querySelector("#viewer-hint")!.textContent = t(CAN_SHOOT.matches ? "photoHintTouch" : "photoHintMouse");
+  app.querySelector<HTMLButtonElement>("#btn-viewer-prev")!.disabled = at <= 0;
+  app.querySelector<HTMLButtonElement>("#btn-viewer-next")!.disabled = at >= turns.length - 1;
+}
+
+function stepViewer(step: number): void {
+  if (!viewerTurn) return;
+  const turns = storyTurns();
+  const next = turns[turns.findIndex((turn) => sameTurn(turn, viewerTurn!)) + step];
+  if (!next) return;
+  viewerTurn = next;
+  renderViewer();
+}
+
+/** The viewer's scale: the stage may be drawn at another size than its layout one */
+const viewerScale = (): number => viewerStage.getBoundingClientRect().width / viewerStage.offsetWidth || 1;
+
+/** A point of the stage, from its centre, where the photo sits when not zoomed */
+function stagePoint(e: { clientX: number; clientY: number }): [number, number] {
+  const rect = viewerStage.getBoundingClientRect();
+  const k = viewerScale();
+  return [(e.clientX - rect.left) / k - viewerStage.offsetWidth / 2, (e.clientY - rect.top) / k - viewerStage.offsetHeight / 2];
+}
+
+function applyZoom(): void {
+  const mx = ((zoom.s - 1) * viewerImg.offsetWidth) / 2;
+  const my = ((zoom.s - 1) * viewerImg.offsetHeight) / 2;
+  zoom.x = Math.max(-mx, Math.min(mx, zoom.x));
+  zoom.y = Math.max(-my, Math.min(my, zoom.y));
+  viewerImg.style.transform = zoom.s === 1 ? "" : `translate(${zoom.x}px, ${zoom.y}px) scale(${zoom.s})`;
+  viewerOverlay.classList.toggle("is-zoomed", zoom.s > 1);
+  app.querySelector("#btn-viewer-zoom")!.setAttribute("aria-label", t(zoom.s > 1 ? "photoUnzoom" : "photoZoom"));
+}
+
+/** Zooms to `s`, the point (px, py) of the stage staying where it is */
+function zoomTo(s: number, px = 0, py = 0): void {
+  if (s <= 1) {
+    Object.assign(zoom, { s: 1, x: 0, y: 0 });
+  } else {
+    const qx = (px - zoom.x) / zoom.s;
+    const qy = (py - zoom.y) / zoom.s;
+    Object.assign(zoom, { s, x: px - s * qx, y: py - s * qy });
+  }
+  applyZoom();
+}
+
+/** A drag moves around a zoomed photo, a swipe changes it; a double tap zooms in on that spot */
+let viewerDrag: { id: number; x: number; y: number; zx: number; zy: number; moved: boolean } | null = null;
+let lastTap = { at: 0, x: 0, y: 0 };
+viewerStage.addEventListener("pointerdown", (e) => {
+  if ((e.target as HTMLElement).closest("button")) return;
+  viewerDrag = { id: e.pointerId, x: e.clientX, y: e.clientY, zx: zoom.x, zy: zoom.y, moved: false };
+  viewerStage.setPointerCapture(e.pointerId);
+  viewerImg.classList.add("is-dragging");
+});
+viewerStage.addEventListener("pointermove", (e) => {
+  if (!viewerDrag || e.pointerId !== viewerDrag.id) return;
+  const k = viewerScale();
+  const dx = (e.clientX - viewerDrag.x) / k;
+  const dy = (e.clientY - viewerDrag.y) / k;
+  if (Math.abs(dx) + Math.abs(dy) > 6) viewerDrag.moved = true;
+  if (zoom.s > 1) {
+    zoom.x = viewerDrag.zx + dx;
+    zoom.y = viewerDrag.zy + dy;
+    applyZoom();
+  }
+});
+viewerStage.addEventListener("pointerup", (e) => {
+  if (!viewerDrag || e.pointerId !== viewerDrag.id) return;
+  const dx = (e.clientX - viewerDrag.x) / viewerScale();
+  const moved = viewerDrag.moved;
+  viewerDrag = null;
+  viewerImg.classList.remove("is-dragging");
+  if (zoom.s === 1 && Math.abs(dx) > 40) {
+    stepViewer(dx < 0 ? 1 : -1);
+    return;
+  }
+  if (moved) return;
+  const now = performance.now();
+  if (now - lastTap.at < 320 && Math.hypot(e.clientX - lastTap.x, e.clientY - lastTap.y) < 24) {
+    lastTap.at = 0;
+    const [px, py] = stagePoint(e);
+    zoomTo(zoom.s > 1 ? 1 : 2.5, px, py);
+  } else lastTap = { at: now, x: e.clientX, y: e.clientY };
+});
+viewerStage.addEventListener("pointercancel", () => {
+  viewerDrag = null;
+  viewerImg.classList.remove("is-dragging");
+});
+viewerStage.addEventListener(
+  "wheel",
+  (e) => {
+    e.preventDefault();
+    const [px, py] = stagePoint(e);
+    zoomTo(Math.min(4, zoom.s * (e.deltaY < 0 ? 1.2 : 1 / 1.2)), px, py);
+  },
+  { passive: false },
+);
+
+/* ---------- Saving the photos: to the gallery on a phone, to a folder on a computer ---------- */
+
+
+const toGallery = (): boolean => CAN_SHOOT.matches || PHONE.matches;
+
+const unsafeName = /[\\/:*?"<>|]/g;
+
+function defaultFolder(): string {
+  const [a, b] = ([1, 2] as const).map((player) => factionName(player) ?? t("player", { n: player }));
+  return `${battleDay()} ${a} vs ${b} ${scoreOf(1)}-${scoreOf(2)}`.replace(unsafeName, "");
+}
+
+const extension = (blob: Blob): string => ({ "image/png": "png", "image/heic": "heic", "image/webp": "webp" })[blob.type] ?? "jpg";
+
+/** The photos in turn order, then the report: names that sort right in a gallery and in a folder */
+function saveFiles(gallery: boolean): { name: string; blob: Blob | null }[] {
+  const turns = playedTurns();
+  const last = lastTurn();
+  const files: { name: string; blob: Blob | null }[] = storyTurns().map((turn) => {
+    const blob = endPhotos.get(turnId(turn))!.photo.full;
+    const final = sameTurn(turn, last) ? t("photoFileFinal") : "";
+    const index = String(turns.findIndex((each) => sameTurn(each, turn)) + 1).padStart(2, "0");
+    const name = gallery
+      ? `WH ${battleDay()} R${turn.round} ${t("playerShort", { n: turn.player })}${final ? ` ${final}` : ""}`
+      : `${index} ${t("photoFileTurn", { r: turn.round, n: turn.player })}${final ? ` (${final})` : ""}`;
+    return { name: `${name}.${extension(blob)}`, blob };
+  });
+  if (saveWithReport && saveReport.state !== "failed") {
+    files.push({ name: gallery ? `WH ${battleDay()} ${t("photoFileReport")}.png` : `${t("photoFileReport")}.png`, blob: saveReport.blob });
+  }
+  return files;
+}
+
+function openSave(): void {
+  if (storyTurns().length === 0) {
+    showToast(t("photosNone"));
+    return;
+  }
+  saveStep = "form";
+  saveFolder = defaultFolder();
+  saveReport = { state: "pending", blob: null };
+  const making = saveReport;
+  reportImage()
+    .then((blob) => Object.assign(making, blob ? { state: "ready", blob } : { state: "failed" }))
+    .catch(() => Object.assign(making, { state: "failed" }))
+    .finally(() => {
+      if (making === saveReport && saveOverlay.classList.contains("is-visible") && saveStep === "form") renderSaveSheet();
+    });
+  renderSaveSheet();
+  saveOverlay.classList.add("is-visible");
+  saveOverlay.setAttribute("aria-hidden", "false");
+  saveSheet.querySelector<HTMLButtonElement>(".btn-primary")?.focus({ preventScroll: true });
+}
+
+function closeSave(): void {
+  saveOverlay.classList.remove("is-visible");
+  saveOverlay.setAttribute("aria-hidden", "true");
+}
+
+function renderSaveSheet(): void {
+  const gallery = toGallery();
+  if (saveStep === "writing") {
+    saveSheet.innerHTML = `<h2 id="save-title">${t("photosComputerTitle")}</h2><div class="save-progress"><i id="save-bar"></i></div><p class="save-mono" id="save-progress-text"></p>`;
+    return;
+  }
+  if (saveStep === "done") {
+    saveSheet.innerHTML = `
+      <span class="save-done">${ICON_CHECK}</span>
+      <h2 id="save-title">${t("photosDone")}</h2>
+      <p class="save-path">${esc(saveDone.path)}</p>
+      <p class="overlay-msg">${t(saveWithReport && saveReport.state === "ready" ? "photosDoneMsgReport" : "photosDoneMsg", { n: saveDone.count })}</p>
+      <div class="overlay-actions"><button type="button" class="btn-primary" data-save="close">${t("done")}</button></div>`;
+    return;
+  }
+  const files = saveFiles(gallery);
+  const waiting = saveWithReport && saveReport.state === "pending";
+  const missingFinal = CAN_SHOOT.matches && !endPhotos.has(turnId(lastTurn()));
+  const reportBox = `<label class="save-check"><input type="checkbox" id="save-report"${saveWithReport ? " checked" : ""} /><span>${t("photosAddReport")}</span></label>`;
+  const finalNotice = missingFinal
+    ? `<div class="save-notice">${ICON_CAMERA}<span>${t("photosFinalMissing")}</span><button type="button" class="btn-secondary" data-save="final">${t("photosTakeIt")}</button></div>`
+    : "";
+  const actions = (go: string): string =>
+    `<div class="overlay-actions"><button type="button" class="btn-secondary" data-save="close"><span>${t("cancel")}</span> <kbd>${t("keyEsc")}</kbd></button>${go}</div>`;
+  if (gallery) {
+    const names = files.length > 2 ? [files[0].name, "…", files[files.length - 1].name] : files.map((file) => file.name);
+    saveSheet.innerHTML = `
+      <h2 id="save-title">${t("photosGalleryTitle")}</h2>
+      <p class="overlay-msg">${t("photosGalleryMsg")}</p>
+      <div class="save-grid">${storyTurns().map((turn) => `<img src="${endPhotos.get(turnId(turn))!.thumb}" alt="" />`).join("")}</div>
+      ${finalNotice}
+      ${reportBox}
+      <p class="save-names">${names.map(esc).join("<br />")}</p>
+      <p class="save-note">${t("photosGalleryNote")}</p>
+      ${actions(`<button type="button" class="btn-primary" data-save="gallery"${waiting ? " disabled" : ""}>${ICON_DOWNLOAD}<span>${t("photosSaveN", { n: files.length })}</span></button>`)}`;
+    return;
+  }
+  saveSheet.innerHTML = `
+    <h2 id="save-title">${t("photosComputerTitle")}</h2>
+    <p class="overlay-msg">${t("photosComputerMsg")}</p>
+    <label class="save-field"><span>${t("photosFolder")}</span><input type="text" id="save-folder" value="${esc(saveFolder)}" autocomplete="off" spellcheck="false" /></label>
+    <div class="save-tree"><div class="save-tree__dir">${ICON_FOLDER}<span id="save-tree-name">${esc(saveFolder)}</span></div><ul>${files.map((file) => `<li>${esc(file.name)}</li>`).join("")}</ul></div>
+    ${reportBox}
+    <p class="save-note">${t("photosComputerNote")}</p>
+    ${actions(`<button type="button" class="btn-primary" data-save="computer"${waiting ? " disabled" : ""}>${ICON_FOLDER_DOWN}<span>${t("photosChoose")}</span></button>`)}`;
+}
+
+/** Right on the tap: the iPhone opens its share sheet only then. Elsewhere each file is downloaded */
+function saveToGallery(): void {
+  const files = saveFiles(true)
+    .filter((file): file is { name: string; blob: Blob } => !!file.blob)
+    .map(({ name, blob }) => new File([blob], name, { type: blob.type || "image/jpeg" }));
+  const saved = (): void => {
+    closeSave();
+    showToast(t("photosSaved", { n: files.length }), true);
+  };
+  if (isIos() && navigator.canShare?.({ files })) {
+    navigator.share({ files }).then(saved, () => undefined);
+    return;
+  }
+  files.forEach((file, i) => window.setTimeout(() => download(file), i * 400));
+  saved();
+}
+
+type DirectoryPicker = (options?: { id?: string; mode?: "read" | "readwrite"; startIn?: string }) => Promise<FileSystemDirectoryHandle>;
+
+/** Chrome and Edge write a folder where the player says; the others download it as a .zip */
+async function saveToComputer(): Promise<void> {
+  const name = saveFolder.replace(unsafeName, "").trim() || defaultFolder();
+  const files = saveFiles(false).filter((file): file is { name: string; blob: Blob } => !!file.blob);
+  const pick = (window as unknown as { showDirectoryPicker?: DirectoryPicker }).showDirectoryPicker;
+  try {
+    if (!pick) {
+      const { zipFolder } = await import("./zip");
+      download(new File([await zipFolder(name, files)], `${name}.zip`, { type: "application/zip" }));
+      closeSave();
+      showToast(t("photosZipped", { name: `${name}.zip` }), true);
+      return;
+    }
+    let parent: FileSystemDirectoryHandle;
+    try {
+      parent = await pick({ id: "warhammer-clock-photos", mode: "readwrite", startIn: "pictures" });
+    } catch (error) {
+      if ((error as DOMException).name === "AbortError") return;
+      throw error;
+    }
+    saveStep = "writing";
+    renderSaveSheet();
+    const folder = await parent.getDirectoryHandle(name, { create: true });
+    for (const [i, file] of files.entries()) {
+      saveSheet.querySelector<HTMLElement>("#save-bar")!.style.width = `${(i / files.length) * 100}%`;
+      saveSheet.querySelector("#save-progress-text")!.textContent = `${t("photosWriting", { k: i + 1, n: files.length })} ${file.name}`;
+      const writable = await (await folder.getFileHandle(file.name, { create: true })).createWritable();
+      await writable.write(file.blob);
+      await writable.close();
+    }
+    saveDone = { count: files.length, path: `${parent.name} / ${name}` };
+    saveStep = "done";
+    renderSaveSheet();
+    saveSheet.querySelector<HTMLButtonElement>(".btn-primary")?.focus({ preventScroll: true });
+  } catch {
+    saveStep = "form";
+    renderSaveSheet();
+    showToast(t("photosFailed"), true);
+  }
+}
+
+saveOverlay.addEventListener("click", (e) => {
+  if (e.target === saveOverlay && saveStep !== "writing") {
+    closeSave();
+    return;
+  }
+  const action = (e.target as HTMLElement).closest<HTMLButtonElement>("[data-save]")?.dataset.save;
+  if (action === "close") closeSave();
+  else if (action === "gallery") saveToGallery();
+  else if (action === "computer") void saveToComputer();
+  else if (action === "final") {
+    closeSave();
+    finalPhotoInput.click();
+  }
+});
+saveOverlay.addEventListener("input", (e) => {
+  const input = e.target as HTMLInputElement;
+  if (input.id !== "save-folder") return;
+  saveFolder = input.value;
+  saveSheet.querySelector("#save-tree-name")!.textContent = input.value.replace(unsafeName, "").trim() || defaultFolder();
+});
+saveOverlay.addEventListener("change", (e) => {
+  const input = e.target as HTMLInputElement;
+  if (input.id !== "save-report") return;
+  saveWithReport = input.checked;
+  renderSaveSheet();
+  saveSheet.querySelector<HTMLInputElement>("#save-report")?.focus();
+});
 
 function readMinutes(): { a: number; b: number } {
   return {
@@ -2672,6 +3408,11 @@ function start(): void {
   // The log began with the first toss
   if (!game.preBattle) game.clockLog = {};
   logClock("start");
+  // A new game: its photos and MVPs start afresh, the last game's photos go
+  game.gameId = newGameId();
+  game.mvp = { 1: null, 2: null };
+  void keepOnlyGame(game.gameId);
+  roomSession()?.room?.clearPhotos();
   game.cp = { 1: 1, 2: 1 };
   game.cpHistory = { 1: emptyCpHistory(), 2: emptyCpHistory() };
   renderMiniCounters();
@@ -2790,6 +3531,7 @@ function reset(): void {
   hideResultOverlay();
   game.judgeCall = null;
   game.clockLog = {};
+  game.mvp = { 1: null, 2: null };
   hideJudgeCall();
   closeClockLog();
   game.round = 1;
@@ -5278,18 +6020,88 @@ judgeOverlay.addEventListener("click", (e) => {
 });
 btnPhotoResume.addEventListener("click", endPhotoBreak);
 for (const id of ["#btn-photo-take", "#btn-photo-retake"]) app.querySelector(id)!.addEventListener("click", () => photoInput.click());
-app.querySelector("#btn-photo-skip")!.addEventListener("click", endPhotoBreak);
+// Taken, then left out: the break ends without it
+app.querySelector("#btn-photo-skip")!.addEventListener("click", () => {
+  if (photoShotFile && breakTurn) void dropPhoto(breakTurn);
+  endPhotoBreak();
+});
 // The camera closes on its own once the photo is taken, and hands it back here
 photoInput.addEventListener("change", () => {
   const file = photoInput.files?.[0];
   photoInput.value = "";
-  // The break may have ended on the other phone while this one was in the camera
-  if (file && game.photoBreak) showPhotoShot(file);
+  // The break may have ended on the other phone while this one was in the camera: the photo is kept all the same
+  const turn = breakTurn;
+  if (!file || !turn) return;
+  if (game.photoBreak) showPhotoShot(file);
+  void keepPhoto(turn, file);
 });
-// Saved, the clocks go again; a share sheet closed without saving stays on the photo
-app.querySelector("#btn-photo-save")!.addEventListener("click", async () => {
-  if (photoShotFile && (await savePhotoShot(photoShotFile))) endPhotoBreak();
+// The photo is already kept: the clocks go again
+app.querySelector("#btn-photo-save")!.addEventListener("click", endPhotoBreak);
+
+/* ---------- End screen: photos, MVPs, report detail ---------- */
+
+resultOverlay.addEventListener("click", (e) => {
+  const target = e.target as HTMLElement;
+  const shot = target.closest<HTMLElement>("[data-story-turn]");
+  if (shot) {
+    const [round, player] = shot.dataset.storyTurn!.split("_").map(Number);
+    openViewer({ round, player: player === 2 ? 2 : 1 });
+    return;
+  }
+  if (target.closest("#btn-final-photo")) {
+    finalPhotoInput.click();
+    return;
+  }
+  const mvp = target.closest<HTMLElement>("[data-mvp-open]");
+  if (mvp) {
+    openMvp(mvp.dataset.mvpOpen === "2" ? 2 : 1);
+    return;
+  }
+  if (target.closest("[data-report-fold]")) {
+    // Both players at once, to compare their cards; remembered on this device
+    const index = [...resultOverlay.querySelectorAll("[data-report-fold]")].indexOf(target.closest("[data-report-fold]")!);
+    reportDetailOpen = !reportDetail();
+    store(REPORT_DETAIL_STORAGE_KEY, reportDetailOpen ? "open" : "folded");
+    const players = resultOverlay.querySelector<HTMLElement>(".report-players")!;
+    const spent = timeByRound();
+    players.innerHTML = `${reportPlayer(1, spent, false)}${reportPlayer(2, spent, false)}`;
+    resultOverlay.querySelectorAll<HTMLElement>("[data-report-fold]")[Math.max(0, index)]?.focus({ preventScroll: true });
+  }
 });
+app.querySelector("#btn-result-photos")!.addEventListener("click", openSave);
+// The last turn has no photo break: its photo is taken from the end screen
+finalPhotoInput.addEventListener("change", () => {
+  const file = finalPhotoInput.files?.[0];
+  finalPhotoInput.value = "";
+  if (file) void keepPhoto(lastTurn(), file);
+});
+
+mvpOverlay.addEventListener("input", (e) => {
+  const input = e.target as HTMLInputElement;
+  const match = /^mvp-(unit|feat)-([12])$/.exec(input.id);
+  if (!match || !mvpDraft) return;
+  mvpDraft[match[2] === "2" ? 2 : 1][match[1] === "unit" ? "unit" : "feat"] = input.value;
+  updateMvpCrown();
+});
+mvpOverlay.addEventListener("click", (e) => {
+  if (e.target === mvpOverlay) {
+    closeMvp();
+    return;
+  }
+  const pick = (e.target as HTMLElement).closest<HTMLButtonElement>("[data-mvp-pick]");
+  if (!pick || !mvpDraft) return;
+  const player: Player = pick.dataset.mvpPick === "2" ? 2 : 1;
+  const [round, by] = (pick.dataset.turn ?? "").split("_").map(Number);
+  mvpDraft[player].photo = round ? { round, player: by === 2 ? 2 : 1 } : null;
+  pick.parentElement!.querySelectorAll("[data-mvp-pick]").forEach((each) => each.setAttribute("aria-checked", String(each === pick)));
+});
+app.querySelector("#btn-mvp-cancel")!.addEventListener("click", closeMvp);
+btnMvpCrown.addEventListener("click", crownMvps);
+
+app.querySelector("#btn-viewer-close")!.addEventListener("click", closeViewer);
+app.querySelector("#btn-viewer-prev")!.addEventListener("click", () => stepViewer(-1));
+app.querySelector("#btn-viewer-next")!.addEventListener("click", () => stepViewer(1));
+app.querySelector("#btn-viewer-zoom")!.addEventListener("click", () => zoomTo(zoom.s > 1 ? 1 : 2.5));
 // A focused checkbox would swallow Enter / Space, the game shortcuts
 photoBreaksToggle.addEventListener("change", () => {
   game.options.photoBreaks = photoBreaksToggle.checked;
@@ -5354,6 +6166,32 @@ window.addEventListener("keydown", (e) => {
   if (e.code === MUTE_KEY_CODE && !e.repeat && !e.metaKey && !e.ctrlKey && !e.altKey && !isTypingTarget(e.target)) {
     e.preventDefault();
     toggleMute();
+    return;
+  }
+  // The end screen's dialogs are forms and a photo viewer: keys keep their usual meaning there
+  if (viewerOverlay.classList.contains("is-visible")) {
+    if (e.key === "Escape") closeViewer();
+    else if (e.key === "ArrowLeft") stepViewer(-1);
+    else if (e.key === "ArrowRight") stepViewer(1);
+    else return;
+    e.preventDefault();
+    return;
+  }
+  if (mvpOverlay.classList.contains("is-visible")) {
+    if (e.key === "Escape") {
+      e.preventDefault();
+      closeMvp();
+    } else if (e.code === "Enter" && isTypingTarget(e.target) && !btnMvpCrown.disabled) {
+      e.preventDefault();
+      crownMvps();
+    }
+    return;
+  }
+  if (saveOverlay.classList.contains("is-visible")) {
+    if (e.key === "Escape" && saveStep !== "writing") {
+      e.preventDefault();
+      closeSave();
+    }
     return;
   }
   if (logOverlay.classList.contains("is-visible")) {
@@ -5783,6 +6621,9 @@ function renderState(prev: GameState, joining: boolean): void {
     setBattleMusic(true);
   }
   if (game.phase === "over" && prev.phase !== "over") showGameOverScreen();
+  // A game started on another device: the photos of the one before go here too
+  if (game.gameId && game.gameId !== prev.gameId) void keepOnlyGame(game.gameId);
+  if (resultOverlay.classList.contains("is-visible") && JSON.stringify(game.mvp) !== JSON.stringify(prev.mvp)) renderMvpSection();
   if (!joining && isRunning() && prev.phase === "running") {
     if (prev.turnPlayer !== game.turnPlayer || prev.round !== game.round) turnSound(prev.round !== game.round ? "round" : "turn");
     else if (prev.clock.active !== game.clock.active) playSound("switch");
@@ -5899,6 +6740,9 @@ async function connectRoom(seat: Seat, code?: string, preferFree = false): Promi
       setMusicElsewhere(phoneView() && seats.board);
       renderSeat();
       renderOnlineDialog();
+    },
+    onPhoto: (key, value) => {
+      if (roomSession() === session) void receivePhoto(key, value);
     },
     onEnded: () => {
       if (roomSession() !== session) return;

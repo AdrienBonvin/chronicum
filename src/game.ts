@@ -41,6 +41,15 @@ export type ScoredSecondary = { id: string; vp: number; turn: number; full?: num
 export type SecondaryPile = { deck: string[]; hand: string[]; discard: string[]; scored: ScoredSecondary[] };
 export type CardRounds = { drawn?: number; discarded?: number };
 
+/** The unit a player elects as the one that carried the game, on the end screen */
+export type Mvp = {
+  unit: string;
+  /** What it did, in a few words; may be empty */
+  feat: string;
+  /** The photo it shines in: the player turn that photo closes */
+  photo: { round: number; player: Player } | null;
+};
+
 /**
  * setup: the clocks are being set. running: a clock runs. paused: stopped mid-game.
  * over: the result is known; the board stays until a reset
@@ -99,6 +108,8 @@ export type ClockEvent = {
 };
 
 export type GameState = {
+  /** Given when the battle starts: the photos of the table are kept under it */
+  gameId: string;
   phase: Phase;
   clock: Clock;
   /** Whose player turn it is. Only the end of a turn changes it; switching the clock doesn't */
@@ -151,6 +162,8 @@ export type GameState = {
   cardsPutAway: { player: Player; mode: "draw" | "command"; n: number };
   /** The latest +1 CP from a unit, or the cap that stopped it: the player's own phone says it */
   cpNotice: Record<Player, { gained: boolean; n: number }>;
+  /** Each player's MVP, elected once the game is over */
+  mvp: Record<Player, Mvp | null>;
 };
 
 export const other = (player: Player): Player => (player === 1 ? 2 : 1);
@@ -179,8 +192,14 @@ export function newSecondaryPile(): SecondaryPile {
   return { deck: shuffled(SECONDARY_CARDS.map(({ id }) => id)), hand: [], discard: [], scored: [] };
 }
 
+/** Letters and digits only: it ends up in database keys and file names */
+export function newGameId(): string {
+  return [...crypto.getRandomValues(new Uint8Array(10))].map((byte) => (byte % 36).toString(36)).join("");
+}
+
 export function newGame(seconds: number = DEFAULT_TIME_SEC): GameState {
   return {
+    gameId: "",
     phase: "setup",
     clock: { left: { 1: seconds, 2: seconds }, active: 1, since: null },
     turnPlayer: 1,
@@ -209,6 +228,7 @@ export function newGame(seconds: number = DEFAULT_TIME_SEC): GameState {
     lastDraw: { player: 1, ids: [], n: 0 },
     cardsPutAway: { player: 1, mode: "draw", n: 0 },
     cpNotice: { 1: { gained: false, n: 0 }, 2: { gained: false, n: 0 } },
+    mvp: { 1: null, 2: null },
   };
 }
 

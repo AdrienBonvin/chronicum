@@ -8,16 +8,25 @@ import { initializeApp } from "firebase/app";
 import { connectAuthEmulator, getAuth, signInAnonymously } from "firebase/auth";
 import {
   connectDatabaseEmulator,
+  endAt,
   get,
   getDatabase,
+  limitToFirst,
+  onChildAdded,
+  onChildChanged,
+  onChildRemoved,
   onDisconnect,
   onValue,
+  orderByValue,
+  query,
   ref,
   remove,
   runTransaction,
+  serverTimestamp,
   set,
   type Database,
   type DatabaseReference,
+  type DataSnapshot,
 } from "firebase/database";
 import { setClockOffset, type Player } from "./game";
 
@@ -43,6 +52,16 @@ export type Seat = Player | "board";
  */
 export type Seats = Record<Player, boolean> & { board: boolean; away: Record<Player, boolean> };
 
+/** A photo of the table, sent to the other devices of the room: small enough for the database */
+export type PhotoValue = { at: number; data: string };
+
+/**
+ * The photos stay in the room while the game goes on. They go when a new game starts there or the
+ * game is ended online; a room left as it is loses them two days after the last one came in,
+ * cleared by the next device to open any room
+ */
+const PHOTO_KEEP_MS = 2 * 24 * 60 * 60 * 1000;
+
 export type RoomEvents = {
   /** The shared state, each time it changes on the server */
   onState: (json: string) => void;
@@ -52,6 +71,8 @@ export type RoomEvents = {
   onSeats: (seats: Seats) => void;
   /** The game was ended online from another device: this one is out of the room */
   onEnded: () => void;
+  /** A photo came in or changed (`value`), or went (null); the key says which game and turn */
+  onPhoto: (key: string, value: PhotoValue | null) => void;
 };
 
 export type Room = {
@@ -62,6 +83,10 @@ export type Room = {
   leave: () => void;
   /** Ends the game online for every device in the room, then leaves it */
   end: () => void;
+  sendPhoto: (key: string, value: PhotoValue) => void;
+  removePhoto: (key: string) => void;
+  /** A new game: the photos of the last one go */
+  clearPhotos: () => void;
 };
 
 export class RoomError extends Error {
@@ -120,8 +145,29 @@ const seatsFrom = (seats: Record<string, unknown>, phones: Record<string, unknow
   away: { 1: !!seats[1] && !phones[String(seats[1])], 2: !!seats[2] && !phones[String(seats[2])] },
 });
 
+const photoValue = (snap: DataSnapshot): PhotoValue | null => {
+  const value = snap.val() as Partial<PhotoValue> | null;
+  return typeof value?.at === "number" && typeof value.data === "string" ? { at: value.at, data: value.data } : null;
+};
+
+let swept = false;
+
+/** Rooms left with photos two days after the last one: their photos go, once per visit to the app */
+async function sweepStalePhotos(db: Database): Promise<void> {
+  if (swept) return;
+  swept = true;
+  const stale = await get(query(ref(db, "photoRooms"), orderByValue(), endAt(Date.now() - PHOTO_KEEP_MS), limitToFirst(20))).catch(() => null);
+  stale?.forEach((room) => {
+    void remove(ref(db, `rooms/${room.key}/photos`))
+      .then(() => remove(room.ref))
+      .catch(() => undefined);
+  });
+}
+
 function open(db: Database, uid: string, code: string, seat: Seat, events: RoomEvents): Room {
   const stateRef = ref(db, `rooms/${code}/state`);
+  const photosRef = ref(db, `rooms/${code}/photos`);
+  void sweepStalePhotos(db);
   // A shared screen counts among the boards, a phone among the phones present: both while connected
   const hereRef = seat === "board" ? placeRef(db, code, "board", uid) : presenceRef(db, code, uid);
   let seats: Record<string, unknown> = {};
@@ -166,6 +212,9 @@ function open(db: Database, uid: string, code: string, seat: Seat, events: RoomE
     onValue(ref(db, `rooms/${code}/ended`), (snap) => {
       if (snap.val() === true) events.onEnded();
     }),
+    onChildAdded(photosRef, (snap) => events.onPhoto(snap.key!, photoValue(snap))),
+    onChildChanged(photosRef, (snap) => events.onPhoto(snap.key!, photoValue(snap))),
+    onChildRemoved(photosRef, (snap) => events.onPhoto(snap.key!, null)),
   ];
   const stopAll = (): void => {
     for (const stop of stops) stop();
@@ -183,7 +232,21 @@ function open(db: Database, uid: string, code: string, seat: Seat, events: RoomE
       // Written before this device lets go of its place, which is what allows it to write
       stopAll();
       void set(ref(db, `rooms/${code}/ended`), true).catch(() => undefined);
+      this.clearPhotos();
       this.leave();
+    },
+    sendPhoto(key, value) {
+      void set(ref(db, `rooms/${code}/photos/${key}`), value)
+        .then(() => set(ref(db, `photoRooms/${code}`), serverTimestamp()))
+        .catch(() => undefined);
+    },
+    removePhoto(key) {
+      void remove(ref(db, `rooms/${code}/photos/${key}`)).catch(() => undefined);
+    },
+    clearPhotos() {
+      void remove(photosRef)
+        .then(() => remove(ref(db, `photoRooms/${code}`)))
+        .catch(() => undefined);
     },
     leave() {
       stopAll();

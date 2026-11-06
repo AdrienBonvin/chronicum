@@ -5330,6 +5330,1013 @@ h2.report-hero__result {
   text-transform: uppercase;
 }
 
+/* ---------- End screen: the MVPs, the battle story, the folded secondaries ---------- */
+
+.report-section {
+  display: flex;
+  flex-direction: column;
+  gap: 0.6rem;
+}
+
+.report-section[hidden] {
+  display: none;
+}
+
+.report-section-head {
+  display: flex;
+  align-items: baseline;
+  gap: 0.5rem;
+}
+
+.report-section-head h3 {
+  margin: 0;
+  color: var(--muted);
+  font-size: 0.62rem;
+  font-weight: 600;
+  letter-spacing: 0.16em;
+  text-transform: uppercase;
+}
+
+.report-section-count {
+  margin-left: auto;
+  color: var(--muted);
+  font-family: var(--font-num);
+  font-size: 0.7rem;
+}
+
+/* MVPs: a call to elect them, then one card per side */
+.mvp-cta {
+  display: flex;
+  align-items: center;
+  gap: 0.9rem;
+  width: 100%;
+  padding: 0.85rem 1rem;
+  border: 1px dashed color-mix(in srgb, var(--warn) 55%, transparent);
+  border-radius: 8px;
+  background: color-mix(in srgb, var(--warn) 6%, transparent);
+  color: var(--text);
+  letter-spacing: 0;
+  text-align: left;
+}
+
+.mvp-cta:hover {
+  background: color-mix(in srgb, var(--warn) 11%, transparent);
+}
+
+.mvp-cta > .icon:first-child {
+  width: 2rem;
+  height: 2rem;
+  color: var(--warn);
+}
+
+.mvp-cta > .icon:last-child {
+  width: 1.1rem;
+  height: 1.1rem;
+  color: var(--muted);
+}
+
+.mvp-cta > span {
+  display: flex;
+  flex: 1;
+  flex-direction: column;
+  gap: 0.15rem;
+  min-width: 0;
+}
+
+.mvp-cta b {
+  font-size: 0.95rem;
+}
+
+.mvp-cta small {
+  color: var(--muted);
+  font-size: 0.8rem;
+  font-weight: 500;
+}
+
+.mvp-grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 0.75rem;
+}
+
+.mvp-card {
+  --pc: var(--p1);
+  display: flex;
+  align-items: stretch;
+  gap: 0.75rem;
+  min-width: 0;
+  padding: 0.6rem;
+  border: 1px solid var(--line);
+  border-top: 2px solid var(--pc);
+  border-radius: 8px;
+  background: color-mix(in srgb, var(--text) 2%, var(--surface));
+  color: var(--text);
+  font-weight: 400;
+  letter-spacing: 0;
+  text-align: left;
+}
+
+.mvp-card.is-p2 {
+  --pc: var(--p2);
+}
+
+.mvp-card:hover {
+  border-color: var(--line-strong);
+  border-top-color: var(--pc);
+}
+
+.mvp-card__photo {
+  flex: none;
+  display: block;
+  width: 7rem;
+  max-width: 100%;
+  aspect-ratio: 4 / 3;
+  border-radius: 4px;
+  object-fit: cover;
+}
+
+.mvp-card__photo.is-none {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  background: color-mix(in srgb, var(--warn) 8%, transparent);
+  color: var(--warn);
+}
+
+.mvp-card__photo.is-none .icon {
+  width: 1.8rem;
+  height: 1.8rem;
+}
+
+.mvp-card__body {
+  display: flex;
+  flex-direction: column;
+  justify-content: center;
+  gap: 0.2rem;
+  min-width: 0;
+}
+
+.mvp-card__eyebrow {
+  display: flex;
+  align-items: center;
+  gap: 0.3rem;
+  color: var(--pc);
+  font-size: 0.58rem;
+  font-weight: 600;
+  letter-spacing: 0.14em;
+  text-transform: uppercase;
+}
+
+.mvp-card__eyebrow .icon {
+  width: 0.85rem;
+  height: 0.85rem;
+  color: var(--warn);
+}
+
+.mvp-card__unit {
+  font-size: 1rem;
+  line-height: 1.2;
+  overflow-wrap: anywhere;
+}
+
+.mvp-card__feat {
+  color: var(--muted);
+  font-size: 0.78rem;
+  line-height: 1.35;
+}
+
+.mvp-card.is-empty {
+  flex-direction: column;
+  justify-content: center;
+  gap: 0.35rem;
+  min-height: 5.5rem;
+  border-style: dashed;
+  border-top-style: solid;
+}
+
+.mvp-card__empty {
+  color: var(--muted);
+  font-size: 0.85rem;
+  font-weight: 500;
+}
+
+/* In the shared picture: the names only */
+.report-mvp-lines {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 0.6rem;
+}
+
+.report-mvp-line {
+  --pc: var(--p1);
+  display: flex;
+  flex-direction: column;
+  gap: 0.15rem;
+  padding: 0.6rem 0.75rem;
+  border: 1px solid var(--line);
+  border-top: 2px solid var(--pc);
+  border-radius: 6px;
+}
+
+.report-mvp-line.is-p2 {
+  --pc: var(--p2);
+}
+
+.report-mvp-line small {
+  display: flex;
+  align-items: center;
+  gap: 0.3rem;
+  color: var(--pc);
+  font-size: 0.56rem;
+  font-weight: 600;
+  letter-spacing: 0.14em;
+  text-transform: uppercase;
+}
+
+.report-mvp-line small .icon {
+  width: 0.8rem;
+  height: 0.8rem;
+  color: var(--warn);
+}
+
+.report-mvp-line span {
+  color: var(--muted);
+  font-size: 0.74rem;
+}
+
+/* The battle story: rounds in columns, the first player's row above the second's */
+.report-story__sub {
+  display: flex;
+  align-items: center;
+  gap: 0.35rem;
+  margin: -0.2rem 0 0;
+  color: var(--muted);
+  font-size: 0.75rem;
+}
+
+.report-story__sub .icon {
+  width: 0.9rem;
+  height: 0.9rem;
+}
+
+.report-story__grid {
+  display: grid;
+  grid-template-columns: 1.6rem repeat(5, minmax(0, 1fr));
+  gap: 0.5rem;
+}
+
+.story-round {
+  color: var(--muted);
+  font-size: 0.58rem;
+  font-weight: 600;
+  letter-spacing: 0.12em;
+  text-align: center;
+}
+
+.story-player {
+  align-self: center;
+  font-family: var(--font-num);
+  font-size: 0.7rem;
+  font-weight: 700;
+}
+
+.story-player.is-p1 {
+  color: var(--p1);
+}
+
+.story-player.is-p2 {
+  color: var(--p2);
+}
+
+.story-shot {
+  --pc: var(--p1);
+  position: relative;
+  display: block;
+  width: 100%;
+  max-width: 100%;
+  aspect-ratio: 4 / 3;
+  padding: 0;
+  overflow: hidden;
+  border: 1px solid var(--line);
+  border-radius: 6px;
+  background: var(--bg);
+  letter-spacing: 0;
+}
+
+.story-shot.is-p2 {
+  --pc: var(--p2);
+}
+
+.story-shot img {
+  display: block;
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+  transition: transform 0.3s ease;
+}
+
+.story-shot:hover img {
+  transform: scale(1.05);
+}
+
+.story-shot::after {
+  content: "";
+  position: absolute;
+  inset: auto 0 0;
+  height: 3px;
+  background: var(--pc);
+}
+
+.story-shot__label {
+  position: absolute;
+  inset: auto 0 0;
+  padding: 1rem 0.45rem 0.4rem;
+  background: linear-gradient(transparent, rgba(0, 0, 0, 0.78));
+  color: var(--text);
+  font-family: var(--font-num);
+  font-size: 0.62rem;
+  font-weight: 600;
+  text-align: left;
+}
+
+.story-shot__gain {
+  position: absolute;
+  top: 0.3rem;
+  right: 0.3rem;
+  padding: 0.05rem 0.3rem;
+  border-radius: 3px;
+  background: var(--pc);
+  color: var(--bg);
+  font-family: var(--font-num);
+  font-size: 0.62rem;
+  font-weight: 700;
+}
+
+.story-shot.is-empty,
+.story-shot.is-missing {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 0.15rem;
+  border-style: dashed;
+  color: var(--text);
+  text-align: center;
+}
+
+.story-shot.is-empty {
+  border-color: color-mix(in srgb, var(--pc) 60%, transparent);
+  background: color-mix(in srgb, var(--pc) 7%, transparent);
+}
+
+.story-shot.is-empty::after,
+.story-shot.is-missing::after {
+  display: none;
+}
+
+.story-shot.is-empty .icon {
+  width: 1.35rem;
+  height: 1.35rem;
+  color: var(--pc);
+}
+
+.story-shot.is-empty b {
+  font-size: 0.72rem;
+}
+
+.story-shot small {
+  color: var(--muted);
+  font-size: 0.6rem;
+  font-weight: 500;
+}
+
+.story-shot.is-missing {
+  border-color: var(--line);
+  background: transparent;
+}
+
+/* The secondaries folded: their points per round on the group's line, a toggle opens the cards */
+.report-fold {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.3rem;
+  margin: -0.2rem 0 -0.2rem -0.3rem;
+  padding: 0.2rem 0.35rem;
+  border: 0;
+  border-radius: 3px;
+  background: transparent;
+  color: var(--text);
+  font-size: inherit;
+  font-weight: 600;
+  letter-spacing: inherit;
+  text-transform: inherit;
+}
+
+.report-fold:hover {
+  background: color-mix(in srgb, var(--pc) 14%, transparent);
+}
+
+.report-fold .icon {
+  width: 0.95rem;
+  height: 0.95rem;
+  color: var(--pc);
+  transition: transform 0.2s ease;
+}
+
+.report-fold[aria-expanded="true"] .icon {
+  transform: rotate(90deg);
+}
+
+.report-fold__n {
+  color: var(--muted);
+  font-family: var(--font-num);
+  letter-spacing: 0;
+}
+
+.report-group.is-folded td:not(.report-total) {
+  font-size: inherit;
+  letter-spacing: 0;
+  text-align: center;
+  text-transform: none;
+}
+
+.report-group.is-folded td.report-total {
+  font-size: 0.8rem;
+}
+
+/* The result's buttons: short labels on a phone */
+.result-count {
+  min-width: 1.4rem;
+  padding: 0.05rem 0.35rem;
+  border-radius: 3px;
+  background: rgba(255, 255, 255, 0.1);
+  font-family: var(--font-num);
+  font-size: 0.7rem;
+  font-weight: 700;
+}
+
+.overlay--result .label-short,
+.overlay--result .overlay-actions button[hidden] {
+  display: none;
+}
+
+.overlay--result .result-log {
+  margin-right: auto;
+}
+
+/* ---------- End screen dialogs: MVPs and saving, over the report ---------- */
+
+.overlay.overlay--end {
+  z-index: 14;
+}
+
+.overlay--end .overlay-inner {
+  display: flex;
+  flex-direction: column;
+  gap: 0.9rem;
+  width: 34rem;
+}
+
+.overlay--mvp .overlay-inner {
+  width: 46rem;
+}
+
+.overlay--end .overlay-inner h2,
+.overlay--end .overlay-inner p {
+  margin: 0;
+}
+
+.overlay--end .overlay-actions {
+  margin-top: 0.3rem;
+}
+
+.mvp-form {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 0.9rem;
+}
+
+.mvp-field {
+  --pc: var(--p1);
+  display: flex;
+  flex-direction: column;
+  gap: 0.75rem;
+  min-width: 0;
+  margin: 0;
+  padding: 0.75rem;
+  border: 1px solid var(--line);
+  border-top: 2px solid var(--pc);
+  border-radius: 8px;
+}
+
+.mvp-field.is-p2 {
+  --pc: var(--p2);
+}
+
+.mvp-field legend {
+  float: left;
+  width: 100%;
+  padding: 0;
+  color: var(--pc);
+  font-size: 0.95rem;
+  font-weight: 600;
+}
+
+.mvp-field legend span {
+  color: var(--muted);
+  font-weight: 500;
+}
+
+.mvp-field[disabled] {
+  opacity: 0.6;
+}
+
+.overlay-inner p.mvp-field__note {
+  color: var(--muted);
+  font-size: 0.78rem;
+}
+
+.mvp-label,
+.save-field {
+  display: flex;
+  flex-direction: column;
+  gap: 0.3rem;
+  min-width: 0;
+}
+
+.mvp-label[hidden] {
+  display: none;
+}
+
+.mvp-label > span,
+.save-field > span {
+  color: var(--muted);
+  font-size: 0.6rem;
+  font-weight: 600;
+  letter-spacing: 0.14em;
+  text-transform: uppercase;
+}
+
+.mvp-label em {
+  margin-left: 0.25rem;
+  color: var(--faint);
+  font-style: normal;
+  font-weight: 500;
+  letter-spacing: 0.04em;
+  text-transform: none;
+}
+
+.mvp-label input,
+.save-field input {
+  width: 100%;
+  padding: 0.55rem 0.7rem;
+  border: 1px solid var(--line-strong);
+  border-radius: 4px;
+  background: var(--bg);
+  color: var(--text);
+  font: inherit;
+  font-size: 0.95rem;
+}
+
+.mvp-label input::placeholder {
+  color: var(--faint);
+}
+
+.mvp-label input:focus-visible {
+  outline: 2px solid var(--pc);
+  outline-offset: 1px;
+}
+
+.mvp-pick {
+  display: flex;
+  gap: 0.4rem;
+  padding: 0.15rem 0.15rem 0.35rem;
+  overflow-x: auto;
+}
+
+.mvp-pick button {
+  position: relative;
+  flex: 0 0 auto;
+  width: 4.8rem;
+  aspect-ratio: 4 / 3;
+  padding: 0;
+  overflow: hidden;
+  border: 2px solid transparent;
+  border-radius: 5px;
+  background: var(--bg);
+  letter-spacing: 0;
+}
+
+.mvp-pick img {
+  display: block;
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+}
+
+.mvp-pick button span {
+  position: absolute;
+  inset: auto 0 0;
+  padding: 0.5rem 0.25rem 0.1rem;
+  background: linear-gradient(transparent, rgba(0, 0, 0, 0.8));
+  color: var(--text);
+  font-family: var(--font-num);
+  font-size: 0.55rem;
+  text-align: left;
+}
+
+.mvp-pick .mvp-pick__none {
+  border: 1px dashed var(--line-strong);
+  color: var(--muted);
+  font-size: 0.7rem;
+}
+
+.mvp-pick button[aria-checked="true"] {
+  border: 2px solid var(--pc);
+}
+
+.mvp-pick button[aria-checked="true"]::after {
+  content: "✓";
+  position: absolute;
+  top: 0.2rem;
+  right: 0.2rem;
+  width: 1rem;
+  height: 1rem;
+  border-radius: 50%;
+  background: var(--pc);
+  color: var(--bg);
+  font-size: 0.6rem;
+  font-weight: 700;
+  line-height: 1rem;
+  text-align: center;
+}
+
+.save-grid {
+  display: grid;
+  grid-template-columns: repeat(5, minmax(0, 1fr));
+  gap: 0.25rem;
+}
+
+.save-grid img {
+  display: block;
+  width: 100%;
+  aspect-ratio: 4 / 3;
+  border-radius: 3px;
+  object-fit: cover;
+}
+
+.save-notice {
+  display: flex;
+  align-items: center;
+  gap: 0.6rem;
+  padding: 0.5rem 0.65rem;
+  border: 1px solid color-mix(in srgb, var(--warn) 40%, transparent);
+  border-radius: 6px;
+  background: color-mix(in srgb, var(--warn) 8%, transparent);
+  font-size: 0.82rem;
+}
+
+.save-notice > span {
+  flex: 1;
+}
+
+.save-notice .icon {
+  color: var(--warn);
+}
+
+.save-check {
+  display: flex;
+  align-items: center;
+  gap: 0.55rem;
+  font-size: 0.88rem;
+  cursor: pointer;
+}
+
+.save-check input {
+  width: 1rem;
+  height: 1rem;
+  accent-color: var(--text);
+}
+
+.overlay-inner p.save-names,
+.save-tree {
+  padding: 0.6rem 0.75rem;
+  border: 1px solid var(--line);
+  border-radius: 6px;
+  background: var(--bg);
+  color: var(--text);
+  font-family: var(--font-num);
+  font-size: 0.72rem;
+  line-height: 1.65;
+  overflow-wrap: anywhere;
+}
+
+.save-tree__dir {
+  display: flex;
+  align-items: center;
+  gap: 0.45rem;
+  font-weight: 600;
+}
+
+.save-tree__dir .icon {
+  color: var(--warn);
+}
+
+.save-tree ul {
+  max-height: 10.5rem;
+  margin: 0.25rem 0 0;
+  padding: 0 0 0 1.4rem;
+  overflow-y: auto;
+  color: var(--muted);
+  list-style: none;
+}
+
+.overlay-inner p.save-note {
+  color: var(--muted);
+  font-size: 0.75rem;
+  line-height: 1.5;
+}
+
+.save-progress {
+  height: 6px;
+  overflow: hidden;
+  border-radius: 3px;
+  background: var(--line);
+}
+
+.save-progress i {
+  display: block;
+  width: 0;
+  height: 100%;
+  background: var(--text);
+  transition: width 0.15s linear;
+}
+
+.overlay-inner p.save-mono,
+.overlay-inner p.save-path {
+  font-family: var(--font-num);
+  font-size: 0.78rem;
+  overflow-wrap: anywhere;
+}
+
+.overlay-inner p.save-path {
+  padding: 0.55rem 0.7rem;
+  border: 1px solid var(--line);
+  border-radius: 4px;
+  background: var(--bg);
+  color: var(--text);
+}
+
+.save-done {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 2.8rem;
+  height: 2.8rem;
+  border: 1px solid var(--line-strong);
+  border-radius: 50%;
+}
+
+/* ---------- Photo viewer: the table, full size, to study ---------- */
+
+.overlay.overlay--viewer {
+  z-index: 15;
+  align-items: stretch;
+  justify-content: stretch;
+  background: rgba(0, 0, 0, 0.94);
+  backdrop-filter: none;
+  -webkit-backdrop-filter: none;
+}
+
+.viewer {
+  --pc: var(--p1);
+  display: flex;
+  flex-direction: column;
+  width: 100%;
+  height: 100%;
+  padding: max(0.9rem, env(safe-area-inset-top, 0px)) max(0.9rem, env(safe-area-inset-right, 0px)) max(0.9rem, env(safe-area-inset-bottom, 0px)) max(0.9rem, env(safe-area-inset-left, 0px));
+}
+
+.viewer.is-p2 {
+  --pc: var(--p2);
+}
+
+.viewer__top {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+}
+
+.viewer__count {
+  margin-right: auto;
+  color: var(--muted);
+  font-family: var(--font-num);
+  font-size: 0.8rem;
+  font-weight: 600;
+}
+
+.viewer__button {
+  display: inline-flex;
+  padding: 0.45rem;
+  border: 1px solid var(--line-strong);
+  background: transparent;
+  color: var(--text);
+}
+
+.overlay--viewer.is-zoomed #btn-viewer-zoom {
+  background: var(--text);
+  color: var(--bg);
+}
+
+.viewer__stage {
+  position: relative;
+  flex: 1;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  min-height: 0;
+  padding: 0.75rem 0;
+  overflow: hidden;
+  touch-action: none;
+  user-select: none;
+  -webkit-user-select: none;
+  cursor: zoom-in;
+}
+
+.overlay--viewer.is-zoomed .viewer__stage {
+  cursor: grab;
+}
+
+.viewer__img {
+  max-width: 100%;
+  max-height: 100%;
+  border-radius: 4px;
+  box-shadow: 0 0 0 1px var(--line);
+  transform-origin: center;
+  transition:
+    opacity 0.18s ease,
+    transform 0.22s ease;
+  -webkit-user-drag: none;
+}
+
+.viewer__img.is-dragging {
+  transition: opacity 0.18s ease;
+}
+
+.viewer__nav {
+  position: absolute;
+  top: 50%;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 2.75rem;
+  height: 2.75rem;
+  margin-top: -1.375rem;
+  padding: 0;
+  border: 1px solid var(--line-strong);
+  border-radius: 50%;
+  background: rgba(0, 0, 0, 0.55);
+  color: var(--text);
+}
+
+.viewer__nav.is-prev {
+  left: 0.6rem;
+}
+
+.viewer__nav.is-next {
+  right: 0.6rem;
+}
+
+.viewer__nav:disabled,
+.overlay--viewer.is-zoomed .viewer__nav {
+  opacity: 0;
+  pointer-events: none;
+}
+
+.viewer__caption {
+  text-align: center;
+}
+
+.viewer__caption p {
+  margin: 0;
+}
+
+.viewer__turn {
+  color: var(--pc);
+  font-size: 0.64rem;
+  font-weight: 600;
+  letter-spacing: 0.16em;
+  text-transform: uppercase;
+}
+
+.viewer__line {
+  margin-top: 0.3rem !important;
+  font-family: var(--font-num);
+  font-size: 1rem;
+  font-weight: 600;
+}
+
+.viewer__hint {
+  margin-top: 0.6rem !important;
+  color: var(--faint);
+  font-size: 0.7rem;
+}
+
+/* A phone: the photos in a strip that scrolls, the dialogs as sheets from the bottom */
+@media (max-width: 640px) {
+  .report-story__grid {
+    display: flex;
+    gap: 0.5rem;
+    margin: 0 -0.6rem;
+    padding: 0 0.6rem 0.25rem;
+    overflow-x: auto;
+    scroll-snap-type: x mandatory;
+    scroll-padding: 0 0.6rem;
+  }
+
+  .story-round,
+  .story-player,
+  .story-shot.is-missing,
+  .report-fold__n {
+    display: none;
+  }
+
+  .story-shot {
+    flex: 0 0 8.5rem;
+    scroll-snap-align: start;
+  }
+
+  .mvp-grid {
+    gap: 0.5rem;
+  }
+
+  .mvp-card {
+    flex-direction: column;
+    gap: 0.5rem;
+  }
+
+  .mvp-card__photo {
+    width: 100%;
+  }
+
+  .mvp-form {
+    grid-template-columns: 1fr;
+  }
+
+  .overlay--result .overlay-actions {
+    display: grid;
+    grid-template-columns: auto minmax(0, 1fr) minmax(0, 1fr);
+    gap: 0.5rem;
+  }
+
+  .overlay--result .overlay-actions button {
+    justify-content: center;
+  }
+
+  .overlay--result .result-log {
+    margin: 0;
+    padding-inline: 0.7rem;
+  }
+
+  .overlay--result .result-log span,
+  .overlay--result .result-ok kbd,
+  .overlay--result .label-long {
+    display: none;
+  }
+
+  .overlay--result .label-short {
+    display: inline;
+  }
+
+  .overlay--result .result-ok {
+    grid-column: 1 / -1;
+  }
+
+  .overlay--end {
+    align-items: flex-end;
+  }
+
+  .overlay--end .overlay-inner {
+    max-width: calc(100vw / var(--ui-scale));
+    max-height: calc((100vh - 3rem) / var(--ui-scale));
+    padding: 1.1rem 1rem max(1.4rem, env(safe-area-inset-bottom, 0px));
+    border-radius: 14px 14px 0 0;
+  }
+
+  .overlay--end .overlay-actions {
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+  }
+
+  .overlay--end .overlay-actions button {
+    justify-content: center;
+  }
+
+  .overlay--end .overlay-actions kbd {
+    display: none;
+  }
+}
+
 /* A phone: the card names get the room, on two lines if they need it, rather than cut short */
 @media (max-width: 640px) {
   .overlay--result .overlay-inner {

@@ -35,9 +35,32 @@
           ".write": "auth != null && (root.child('rooms').child($code).child('seats/1').val() === auth.uid || root.child('rooms').child($code).child('seats/2').val() === auth.uid || root.child('rooms').child($code).child('boards').child(auth.uid).exists())",
           ".validate": "newData.isString() && newData.val().length < 200000"
         },
+        "photos": {
+          ".write": "auth != null && ((root.child('rooms').child($code).child('seats/1').val() === auth.uid || root.child('rooms').child($code).child('seats/2').val() === auth.uid || root.child('rooms').child($code).child('boards').child(auth.uid).exists()) || (!newData.exists() && root.child('photoRooms').child($code).val() < now - 172800000))",
+          "$key": {
+            ".validate": "$key.matches(/^[a-z0-9]{1,20}_[1-5]_[12]$/) && newData.hasChildren(['at', 'data'])",
+            "at": {
+              ".validate": "newData.isNumber()"
+            },
+            "data": {
+              ".validate": "newData.isString() && newData.val().length < 1000000 && newData.val().beginsWith('data:image/jpeg;base64,')"
+            },
+            "$other": {
+              ".validate": false
+            }
+          }
+        },
         "$other": {
           ".validate": false
         }
+      }
+    },
+    "photoRooms": {
+      ".read": "auth != null",
+      ".indexOn": ".value",
+      "$code": {
+        ".write": "auth != null && $code.matches(/^[A-HJ-NP-Z2-9]{5}$/) && ((root.child('rooms').child($code).child('seats/1').val() === auth.uid || root.child('rooms').child($code).child('seats/2').val() === auth.uid || root.child('rooms').child($code).child('boards').child(auth.uid).exists()) || (!newData.exists() && data.val() < now - 172800000))",
+        ".validate": "newData.isNumber() && newData.val() <= now"
       }
     }
   }
