@@ -110,6 +110,11 @@ export type ClockEvent = {
 export type GameState = {
   /** Given when the battle starts: the photos of the table are kept under it */
   gameId: string;
+  /**
+   * Each player's army (a faction id from factions.ts), picked on their own phone or on the
+   * shared screen: it names the player and colors their side. Null until picked
+   */
+  factions: Record<Player, string | null>;
   phase: Phase;
   clock: Clock;
   /** Whose player turn it is. Only the end of a turn changes it; switching the clock doesn't */
@@ -200,6 +205,7 @@ export function newGameId(): string {
 export function newGame(seconds: number = DEFAULT_TIME_SEC): GameState {
   return {
     gameId: "",
+    factions: { 1: null, 2: null },
     phase: "setup",
     clock: { left: { 1: seconds, 2: seconds }, active: 1, since: null },
     turnPlayer: 1,

@@ -1,8 +1,8 @@
 import "./style.css";
-import { getLang, setLang, t, type Lang, type StringKey } from "./i18n";
+import { getLang, setLang, setPlayerNames, t, type Lang, type StringKey } from "./i18n";
 import type { MissionAction } from "./actions";
 import { SECONDARY_BY_ID, type SecondaryCard, type Text } from "./secondaries";
-import { FACTION_BY_ID, FACTIONS, SPACE_MARINES, SPACE_MARINES_NAME, type FactionGroup } from "./factions";
+import { FACTION_BY_ID, FACTIONS, SPACE_MARINES, SPACE_MARINES_NAME, type Faction, type FactionGroup } from "./factions";
 import { applyUpdateIfIdle, setupPwa } from "./pwa";
 import type { Room, RoomEvents, Seat, Seats } from "./room";
 import { merge } from "./sync";
@@ -129,12 +129,8 @@ const UI_SIZE_DEFAULT = "auto";
 const LAYOUT_STORAGE_KEY = "warhammerClock.layout";
 const LAYOUT_DEFAULT = "auto";
 
-/** "21": Player 2 on the left (or on top), for players sitting the other way round at the screen */
-const SIDES_STORAGE_KEY = "warhammerClock.sides";
-
 const LANG_STORAGE_KEY = "warhammerClock.lang";
 
-const THEME_STORAGE_KEY = "warhammerClock.theme";
 
 /** Saved by older versions even when nobody picked it: read once, for an "on" */
 const SOUNDS_STORAGE_KEY = "warhammerClock.sounds";
@@ -149,7 +145,6 @@ const MUTE_KEY_CODE = "KeyM";
 /** Time left that rings a warning when a clock goes under it */
 const TIME_WARNINGS_SEC = [600, 300, 60];
 
-const FACTION_DEFAULTS: Record<Player, string> = { 1: "imperial-fists", 2: "tyranids" };
 /** Picking Space Marines starts on this chapter */
 const DEFAULT_CHAPTER = "ultramarines";
 const FACTION_GROUPS: { group: FactionGroup; label: StringKey }[] = [
@@ -157,9 +152,10 @@ const FACTION_GROUPS: { group: FactionGroup; label: StringKey }[] = [
   { group: "chaos", label: "factionChaos" },
   { group: "xenos", label: "factionXenos" },
 ];
-let factionOf: Record<Player, string> = { ...FACTION_DEFAULTS };
-const factionStorageKey = (player: Player): string => `warhammerClock.faction.p${player}`;
-const THEME_DEFAULT = "clean";
+/** The armies last picked on a screen for both players, for its next game */
+const factionStorageKey = (player: Player): string => `warhammerClock.army.p${player}`;
+/** The army last picked on a player's own phone (or PC), brought into their next game */
+const MY_ARMY_STORAGE_KEY = "warhammerClock.army.mine";
 
 const app = document.querySelector<HTMLDivElement>("#app")!;
 
@@ -183,10 +179,6 @@ const pickerHtml = (id: string): string => `
     </button>
     <div class="picker__list" role="listbox" hidden></div>
   </span>`;
-
-/** A tiny clock screen in the theme's own colors: player 1's clock running, player 2's waiting */
-const themePreviewHtml = (theme: string): string =>
-  `<span class="theme-preview theme-preview--${theme}" aria-hidden="true"><span class="theme-preview__half">2:00</span><span class="theme-preview__half">2:00</span></span>`;
 
 const ICON_TARGET = svgIcon('<circle cx="12" cy="12" r="7" /><circle cx="12" cy="12" r="2.5" /><path d="M12 2v3M12 19v3M2 12h3M19 12h3" />');
 const ICON_CARDS = svgIcon('<rect x="4" y="6" width="11" height="15" rx="2" /><path d="M9 3h9a2 2 0 0 1 2 2v13" />');
@@ -378,20 +370,15 @@ app.innerHTML = `
               <input type="range" class="volume" id="volume" min="0" max="100" step="5" data-i18n-aria="volume" />
             </div>
           </div>
-          <div class="settings__section settings__section--theme">
-            <span class="settings__label" data-i18n="theme"></span>
-            <div class="segmented segmented--tiles" id="theme-options" role="group" data-i18n-aria="theme">
-              <button type="button" class="segmented__option" data-value="clean">${themePreviewHtml("clean")}<span data-i18n="themeClean"></span></button>
-              <button type="button" class="segmented__option" data-value="warzone">${themePreviewHtml("warzone")}<span data-i18n="themeWarzone"></span></button>
-              <button type="button" class="segmented__option" data-value="factions">${themePreviewHtml("factions")}<span data-i18n="themeFactions"></span></button>
-            </div>
-            <div class="faction-menu" id="factions-section" hidden>
+          <div class="settings__section settings__section--armies">
+            <span class="settings__label" data-i18n="armies"></span>
+            <div class="faction-menu" id="factions-section">
               <button type="button" class="faction-swap" id="faction-swap" data-i18n-title="factionSwap">${ICON_SWAP}<span data-i18n="factionSwapShort"></span></button>
               ${([1, 2] as const)
                 .map(
                   (player) => `
-              <div class="faction-row">
-                <label class="faction-row__player is-p${player}" for="p${player}-faction" data-i18n="player" data-v-n="${player}"></label>
+              <div class="faction-row" id="faction-row-${player}">
+                <label class="faction-row__player is-p${player}" for="p${player}-faction" id="faction-side-${player}"></label>
                 ${pickerHtml(`p${player}-faction`)}
                 <span class="faction-row__chapter" id="p${player}-chapter-wrap" hidden>${pickerHtml(`p${player}-chapter`)}</span>
               </div>`,
@@ -407,17 +394,6 @@ app.innerHTML = `
                 <button type="button" class="segmented__option" data-value="auto" data-i18n="sizeAuto"></button>
                 <button type="button" class="segmented__option" data-value="rows" data-i18n-title="layoutRows" data-i18n-aria="layoutRows">${ICON_ROWS}</button>
                 <button type="button" class="segmented__option" data-value="columns" data-i18n-title="layoutColumns" data-i18n-aria="layoutColumns">${ICON_COLUMNS}</button>
-              </div>
-            </div>
-            <div class="settings-row settings-row--sides">
-              <span class="settings-row__label" data-i18n="sides"></span>
-              <div class="segmented" id="sides-options" role="group" data-i18n-aria="sidesAria">
-                ${(["12", "21"] as const)
-                  .map(
-                    (order) =>
-                      `<button type="button" class="segmented__option" data-value="${order}"><span class="sides-icon" aria-hidden="true">${[...order].map((n) => `<i class="is-p${n}">${n}</i>`).join("")}</span></button>`,
-                  )
-                  .join("")}
               </div>
             </div>
             <div class="settings-row">
@@ -850,8 +826,15 @@ app.innerHTML = `
   </div>
 `;
 
-const themeOptions = app.querySelector<HTMLElement>("#theme-options")!;
 const factionsSection = app.querySelector<HTMLElement>("#factions-section")!;
+const factionRow: Record<Player, HTMLElement> = {
+  1: app.querySelector<HTMLElement>("#faction-row-1")!,
+  2: app.querySelector<HTMLElement>("#faction-row-2")!,
+};
+const factionSide: Record<Player, HTMLElement> = {
+  1: app.querySelector<HTMLElement>("#faction-side-1")!,
+  2: app.querySelector<HTMLElement>("#faction-side-2")!,
+};
 const factionPickerEl: Record<Player, HTMLElement> = {
   1: app.querySelector<HTMLElement>("#p1-faction")!.closest<HTMLElement>(".picker")!,
   2: app.querySelector<HTMLElement>("#p2-faction")!.closest<HTMLElement>(".picker")!,
@@ -865,7 +848,6 @@ const chapterWrap: Record<Player, HTMLElement> = {
   2: app.querySelector<HTMLElement>("#p2-chapter-wrap")!,
 };
 const layoutOptions = app.querySelector<HTMLElement>("#layout-options")!;
-const sidesOptions = app.querySelector<HTMLElement>("#sides-options")!;
 const uiSizeOptions = app.querySelector<HTMLElement>("#ui-size-options")!;
 const langOptions = app.querySelector<HTMLElement>("#lang-options")!;
 const sfxToggle = app.querySelector<HTMLInputElement>("#sfx-toggle")!;
@@ -1012,6 +994,13 @@ const onlineError = app.querySelector<HTMLElement>("#online-error")!;
 
 /** Everything both players share: see game.ts. The rest of this file is the screen */
 let game: GameState = newGame();
+
+// A player goes by their army once picked; by their number before, or when both picked the same
+setPlayerNames((n) => {
+  const player: Player = n === 2 ? 2 : 1;
+  const name = factionName(player);
+  return name && name !== factionName(other(player)) ? name : t("playerNumber", { n: player });
+});
 
 /** A device in an online game: the room once connected */
 type RoomSession = {
@@ -1470,8 +1459,21 @@ const formatMinutes = (seconds: number): string => `${Math.round(seconds / 60)}'
 
 const reportDetail = (): boolean => reportDetailOpen ?? (stored(REPORT_DETAIL_STORAGE_KEY) ? stored(REPORT_DETAIL_STORAGE_KEY) === "open" : !PHONE.matches);
 
-const factionName = (player: Player): string | undefined =>
-  document.documentElement.dataset.theme === "factions" ? FACTION_BY_ID.get(factionOf[player])?.name[getLang()] : undefined;
+/** The army a player picked, if any */
+function factionOf(player: Player): Faction | undefined {
+  const id = game.factions[player];
+  return id ? FACTION_BY_ID.get(id) : undefined;
+}
+
+function factionName(player: Player): string | undefined {
+  return factionOf(player)?.name[getLang()];
+}
+
+/** The army beside a player's name, when the name is not already it (both picked the same) */
+function factionAside(player: Player): string | undefined {
+  const name = factionName(player);
+  return name && name !== t("player", { n: player }) ? name : undefined;
+}
 
 /**
  * `image`: the picture shared from the report, with every card shown. On screen, the secondaries
@@ -1482,7 +1484,7 @@ function reportPlayer(player: Player, spent: Record<Player, number[]> | null, im
   const primaryTotal = scoreOf(player, "primary");
   const secondaryTotal = scoreOf(player, "secondary");
   const disposition = DISPOSITIONS.find(({ id }) => id === game.dispositions[player])?.name;
-  const sub = [factionName(player), disposition].filter(Boolean).join(" · ");
+  const sub = [factionAside(player), disposition].filter(Boolean).join(" · ");
   const sumSpent = spent ? spent[player].reduce((total, seconds) => total + seconds, 0) : 0;
   const badges = [
     game.preBattle?.deployFirst === player ? t("reportDeployedFirst") : "",
@@ -1722,7 +1724,7 @@ function openMvp(focus: Player): void {
     .map((player) => {
       const draft = mvpDraft![player];
       const editable = canEdit(player);
-      const faction = factionName(player);
+      const faction = factionAside(player);
       return `
       <fieldset class="mvp-field is-p${player}"${editable ? "" : " disabled"}>
         <legend>${t("player", { n: player })}${faction ? ` <span>· ${faction}</span>` : ""}</legend>
@@ -1865,7 +1867,7 @@ function reportHeroHtml(title: boolean): string {
     .filter(Boolean)
     .join(" · ");
   const side = (player: Player): string => {
-    const faction = factionName(player);
+    const faction = factionAside(player);
     return `<div class="report-side is-p${player}"><span class="report-side__name">${t("player", { n: player })}</span>${faction ? `<span class="report-side__faction">${faction}</span>` : ""}</div>`;
   };
   const score = (player: Player): string => `<b class="is-p${player}${winner && winner !== player ? " is-behind" : ""}">${scoreOf(player)}</b>`;
@@ -2306,7 +2308,7 @@ const toGallery = (): boolean => CAN_SHOOT.matches || PHONE.matches;
 const unsafeName = /[\\/:*?"<>|]/g;
 
 function defaultFolder(): string {
-  const [a, b] = ([1, 2] as const).map((player) => factionName(player) ?? t("player", { n: player }));
+  const [a, b] = ([1, 2] as const).map((player) => t("player", { n: player }));
   return `${battleDay()} ${a} vs ${b} ${scoreOf(1)}-${scoreOf(2)}`.replace(unsafeName, "");
 }
 
@@ -2628,91 +2630,127 @@ function fitScreen(): void {
 
 window.addEventListener("resize", fitScreen);
 
-/** Player 2 first on the board, on the left or on top: set by hand on a screen both players face */
-let sidesSwapped = false;
-
 /**
  * A player's PC shows the whole board: its own side marked, the opponent's to read, and turned so
- * its own side is the nearest one, at the bottom or on the left. A screen for both players puts
- * each player on the side they sit
+ * its own side is the nearest one, at the bottom or on the left
  */
 function renderMe(): void {
   const root = document.documentElement;
   const me = online && !online.phone ? online.seat : null;
   if (me) root.dataset.me = String(me);
   else delete root.dataset.me;
-  const columns = root.dataset.layout === "columns";
-  root.toggleAttribute("data-flip", me !== null ? (columns ? me === 2 : me === 1) : sidesSwapped);
-  // Said the way the board is split: left and right, or top and bottom
-  sidesOptions.querySelectorAll<HTMLElement>(".segmented__option").forEach((option) => {
-    const label = t(columns ? "sidesLeft" : "sidesTop", { n: option.dataset.value![0] });
-    option.title = label;
-    option.setAttribute("aria-label", label);
-  });
+  root.toggleAttribute("data-flip", me !== null && (root.dataset.layout === "columns" ? me === 2 : me === 1));
+  renderFactionRows();
 }
-
-function applySides(order: string): void {
-  sidesSwapped = order === "21";
-  setSegmentedValue(sidesOptions, sidesSwapped ? "21" : "12");
-  store(SIDES_STORAGE_KEY, sidesSwapped ? "21" : "12");
-  renderMe();
-}
-const THEMES = new Set(["clean", "warzone", "factions"]);
-
-function applyTheme(theme: string): void {
-  const v = THEMES.has(theme) ? theme : THEME_DEFAULT;
-  const root = document.documentElement;
-  root.classList.add("is-retheming");
-  root.dataset.theme = v;
-  setSegmentedValue(themeOptions, v);
-  // The faction menu comes and goes inside the open panel: the panel grows or shrinks to it
-  glideHeight(settingsPanel, () => {
-    factionsSection.hidden = v !== "factions";
-  });
-  // The new colors are computed without transitions, then the transitions come back with nothing to fade
-  void document.body.offsetWidth;
-  root.classList.remove("is-retheming");
-  try {
-    localStorage.setItem(THEME_STORAGE_KEY, v);
-  } catch {
-    /* quota / private mode */
-  }
-}
-
-/** On <html> for the player colors used everywhere, on the panel for its own decor */
-function applyFaction(player: Player, id: string): void {
-  const faction = FACTION_BY_ID.get(id) ?? FACTION_BY_ID.get(FACTION_DEFAULTS[player])!;
-  factionOf = { ...factionOf, [player]: faction.id };
+/** On <html> for the player colors used everywhere, on the panel for its own decor: none before an army is picked */
+function applyFactionLook(player: Player): void {
+  const faction = factionOf(player);
   const root = document.documentElement.style;
+  const panel = player === 1 ? panel1 : panel2;
+  if (!faction) {
+    root.removeProperty(`--fx${player}`);
+    root.removeProperty(`--fx${player}-time`);
+    delete panel.dataset.band;
+    delete panel.dataset.texture;
+    panel.style.removeProperty("--fx-a");
+    panel.style.removeProperty("--fx-b");
+    return;
+  }
   root.setProperty(`--fx${player}`, faction.color);
   root.setProperty(`--fx${player}-time`, faction.time);
-  const panel = player === 1 ? panel1 : panel2;
   panel.dataset.band = faction.band;
   panel.dataset.texture = faction.texture;
   panel.style.setProperty("--fx-a", faction.color);
   panel.style.setProperty("--fx-b", faction.accent);
-  showFactionChoice(player);
-  try {
-    localStorage.setItem(factionStorageKey(player), faction.id);
-  } catch {
-    /* quota / private mode */
-  }
 }
 
-/** The players sat the other way round: each keeps their army, the seats trade colors */
+/** A player picks their army: on their own phone, or for both on a shared screen */
+function setFaction(player: Player, id: string): void {
+  if (!canEdit(player) || !FACTION_BY_ID.has(id)) return;
+  game.factions = { ...game.factions, [player]: id };
+  // Remembered for the next game: a player's own army on their device, both sides on a screen
+  store(online ? MY_ARMY_STORAGE_KEY : factionStorageKey(player), id);
+  renderFactions();
+}
+
+/** The players sat the other way round: each keeps their army, the sides trade them */
 function swapFactions(): void {
-  const [first, second] = [factionOf[1], factionOf[2]];
+  if (online) return;
   closePicker();
-  applyFaction(1, second);
-  applyFaction(2, first);
+  game.factions = { 1: game.factions[2], 2: game.factions[1] };
+  for (const player of [1, 2] as const) {
+    const id = game.factions[player];
+    if (id) store(factionStorageKey(player), id);
+    else forget(factionStorageKey(player));
+  }
+  renderFactions();
+}
+
+/** A screen's last two armies, for its next game */
+function loadFactions(): void {
+  for (const player of [1, 2] as const) {
+    const id = stored(factionStorageKey(player));
+    game.factions[player] = id && FACTION_BY_ID.has(id) ? id : null;
+  }
+  renderFactions();
+}
+
+/** A player's device in a game brings the army they picked last time, until they pick another */
+function claimArmy(): void {
+  if (!online?.room || synced.rev === 0 || game.factions[online.seat]) return;
+  const mine = stored(MY_ARMY_STORAGE_KEY);
+  if (!mine || !FACTION_BY_ID.has(mine)) return;
+  game.factions = { ...game.factions, [online.seat]: mine };
+  renderFactions();
+  void pushState();
+}
+
+let namedFactions = "";
+
+/** The armies on screen: colors, decor, the lists, and the players' names wherever they show */
+function renderFactions(): void {
+  applyFactionLook(1);
+  applyFactionLook(2);
+  showFactionChoice(1);
+  showFactionChoice(2);
+  renderFactionRows();
+  const named = JSON.stringify(game.factions);
+  if (named === namedFactions) return;
+  namedFactions = named;
+  // Every text naming a player says it anew
+  applyLang(getLang());
+}
+
+/**
+ * Each army list says whose it is: on a phone, the player's own; on a screen, the side of the board
+ * it colors (a player's PC turns the board its own way). Online, a device picks its player's only
+ */
+function renderFactionRows(): void {
+  const root = document.documentElement;
+  const columns = root.dataset.layout === "columns";
+  const flipped = root.hasAttribute("data-flip");
+  for (const player of [1, 2] as const) {
+    const own = phoneView() && online?.seat === player;
+    const first = (player === 1) !== flipped;
+    factionSide[player].textContent = t(own ? "yourArmy" : columns ? (first ? "sideLeft" : "sideRight") : first ? "sideTop" : "sideBottom");
+    for (const picker of [factionPickerEl[player], chapterPickerEl[player]]) {
+      picker.querySelector<HTMLButtonElement>(".picker__button")!.disabled = !canEdit(player);
+    }
+  }
+  app.querySelector<HTMLElement>("#faction-swap")!.hidden = !!online;
 }
 
 /** A chapter shows as Space Marines in the first list, the chapter itself in the second */
 function showFactionChoice(player: Player): void {
-  const faction = FACTION_BY_ID.get(factionOf[player])!;
-  setPickerValue(factionPickerEl[player], faction.chapter ? { ...faction, name: SPACE_MARINES_NAME } : faction);
-  setPickerValue(chapterPickerEl[player], faction);
-  chapterWrap[player].hidden = !faction.chapter;
+  const faction = factionOf(player);
+  factionRow[player].classList.toggle("is-empty", !faction);
+  chapterWrap[player].hidden = !faction?.chapter;
+  if (!faction) {
+    setPickerValue(factionPickerEl[player], { label: t("pickArmy"), color: "var(--faint)", accent: "var(--faint)" });
+    return;
+  }
+  setPickerValue(factionPickerEl[player], { ...faction, label: (faction.chapter ? SPACE_MARINES_NAME : faction.name)[getLang()] });
+  setPickerValue(chapterPickerEl[player], { ...faction, label: faction.name[getLang()] });
 }
 
 function refreshFactionPickers(): void {
@@ -2761,18 +2799,18 @@ const factionPickers: Picker[] = ([1, 2] as const).flatMap((player) => [
   {
     root: factionPickerEl[player],
     groups: factionGroups,
-    selected: () => (FACTION_BY_ID.get(factionOf[player])!.chapter ? SPACE_MARINES : factionOf[player]),
+    selected: () => (factionOf(player)?.chapter ? SPACE_MARINES : (game.factions[player] ?? "")),
     pick: (value: string) => {
       // Space Marines again keeps the chapter already chosen
-      if (value === SPACE_MARINES && FACTION_BY_ID.get(factionOf[player])!.chapter) return;
-      applyFaction(player, value === SPACE_MARINES ? DEFAULT_CHAPTER : value);
+      if (value === SPACE_MARINES && factionOf(player)?.chapter) return;
+      setFaction(player, value === SPACE_MARINES ? DEFAULT_CHAPTER : value);
     },
   },
   {
     root: chapterPickerEl[player],
     groups: chapterGroups,
-    selected: () => factionOf[player],
-    pick: (value: string) => applyFaction(player, value),
+    selected: () => game.factions[player] ?? "",
+    pick: (value: string) => setFaction(player, value),
   },
 ]);
 
@@ -2792,8 +2830,8 @@ function swatchEl({ color, accent }: { color: string; accent: string }): HTMLEle
   return swatch;
 }
 
-function setPickerValue(root: HTMLElement, value: { name: Text; color: string; accent: string }): void {
-  root.querySelector(".picker__label")!.textContent = value.name[getLang()];
+function setPickerValue(root: HTMLElement, value: { label: string; color: string; accent: string }): void {
+  root.querySelector(".picker__label")!.textContent = value.label;
   root.querySelector(".picker__swatch")!.replaceWith(swatchEl(value));
 }
 
@@ -2879,28 +2917,6 @@ function onPickerKey(picker: Picker, e: KeyboardEvent): void {
   } else return;
   e.preventDefault();
   e.stopPropagation();
-}
-
-function loadFactions(): void {
-  for (const player of [1, 2] as const) {
-    let stored = FACTION_DEFAULTS[player];
-    try {
-      stored = localStorage.getItem(factionStorageKey(player)) ?? stored;
-    } catch {
-      /* ignore */
-    }
-    applyFaction(player, stored);
-  }
-}
-
-function loadTheme(): void {
-  let stored = THEME_DEFAULT;
-  try {
-    stored = localStorage.getItem(THEME_STORAGE_KEY) ?? THEME_DEFAULT;
-  } catch {
-    /* ignore */
-  }
-  applyTheme(stored);
 }
 
 /** Set on <html> so the tooltips, appended to <body>, scale too */
@@ -6727,7 +6743,6 @@ timePicker.addEventListener("mouseenter", () => {
   });
 });
 
-onSegmentedPick(themeOptions, applyTheme);
 app.querySelector("#faction-swap")!.addEventListener("click", swapFactions);
 for (const picker of factionPickers) {
   const button = pickerButton(picker);
@@ -6776,7 +6791,6 @@ volumeInput.addEventListener("input", () => applyVolume(Number(volumeInput.value
 window.addEventListener("pointerdown", unlockAudio);
 window.addEventListener("keydown", unlockAudio);
 onSegmentedPick(layoutOptions, applyLayout);
-onSegmentedPick(sidesOptions, applySides);
 onSegmentedPick(langOptions, (value) => applyLang(value, true));
 
 btnSettings.addEventListener("click", () => togglePopover(btnSettings, settingsPanel));
@@ -6800,8 +6814,9 @@ btnTime.addEventListener("click", () => {
   timePicker.classList.toggle("is-open", open);
   if (open) timePicker.classList.remove("is-folded");
 });
+// An army list outside the menu (a phone's setup) closes on its own, after its pick
 document.addEventListener("pointerdown", (e) => {
-  if (!(e.target as HTMLElement).closest(".popover-anchor, .time-picker")) closePopovers();
+  if (!(e.target as HTMLElement).closest(".popover-anchor, .time-picker, .picker")) closePopovers();
 });
 
 /* ---------- Online: one game on two phones ---------- */
@@ -6868,6 +6883,7 @@ function receiveState(remote: Synced): void {
   synced = remote;
   if (next !== local) applyState(next, joining);
   if (next !== remote.json) void pushState();
+  if (joining) claimArmy();
 }
 
 function applyState(json: string, joining = false): void {
@@ -6886,6 +6902,7 @@ const cardsData = (state: GameState, player: Player): string =>
  * its own after an action of its own (sounds, overlays, the loop) follows from what changed
  */
 function renderState(prev: GameState, joining: boolean): void {
+  renderFactions();
   photoBreaksToggle.checked = game.options.photoBreaks;
   secondaryCardsToggle.checked = game.options.cards;
   deployClockToggle.checked = deploymentTimed();
@@ -7083,11 +7100,11 @@ async function connectRoom(seat: Seat, code?: string, resume = false): Promise<v
     online.seat = room.seat;
     if (online.phone) document.documentElement.dataset.seat = String(room.seat);
     renderMe();
-    showToast(t("onlineSeatSwitched", { n: room.seat }), true);
   }
   store(ONLINE_STORAGE_KEY, JSON.stringify({ code: room.code, seat: room.seat }));
   renderSeat();
   renderOnlineDialog();
+  claimArmy();
 }
 
 /** Back to one screen for both players, with the game as it stands */
@@ -7193,7 +7210,12 @@ function renderSeat(): void {
     }
     const toastHome = inSeat ? seatCpCard : cpToastHome[player];
     if (cpToastEl[player].parentElement !== toastHome) toastHome.append(cpToastEl[player]);
+    // A phone picks its own army at the top of its setup; the menu keeps both for a screen
+    if (inSeat && factionRow[player].parentElement !== seatSetup) seatSetup.prepend(factionRow[player]);
   }
+  const homeRows = ([1, 2] as const).filter((player) => !(phoneView() && online?.seat === player)).map((player) => factionRow[player]);
+  if (homeRows.some((row) => row.parentElement !== factionsSection)) factionsSection.append(...homeRows);
+  renderFactionRows();
   renderPhoneHome();
   // A phone's own screen has no setup bar: the menu and the game setup move into it. The board
   // hides its bar during a game: the menu opens from the strip then, over the board, unscaled
@@ -7690,10 +7712,8 @@ btnStart.addEventListener("click", () => {
 
 setTimePreset(String(DEFAULT_TIME_SEC));
 loadLang();
-loadTheme();
 loadFactions();
 loadLayout();
-applySides(stored(SIDES_STORAGE_KEY) ?? "12");
 loadUiSize();
 loadSound();
 updateManualInputsVisibility();
