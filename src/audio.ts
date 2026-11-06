@@ -34,6 +34,7 @@ export type SoundName =
   | "battleReady"
   | "timeOut"
   | "flip"
+  | "reveal"
   | "slide"
   | "stepUp"
   | "stepDown"
@@ -675,6 +676,12 @@ const SOUNDS: Record<SoundName, (t: number, count: number) => void> = {
     whoosh(t + 0.05, 900, 4800, 0.24, 0.16);
     crack(t + 0.28, 2600, 0.035, 0.24);
     note(t + 0.28, 330, "triangle", 0.12, 0.05, 0.002, 1800);
+  },
+  // A card drawn from the real deck lands face up: a deep thump and a snap, the VS's hit in small
+  reveal: (t) => {
+    deep(t, 150, 52, 0.42, 0.5);
+    crack(t, 2300, 0.05, 0.28);
+    note(t + 0.01, 98, "triangle", 0.5, 0.12, 0.004, 900);
   },
   // A card drawn from the pile or folded back: paper sliding on paper, then a soft stop
   slide: (t) => {

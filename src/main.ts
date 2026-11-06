@@ -4799,24 +4799,62 @@ function unpickDrawnCard(player: Player, id: string, cardEl: HTMLElement): void 
   playCardExit(cardEl, "is-returned", undefined, [blank]);
 }
 
-/** The blank's half turn, then the card picked finishing it */
-const REVEAL_HALF_MS = 200;
-const REVEAL_IN_MS = 280;
+/** The blank's half turn, then the card picked finishing it, empty until it lands */
+const REVEAL_HALF_MS = 180;
+const REVEAL_IN_MS = 220;
+/** The landing: the card swells and settles, a ring leaves it, its content comes in (style.css, .is-impact) */
+const IMPACT_MS = 650;
 
-/** The blank turns over to the card picked on it, as a card dealt face down is revealed */
+/**
+ * The blank turns over to the card picked on it, as a card dealt face down is revealed. It lands
+ * empty, then its content comes in on the impact: the VS's slam in small, a moment of its own that
+ * stays under the primaries' clash
+ */
 function revealCard(cardEl: HTMLElement, id: string): void {
   playSound("flip");
   const done = () => {
     renderCards();
     renderHandButtons();
     const card = [...cardsRow.querySelectorAll<HTMLElement>(".sec-card")].find((el) => el.dataset.cardId === id);
-    if (card && !prefersReducedMotion()) halfTurn(card, -90, 0, REVEAL_IN_MS, "cubic-bezier(0.2, 0, 0.2, 1)");
+    if (!card || prefersReducedMotion()) {
+      afterReveal();
+      return;
+    }
+    // The content waits for the impact, each part a beat after the one above
+    [...card.querySelectorAll<HTMLElement>(".sec-card__inner > *")].forEach((part, k) => part.style.setProperty("--k", String(k)));
+    card.classList.add("is-revealed");
+    void halfTurn(card, -90, 0, REVEAL_IN_MS, "cubic-bezier(0.2, 0, 0.2, 1)").then(() => {
+      card.classList.add("is-impact");
+      playSound("reveal");
+      buzz(25);
+      window.setTimeout(() => card.classList.remove("is-revealed", "is-impact"), IMPACT_MS);
+      afterReveal();
+    });
   };
   if (prefersReducedMotion()) {
     done();
     return;
   }
   halfTurn(cardEl, 0, 90, REVEAL_HALF_MS, "cubic-bezier(0.4, 0, 1, 1)").then(done, done);
+}
+
+/**
+ * Once a card is revealed: the next blank opens its list at once, two picks for two taps. With
+ * none left, Continue comes alive: the turn can go on
+ */
+function afterReveal(): void {
+  const next = cardsRow.querySelector<HTMLElement>(".sec-card.is-blank");
+  if (next) {
+    if (cardsPlayer === null || !canEdit(cardsPlayer)) return;
+    frontCardKey = cardKey(next);
+    placeFrontCard();
+    openChooser(next, !coarsePointer());
+    return;
+  }
+  btnCardsClose.classList.remove("is-ready");
+  void btnCardsClose.offsetWidth;
+  btnCardsClose.classList.add("is-ready");
+  btnCardsClose.addEventListener("animationend", () => btnCardsClose.classList.remove("is-ready"), { once: true });
 }
 
 /** A card's faces turned about their upright axis, in 3D for the turn only (style.css, .is-turning) */
@@ -5436,10 +5474,12 @@ function repeatTotal(option: HTMLElement): number {
 }
 
 /**
- * A card drawn from the real deck, still blank: dealt like any other, it shows the card picked in
- * its list once the player has looked at what they drew. The list holds what is left in the deck
+ * A card drawn from the real deck, still blank: dealt like any other. A tap on it turns it into
+ * the list of what is left in the deck, with a search: the player has the card in hand, a few
+ * letters of its name find it
  */
 function blankCardEl(player: Player, blank: string, index: number, deal: boolean): HTMLElement {
+  const editable = canEdit(player);
   const el = document.createElement("article");
   el.className = "sec-card is-blank";
   el.classList.toggle("is-dealt", deal);
@@ -5452,26 +5492,77 @@ function blankCardEl(player: Player, blank: string, index: number, deal: boolean
           <span class="sec-card__kicker"></span>
           <h3 class="sec-card__name"></h3>
         </header>
-        <span class="sec-card__blank-mark" aria-hidden="true">?</span>
-        <label class="sec-card__pick">
-          <span class="sec-card__pick-label"></span>
-          <select></select>
-        </label>
+        <button type="button" class="sec-card__blank" data-action="choose">
+          <span class="sec-card__blank-mark" aria-hidden="true">?</span>
+          <span class="sec-card__blank-hint"></span>
+        </button>
+        <div class="card-chooser" hidden>
+          <input type="search" class="card-chooser__search" autocomplete="off" spellcheck="false" enterkeyhint="done" />
+          <div class="card-chooser__list" role="listbox"></div>
+        </div>
       </div>
     </div>`;
   el.querySelector(".sec-card__kicker")!.textContent = t("secondaryKicker");
   el.querySelector(".sec-card__name")!.textContent = t("blankCardName");
-  el.querySelector(".sec-card__pick-label")!.textContent = t(canEdit(player) ? "blankCardHint" : "blankCardWait", { n: player });
-  const select = el.querySelector("select")!;
-  select.id = `pick-${blank.replace(/[^a-z0-9]/gi, "")}`;
-  select.disabled = !canEdit(player);
-  const prompt = new Option(t("blankCardPick"), "", true, true);
-  prompt.disabled = true;
-  const names = game.secondaries[player].deck
-    .map((id) => ({ id, name: SECONDARY_BY_ID.get(id)?.name ?? id }))
-    .sort((a, b) => a.name.localeCompare(b.name));
-  select.replaceChildren(prompt, ...names.map(({ id, name }) => new Option(name, id)));
+  el.querySelector(".sec-card__blank-hint")!.textContent = t(editable ? "blankCardTap" : "blankCardWait", { n: player });
+  el.querySelector<HTMLButtonElement>(".sec-card__blank")!.disabled = !editable;
+  const search = el.querySelector<HTMLInputElement>(".card-chooser__search")!;
+  search.id = `pick-${blank.replace(/[^a-z0-9]/gi, "")}`;
+  search.placeholder = t("blankCardSearch");
+  search.setAttribute("aria-label", t("blankCardSearch"));
   return el;
+}
+
+/** A finger on a phone: the list opens without the keyboard, which would cover half of it */
+const coarsePointer = (): boolean => matchMedia("(pointer: coarse)").matches;
+
+/** The blank card becomes the list of the deck's cards, the search on top */
+function openChooser(cardEl: HTMLElement, focusSearch: boolean): void {
+  cardsRow.querySelectorAll<HTMLElement>(".sec-card.is-choosing").forEach((card) => card !== cardEl && closeChooser(card));
+  cardEl.classList.add("is-choosing");
+  cardEl.querySelector<HTMLElement>(".sec-card__blank")!.hidden = true;
+  cardEl.querySelector<HTMLElement>(".card-chooser")!.hidden = false;
+  const search = cardEl.querySelector<HTMLInputElement>(".card-chooser__search")!;
+  search.value = "";
+  renderChooserList(cardEl, "");
+  playSound("slide");
+  if (focusSearch) search.focus({ preventScroll: true });
+}
+
+function closeChooser(cardEl: HTMLElement): void {
+  cardEl.classList.remove("is-choosing");
+  cardEl.querySelector<HTMLElement>(".card-chooser")!.hidden = true;
+  cardEl.querySelector<HTMLElement>(".sec-card__blank")!.hidden = false;
+}
+
+/** The deck's cards whose name holds the search, accents aside, in alphabetical order */
+function renderChooserList(cardEl: HTMLElement, query: string): void {
+  if (cardsPlayer === null) return;
+  const wanted = foldAccents(query.trim());
+  const cards = game.secondaries[cardsPlayer].deck
+    .map((id) => ({ id, name: SECONDARY_BY_ID.get(id)?.name ?? id }))
+    .filter(({ name }) => foldAccents(name).includes(wanted))
+    .sort((a, b) => a.name.localeCompare(b.name));
+  const list = cardEl.querySelector<HTMLElement>(".card-chooser__list")!;
+  if (cards.length === 0) {
+    const none = document.createElement("p");
+    none.className = "card-chooser__none";
+    none.textContent = t("blankCardNone");
+    list.replaceChildren(none);
+    return;
+  }
+  list.replaceChildren(
+    ...cards.map(({ id, name }) => {
+      const option = document.createElement("button");
+      option.type = "button";
+      option.className = "card-chooser__option";
+      option.setAttribute("role", "option");
+      option.dataset.action = "pick";
+      option.dataset.value = id;
+      option.textContent = name;
+      return option;
+    }),
+  );
 }
 
 function secondaryCardEl(player: Player, id: string, index: number, deal: boolean): HTMLElement {
@@ -6704,16 +6795,48 @@ cardsRow.addEventListener("click", (e) => {
     case "unpick":
       if (cardsMode === "draw") unpickDrawnCard(player, id, cardEl);
       break;
+    case "choose":
+      if (cardsMode === "draw") openChooser(cardEl, !coarsePointer());
+      break;
+    case "pick":
+      // Already picked meanwhile (on another device): the lists come back with what is left in the deck
+      if (cardsMode === "draw" && !pickDrawnCard(player, id, button.dataset.value!, cardEl)) renderCards();
+      break;
   }
 });
-// The card drawn from the real deck, picked on its blank
-cardsRow.addEventListener("change", (e) => {
-  const select = (e.target as HTMLElement).closest<HTMLSelectElement>(".sec-card__pick select");
-  const cardEl = select?.closest<HTMLElement>(".sec-card.is-blank");
-  if (!select || !cardEl || cardsPlayer === null || cardsMode !== "draw" || !canEdit(cardsPlayer) || !select.value) return;
-  select.disabled = true;
-  // Already picked elsewhere: the lists come back with what is left in the deck
-  if (!pickDrawnCard(cardsPlayer, cardEl.dataset.cardId!, select.value, cardEl)) renderCards();
+// The search narrows the list as it is typed
+cardsRow.addEventListener("input", (e) => {
+  const search = (e.target as HTMLElement).closest<HTMLInputElement>(".card-chooser__search");
+  const cardEl = search?.closest<HTMLElement>(".sec-card.is-blank");
+  if (search && cardEl) renderChooserList(cardEl, search.value);
+});
+/**
+ * In the list, the keys are its own: the arrows move, Enter takes the first card found, Escape
+ * folds it back. None reaches the board (Space would switch the clock)
+ */
+cardsRow.addEventListener("keydown", (e) => {
+  const chooser = (e.target as HTMLElement).closest<HTMLElement>(".card-chooser");
+  if (!chooser) return;
+  e.stopPropagation();
+  const cardEl = chooser.closest<HTMLElement>(".sec-card")!;
+  const search = chooser.querySelector<HTMLInputElement>(".card-chooser__search")!;
+  const options = [...chooser.querySelectorAll<HTMLButtonElement>(".card-chooser__option")];
+  const at = options.indexOf(document.activeElement as HTMLButtonElement);
+  if (e.key === "Escape") {
+    e.preventDefault();
+    closeChooser(cardEl);
+    cardEl.querySelector<HTMLElement>(".sec-card__blank")!.focus();
+  } else if (e.key === "ArrowDown") {
+    e.preventDefault();
+    options[Math.min(options.length - 1, at + 1)]?.focus();
+  } else if (e.key === "ArrowUp") {
+    e.preventDefault();
+    if (at <= 0) search.focus();
+    else options[at - 1].focus();
+  } else if (e.key === "Enter" && e.target === search) {
+    e.preventDefault();
+    options[0]?.click();
+  }
 });
 
 function renderTurnDots(): void {

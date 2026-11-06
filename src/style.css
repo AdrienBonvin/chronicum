@@ -3986,39 +3986,211 @@ button.sec-option:hover:not(:disabled) {
   color: var(--muted);
 }
 
-.sec-card__blank-mark {
+/* The whole blank is the button: a tap opens the list */
+.sec-card__blank {
   flex: 1;
-  display: grid;
-  place-items: center;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 1rem;
+  padding: 0.5rem;
+  border: 0;
+  border-radius: 8px;
+  background: transparent;
+  color: var(--muted);
+  font: inherit;
+  font-size: 0.8rem;
+  line-height: 1.35;
+  text-align: center;
+  cursor: pointer;
+}
+
+.sec-card__blank[hidden] {
+  display: none;
+}
+
+.sec-card__blank:hover:not(:disabled) {
+  background: var(--pc-soft);
+  color: var(--text);
+}
+
+.sec-card__blank:disabled {
+  cursor: default;
+}
+
+.sec-card__blank:focus-visible {
+  outline: 2px solid var(--pc);
+  outline-offset: 2px;
+}
+
+.sec-card__blank-mark {
   font-size: 4.5rem;
   font-weight: 700;
   line-height: 1;
   color: var(--pc);
-  opacity: 0.3;
+  opacity: 0.35;
+  transition:
+    transform 0.2s ease,
+    opacity 0.2s ease;
 }
 
-.sec-card__pick {
+.sec-card__blank:hover:not(:disabled) .sec-card__blank-mark {
+  opacity: 0.6;
+  transform: scale(1.08);
+}
+
+/* The list, in the card itself: the search on top, the deck's cards below */
+.card-chooser {
+  flex: 1;
   display: flex;
   flex-direction: column;
   gap: 0.5rem;
-  font-size: 0.78rem;
-  color: var(--muted);
+  min-height: 0;
 }
 
-.sec-card__pick select {
+.card-chooser[hidden] {
+  display: none;
+}
+
+.card-chooser__search {
   width: 100%;
-  padding: 0.6rem 0.65rem;
+  padding: 0.55rem 0.65rem;
   border: 1px solid var(--pc-line);
   border-radius: 6px;
   background: var(--surface);
   color: var(--text);
   font: inherit;
-  font-size: 0.92rem;
+  font-size: 0.9rem;
 }
 
-.sec-card__pick select:focus-visible {
+.card-chooser__search:focus-visible {
   outline: 2px solid var(--pc);
-  outline-offset: 2px;
+  outline-offset: 1px;
+}
+
+.card-chooser__list {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  max-height: 14rem;
+  margin-inline: -0.25rem;
+  padding-inline: 0.25rem;
+  overflow-y: auto;
+  overscroll-behavior: contain;
+}
+
+.card-chooser__option {
+  padding: 0.5rem 0.6rem;
+  border: 0;
+  border-radius: 5px;
+  background: transparent;
+  color: var(--text);
+  font: inherit;
+  font-size: 0.82rem;
+  font-weight: 600;
+  letter-spacing: 0.03em;
+  text-align: left;
+  text-transform: uppercase;
+  cursor: pointer;
+}
+
+.card-chooser__option:hover,
+.card-chooser__option:focus-visible {
+  background: var(--pc-soft);
+  outline: none;
+}
+
+.card-chooser__option:focus-visible {
+  box-shadow: inset 0 0 0 1px var(--pc);
+}
+
+.card-chooser__none {
+  margin: 0.5rem 0;
+  font-size: 0.8rem;
+  color: var(--muted);
+  text-align: center;
+}
+
+/*
+ * The reveal (main.ts, revealCard): the card lands empty, swells on the impact, a ring leaves it
+ * and its content comes in, part after part. Size and opacity only: light on a phone
+ */
+.sec-card.is-revealed .sec-card__inner > * {
+  opacity: 0;
+}
+
+.sec-card.is-impact .sec-card__inner > * {
+  animation: revealPart 0.32s cubic-bezier(0.2, 0.8, 0.2, 1) both;
+  animation-delay: calc(var(--k, 0) * 55ms);
+}
+
+.sec-card.is-impact .sec-card__faces {
+  animation: revealImpact 0.34s cubic-bezier(0.3, 1.5, 0.5, 1);
+}
+
+.sec-card.is-impact .sec-card__faces::after {
+  content: "";
+  grid-area: 1 / 1;
+  border: 2px solid var(--pc);
+  border-radius: 12px;
+  pointer-events: none;
+  animation: revealShock 0.5s ease-out forwards;
+}
+
+@keyframes revealImpact {
+  0% {
+    transform: scale(1.09);
+  }
+  100% {
+    transform: none;
+  }
+}
+
+@keyframes revealShock {
+  0% {
+    opacity: 0.9;
+    transform: scale(1);
+  }
+  100% {
+    opacity: 0;
+    transform: scale(1.22);
+  }
+}
+
+@keyframes revealPart {
+  from {
+    opacity: 0;
+    transform: translateY(6px);
+  }
+  to {
+    opacity: 1;
+    transform: none;
+  }
+}
+
+/* Every card drawn is picked: Continue comes alive */
+#btn-cards-close.is-ready {
+  animation: readyPulse 0.45s ease-in-out 2;
+}
+
+@keyframes readyPulse {
+  0%,
+  100% {
+    transform: none;
+  }
+  50% {
+    transform: scale(1.06);
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .sec-card.is-impact .sec-card__faces,
+  .sec-card.is-impact .sec-card__faces::after,
+  .sec-card.is-impact .sec-card__inner > *,
+  #btn-cards-close.is-ready {
+    animation: none;
+  }
 }
 
 /* Scored page: the whole card undoes its score, the options are only a reminder */
