@@ -147,7 +147,6 @@ const EN = {
   close: "Close",
   logTime: "Time",
   logEvent: "Event",
-  playerShort: "P{n}",
   reportWentFirst: "Went first",
   reportPrimary: "Primary",
   reportSecondaries: "Secondaries",
@@ -257,7 +256,7 @@ const EN = {
   photosZipped: "{name} downloaded",
   photosFailed: "The photos could not be saved",
   photosNone: "No photo in this game",
-  photoFileTurn: "R{r} end P{n}",
+  photoFileTurn: "R{r} end {name}",
   photoFileFinal: "final",
   photoFileReport: "Battle report",
 
@@ -614,7 +613,6 @@ const FR: Record<StringKey, string> = {
   close: "Fermer",
   logTime: "Heure",
   logEvent: "Événement",
-  playerShort: "J{n}",
   reportWentFirst: "A commencé",
   reportPrimary: "Primaire",
   reportSecondaries: "Secondaires",
@@ -724,7 +722,7 @@ const FR: Record<StringKey, string> = {
   photosZipped: "{name} téléchargé",
   photosFailed: "Les photos n'ont pas pu être enregistrées",
   photosNone: "Aucune photo dans cette partie",
-  photoFileTurn: "R{r} fin J{n}",
+  photoFileTurn: "R{r} fin {name}",
   photoFileFinal: "finale",
   photoFileReport: "Rapport de bataille",
 

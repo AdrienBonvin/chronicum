@@ -1582,9 +1582,13 @@ const isDeployment = (turn: PhotoTurn): boolean => turn.round === 0;
 const MVP_SHOT_ROUND = 9;
 const mvpShot = (player: Player): PhotoTurn => ({ round: MVP_SHOT_ROUND, player });
 const isMvpShot = (turn: PhotoTurn): boolean => turn.round === MVP_SHOT_ROUND;
-/** A photo's short name: "R2 · P1", or the deployment */
+/** A photo's short name, as HTML: "R2 · Necrons" (the army hidden where its row says it), or the deployment */
 const shotLabel = (turn: PhotoTurn): string =>
-  isMvpShot(turn) ? t("mvpShotShort") : isDeployment(turn) ? t("photoDeployShort") : `R${turn.round} · ${t("playerShort", { n: turn.player })}`;
+  isMvpShot(turn)
+    ? t("mvpShotShort")
+    : isDeployment(turn)
+      ? t("photoDeployShort")
+      : `R${turn.round}<span class="shot-who"> · ${esc(t("player", { n: turn.player }))}</span>`;
 const shotTitle = (turn: PhotoTurn): string =>
   isMvpShot(turn) ? t("mvpShotTitle") : isDeployment(turn) ? t("photoDeployTurn") : t("photoTurn", { r: turn.round, n: turn.player });
 const sameTurn = (a: PhotoTurn, b: PhotoTurn): boolean => a.round === b.round && a.player === b.player;
@@ -1636,8 +1640,8 @@ function storyHtml(): string {
   if (storyTurns().length === 0 && !(game.options.photoBreaks && (canShoot || roomSession()))) return "";
   const count = turns.filter((turn) => endPhotos.has(turnId(turn))).length;
   const cells = turns.map((turn) => {
-    // The deployment in its own column, across both players' rows
-    const pos = isDeployment(turn) ? "grid-column:2;grid-row:2 / span 2" : `grid-column:${turn.round + 2};grid-row:${turn.player === game.firstPlayer ? 2 : 3}`;
+    // The deployment in its own column, across both players' rows; each row under its army's name
+    const pos = isDeployment(turn) ? "grid-column:1;grid-row:2 / span 4" : `grid-column:${turn.round + 1};grid-row:${turn.player === game.firstPlayer ? 3 : 5}`;
     const kind = isDeployment(turn) ? "is-deploy" : `is-p${turn.player}`;
     const entry = endPhotos.get(turnId(turn));
     if (entry) {
@@ -1653,10 +1657,11 @@ function storyHtml(): string {
     return `<span class="story-shot is-missing ${kind}" style="${pos}"><small>${t("reportNoPhoto")}</small></span>`;
   });
   const labels =
-    `<span class="story-round" style="grid-row:1;grid-column:2">${t("photoDeployShort")}</span>` +
-    ROUNDS.map((round) => `<span class="story-round" style="grid-row:1;grid-column:${round + 2}">R${round}</span>`).join("") +
+    `<span class="story-round" style="grid-row:1;grid-column:1">${t("photoDeployShort")}</span>` +
+    ROUNDS.map((round) => `<span class="story-round" style="grid-row:1;grid-column:${round + 1}">R${round}</span>`).join("") +
+    // Whose row is whose, said over it: two armies may share a color. The first player's on top
     [game.firstPlayer, other(game.firstPlayer)]
-      .map((player, i) => `<span class="story-player is-p${player}" style="grid-row:${i + 2};grid-column:1">${t("playerShort", { n: player })}</span>`)
+      .map((player, i) => `<span class="story-who is-p${player}" style="grid-row:${i * 2 + 2};grid-column:2 / -1">${esc(t("player", { n: player }))}</span>`)
       .join("");
   return `
     <div class="report-section-head"><h3>${t("reportStory")}</h3><span class="report-section-count">${t("reportStoryCount", { n: count, total: turns.length })}</span></div>
@@ -2307,8 +2312,16 @@ const toGallery = (): boolean => CAN_SHOOT.matches || PHONE.matches;
 
 const unsafeName = /[\\/:*?"<>|]/g;
 
+/** A player's name in a file name: no accents nor apostrophes, which some apps and disks mangle */
+const fileName = (player: Player): string =>
+  t("player", { n: player })
+    .normalize("NFD")
+    .replace(/\p{M}/gu, "")
+    .replace(/['’]/g, "")
+    .replace(unsafeName, "");
+
 function defaultFolder(): string {
-  const [a, b] = ([1, 2] as const).map((player) => t("player", { n: player }));
+  const [a, b] = ([1, 2] as const).map(fileName);
   return `${battleDay()} ${a} vs ${b} ${scoreOf(1)}-${scoreOf(2)}`.replace(unsafeName, "");
 }
 
@@ -2325,8 +2338,8 @@ function saveFiles(gallery: boolean): { name: string; blob: Blob | null }[] {
     const index = String(slots.findIndex((each) => sameTurn(each, turn))).padStart(2, "0");
     const what = isDeployment(turn) ? t("photoFileDeploy") : "";
     const name = gallery
-      ? `WH ${battleDay()} ${what || `R${turn.round} ${t("playerShort", { n: turn.player })}${final ? ` ${final}` : ""}`}`
-      : `${index} ${what || `${t("photoFileTurn", { r: turn.round, n: turn.player })}${final ? ` (${final})` : ""}`}`;
+      ? `WH ${battleDay()} ${what || `R${turn.round} ${fileName(turn.player)}${final ? ` ${final}` : ""}`}`
+      : `${index} ${what || `${t("photoFileTurn", { r: turn.round, name: fileName(turn.player) })}${final ? ` (${final})` : ""}`}`;
     return { name: `${name}.${extension(blob)}`, blob };
   });
   if (saveWithReport && saveReport.state !== "failed") {
@@ -3512,7 +3525,7 @@ function renderClockLog(): void {
       <tbody>${events
         .map(
           (event) =>
-            `<tr class="is-${event.kind}"><td>${logTime(event.at)}</td><td data-label="R">${event.round}</td><td>${LOG_TEXT[event.kind](event)}</td><td data-label="${t("playerShort", { n: 1 })}">${formatTime(event.left[1])}</td><td data-label="${t("playerShort", { n: 2 })}">${formatTime(event.left[2])}</td></tr>`,
+            `<tr class="is-${event.kind}"><td>${logTime(event.at)}</td><td data-label="R">${event.round}</td><td>${LOG_TEXT[event.kind](event)}</td><td data-label="${esc(t("player", { n: 1 }))}">${formatTime(event.left[1])}</td><td data-label="${esc(t("player", { n: 2 }))}">${formatTime(event.left[2])}</td></tr>`,
         )
         .join("")}</tbody>
     </table>`;
