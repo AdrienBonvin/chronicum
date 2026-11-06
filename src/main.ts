@@ -5239,11 +5239,14 @@ function scoreSecondary(player: Player, id: string, vp: number, cardEl: HTMLElem
 
 /**
  * At a turn end a scored card stays on the table, stamped with what it gave, so the turn's tally
- * can be read card by card; the next card to score comes forward
+ * can be read card by card. In a pile the next card to score comes forward; in a row the card
+ * just scored stays on top, no other card comes over it
  */
 function bankSecondary(player: Player, id: string, added: number): void {
-  // No secondary left to score: the last card still holding something comes forward (the primary)
-  frontCardKey = endTurnIds(player).find((cardId) => game.secondaries[player].hand.includes(cardId)) ?? null;
+  // Piled, no secondary left to score: the last card still holding something comes forward (the primary)
+  frontCardKey = cardsRow.classList.contains("is-piled")
+    ? (endTurnIds(player).find((cardId) => game.secondaries[player].hand.includes(cardId)) ?? null)
+    : id;
   settleEndTurn();
   const card = cardsRow.querySelector<HTMLElement>(`.sec-card[data-card-id="${CSS.escape(id)}"]`);
   if (!card || prefersReducedMotion()) return;
