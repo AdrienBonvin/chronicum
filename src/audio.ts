@@ -34,6 +34,9 @@ export type SoundName =
   | "battleReady"
   | "timeOut"
   | "flip"
+  | "slide"
+  | "stepUp"
+  | "stepDown"
   | "joined";
 
 export type MusicTrack = "off" | "calm" | "tense" | "epic";
@@ -672,6 +675,20 @@ const SOUNDS: Record<SoundName, (t: number, count: number) => void> = {
     whoosh(t + 0.05, 900, 4800, 0.24, 0.16);
     crack(t + 0.28, 2600, 0.035, 0.24);
     note(t + 0.28, 330, "triangle", 0.12, 0.05, 0.002, 1800);
+  },
+  // A card drawn from the pile or folded back: paper sliding on paper, then a soft stop
+  slide: (t) => {
+    whoosh(t, 700, 3400, 0.2, 0.14);
+    crack(t + 0.18, 3600, 0.02, 0.12);
+  },
+  // One more or one less on a card: a click, higher going up
+  stepUp: (t) => {
+    crack(t, 5200, 0.012, 0.22);
+    note(t, 1175, "sine", 0.06, 0.08);
+  },
+  stepDown: (t) => {
+    crack(t, 3800, 0.012, 0.2);
+    note(t, 880, "sine", 0.06, 0.07);
   },
   // A player's phone joins the shared screen: two bright notes, rising
   joined: (t) => {

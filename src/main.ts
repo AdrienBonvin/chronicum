@@ -189,6 +189,7 @@ const ICON_TARGET = svgIcon('<circle cx="12" cy="12" r="7" /><circle cx="12" cy=
 const ICON_CARDS = svgIcon('<rect x="4" y="6" width="11" height="15" rx="2" /><path d="M9 3h9a2 2 0 0 1 2 2v13" />');
 const ICON_CLOCK = svgIcon('<circle cx="12" cy="13" r="8" /><path d="M12 9v4l2.5 2.5M10 2h4" />');
 const ICON_CAMERA = svgIcon('<path d="M4 8h3l2-3h6l2 3h3v11H4z" /><circle cx="12" cy="13" r="3.5" />');
+const ICON_NO_PHOTO = svgIcon('<path d="M4 8h3l2-3h6l2 3h3v11H4z" /><path d="M3 3l18 18" />');
 const ICON_SOUND = svgIcon('<path d="M4 9h4l5-4v14l-5-4H4z" /><path d="M16.5 8.5a5 5 0 0 1 0 7M19 6a8.5 8.5 0 0 1 0 12" />');
 const ICON_MUTED = svgIcon('<path d="M4 9h4l5-4v14l-5-4H4z" /><path d="M17 9.5l5 5M22 9.5l-5 5" />');
 const ICON_MUSIC = svgIcon('<path d="M9 18V5l11-2v13" /><circle cx="6" cy="18" r="3" /><circle cx="17" cy="16" r="3" />');
@@ -197,6 +198,7 @@ const ICON_SLIDERS = svgIcon(
   '<path d="M4 7h9M17 7h3M4 17h3M11 17h9" /><circle cx="15" cy="7" r="2" /><circle cx="9" cy="17" r="2" />',
 );
 const ICON_CHECK = svgIcon('<path d="M5 12.5l4.5 4.5L19 7.5" />');
+const ICON_EDIT = svgIcon('<path d="M4 20h4L19 9l-4-4L4 16v4z" /><path d="M13.5 6.5l4 4" />');
 const ICON_CHEVRON = svgIcon('<path d="M7 10l5 5 5-5" />');
 const ICON_ONLINE = svgIcon('<rect x="2.5" y="5" width="7" height="14" rx="1.5" /><rect x="14.5" y="5" width="7" height="14" rx="1.5" /><path d="M9.5 12h5" />');
 const ICON_RESET = svgIcon('<path d="M4 12a8 8 0 1 0 2.4-5.7M4 4v4h4" />');
@@ -214,6 +216,7 @@ const ICON_CLOSE = svgIcon('<path d="M6 6l12 12M18 6L6 18" />');
 const ICON_PREV = svgIcon('<path d="M15 5l-7 7 7 7" />');
 const ICON_NEXT = svgIcon('<path d="M9 5l7 7-7 7" />');
 const ICON_PHONE = svgIcon('<rect x="7" y="3" width="10" height="18" rx="2" /><path d="M11 18h2" />');
+const ICON_SCREEN = svgIcon('<rect x="3" y="4" width="18" height="12" rx="1.5" /><path d="M8 20h8M12 16v4" />');
 const ICON_SWAP = svgIcon('<path d="M8 20V4M4.5 7.5L8 4l3.5 3.5M16 4v16M12.5 16.5L16 20l3.5-3.5" />');
 const ICON_LOG = svgIcon('<path d="M9 6h11M9 12h11M9 18h11" /><path d="M4.5 6h.01M4.5 12h.01M4.5 18h.01" />');
 const ICON_ROWS = svgIcon('<rect x="2" y="2" width="24" height="7" rx="1" /><rect x="2" y="11" width="24" height="7" rx="1" />', "0 0 28 20");
@@ -362,6 +365,7 @@ app.innerHTML = `
                 <button type="button" class="segmented__option" data-value="epic" data-i18n="musicEpic"></button>
               </div>
             </div>
+            <p class="settings-note" id="music-elsewhere" hidden>${ICON_SCREEN}<span data-i18n="musicElsewhere"></span></p>
             <label class="settings-row toggle-chip settings-switch">
               <span class="settings-row__label" data-i18n="soundEffects"></span>
               <input type="checkbox" id="sfx-toggle" />
@@ -395,7 +399,7 @@ app.innerHTML = `
           </div>
           <div class="settings__section settings__section--board">
             <span class="settings__label" data-i18n="screen"></span>
-            <div class="settings-row">
+            <div class="settings-row settings-row--layout">
               <span class="settings-row__label" data-i18n="layout"></span>
               <div class="segmented" id="layout-options" role="group" data-i18n-aria="layoutAria">
                 <button type="button" class="segmented__option" data-value="auto" data-i18n="sizeAuto"></button>
@@ -612,6 +616,7 @@ app.innerHTML = `
       <h2 id="mvp-title" data-i18n="mvpElect"></h2>
       <p class="overlay-msg" data-i18n="mvpMsg"></p>
       <div class="mvp-form" id="mvp-form"></div>
+      <input type="file" id="mvp-photo-input" accept="image/*" capture="environment" hidden />
       <div class="overlay-actions">
         <button type="button" class="btn-secondary" id="btn-mvp-cancel"><span data-i18n="cancel"></span> <kbd data-i18n="keyEsc"></kbd></button>
         <button type="button" class="btn-primary" id="btn-mvp-crown">${ICON_MEDAL}<span data-i18n="mvpCrown"></span></button>
@@ -858,6 +863,7 @@ const uiSizeOptions = app.querySelector<HTMLElement>("#ui-size-options")!;
 const langOptions = app.querySelector<HTMLElement>("#lang-options")!;
 const sfxToggle = app.querySelector<HTMLInputElement>("#sfx-toggle")!;
 const musicOptions = app.querySelector<HTMLElement>("#music-options")!;
+const musicElsewhereNote = app.querySelector<HTMLElement>("#music-elsewhere")!;
 const volumeInput = app.querySelector<HTMLInputElement>("#volume")!;
 const soundToast = app.querySelector<HTMLElement>("#sound-toast")!;
 const timePresets = app.querySelector<HTMLElement>("#time-presets")!;
@@ -939,6 +945,7 @@ const resultOverlay = app.querySelector<HTMLElement>("#result-overlay")!;
 const mvpOverlay = app.querySelector<HTMLElement>("#mvp-overlay")!;
 const btnMvpCrown = app.querySelector<HTMLButtonElement>("#btn-mvp-crown")!;
 const finalPhotoInput = app.querySelector<HTMLInputElement>("#final-photo-input")!;
+const mvpPhotoInput = app.querySelector<HTMLInputElement>("#mvp-photo-input")!;
 /** Phones and tablets: a camera at hand, and a gallery to save the photos in */
 const CAN_SHOOT = window.matchMedia("(hover: none) and (pointer: coarse)");
 /** The secondaries, card by card in the report: folded to one line on a phone, open on a computer */
@@ -1563,10 +1570,15 @@ const turnId = ({ round, player }: PhotoTurn): string => `${round}_${player}`;
 /** The table once deployed, photographed before the battle starts: "round 0" */
 const DEPLOYMENT: PhotoTurn = { round: 0, player: 1 };
 const isDeployment = (turn: PhotoTurn): boolean => turn.round === 0;
+/** The MVP photographed on its own at the end, one per player: "round 9", never a turn played */
+const MVP_SHOT_ROUND = 9;
+const mvpShot = (player: Player): PhotoTurn => ({ round: MVP_SHOT_ROUND, player });
+const isMvpShot = (turn: PhotoTurn): boolean => turn.round === MVP_SHOT_ROUND;
 /** A photo's short name: "R2 · P1", or the deployment */
 const shotLabel = (turn: PhotoTurn): string =>
-  isDeployment(turn) ? t("photoDeployShort") : `R${turn.round} · ${t("playerShort", { n: turn.player })}`;
-const shotTitle = (turn: PhotoTurn): string => (isDeployment(turn) ? t("photoDeployTurn") : t("photoTurn", { r: turn.round, n: turn.player }));
+  isMvpShot(turn) ? t("mvpShotShort") : isDeployment(turn) ? t("photoDeployShort") : `R${turn.round} · ${t("playerShort", { n: turn.player })}`;
+const shotTitle = (turn: PhotoTurn): string =>
+  isMvpShot(turn) ? t("mvpShotTitle") : isDeployment(turn) ? t("photoDeployTurn") : t("photoTurn", { r: turn.round, n: turn.player });
 const sameTurn = (a: PhotoTurn, b: PhotoTurn): boolean => a.round === b.round && a.player === b.player;
 const lastTurn = (): PhotoTurn => playedTurns().pop() ?? { round: 1, player: game.firstPlayer };
 const turnPoints = ({ round, player }: PhotoTurn): number =>
@@ -1613,7 +1625,7 @@ function storyHtml(): string {
   const turns = storySlots();
   const last = lastTurn();
   const canShoot = CAN_SHOOT.matches && !!game.gameId;
-  if (endPhotos.size === 0 && !(game.options.photoBreaks && (canShoot || roomSession()))) return "";
+  if (storyTurns().length === 0 && !(game.options.photoBreaks && (canShoot || roomSession()))) return "";
   const count = turns.filter((turn) => endPhotos.has(turnId(turn))).length;
   const cells = turns.map((turn) => {
     // The deployment in its own column, across both players' rows
@@ -1656,12 +1668,17 @@ function renderStory(): void {
 function mvpCardHtml(player: Player): string {
   const mvp = game.mvp?.[player];
   const eyebrow = `<span class="mvp-card__eyebrow">${ICON_MEDAL}${t("mvpOf", { n: player })}</span>`;
+  // The other player's MVP is elected on their phone: here it is only shown, never a button
+  const editable = canEdit(player);
+  const open = editable ? `button type="button" data-mvp-open="${player}"` : "div";
+  const close = editable ? "button" : "div";
+  const elsewhere = editable ? "" : " is-elsewhere";
   if (!mvp) {
-    return `<button type="button" class="mvp-card is-empty is-p${player}" data-mvp-open="${player}">${eyebrow}<span class="mvp-card__empty">${t("mvpEmpty")}</span></button>`;
+    return `<${open} class="mvp-card is-empty is-p${player}${elsewhere}">${eyebrow}<span class="mvp-card__empty">${editable ? t("mvpEmpty") : t("mvpToElectThere", { n: player })}</span></${close}>`;
   }
   const photo = mvp.photo ? endPhotos.get(turnId(mvp.photo)) : undefined;
   const picture = photo ? `<img class="mvp-card__photo" src="${photo.thumb}" alt="" />` : `<span class="mvp-card__photo is-none">${ICON_MEDAL}</span>`;
-  return `<button type="button" class="mvp-card is-p${player}" data-mvp-open="${player}">${picture}<span class="mvp-card__body">${eyebrow}<b class="mvp-card__unit">${esc(mvp.unit)}</b>${mvp.feat ? `<span class="mvp-card__feat">${esc(mvp.feat)}</span>` : ""}</span></button>`;
+  return `<${open} class="mvp-card is-p${player}${elsewhere}">${picture}<span class="mvp-card__body">${eyebrow}<b class="mvp-card__unit">${esc(mvp.unit)}</b>${mvp.feat ? `<span class="mvp-card__feat">${esc(mvp.feat)}</span>` : ""}</span></${close}>`;
 }
 
 function mvpHtml(): string {
@@ -1692,7 +1709,10 @@ function openMvp(focus: Player): void {
   const copy = (mvp: Mvp | null): Mvp => (mvp ? { ...mvp, photo: mvp.photo ? { ...mvp.photo } : null } : { unit: "", feat: "", photo: null });
   mvpDraft = { 1: copy(game.mvp?.[1] ?? null), 2: copy(game.mvp?.[2] ?? null) };
   const form = app.querySelector<HTMLElement>("#mvp-form")!;
-  form.innerHTML = ([1, 2] as const)
+  // The player picked comes first. A phone holds its own player only: the other one is elected on
+  // the other phone, a field it could not fill would only be in the way
+  form.innerHTML = [focus, other(focus)]
+    .filter((player) => !online || canEdit(player))
     .map((player) => {
       const draft = mvpDraft![player];
       const editable = canEdit(player);
@@ -1725,11 +1745,15 @@ function renderMvpPicks(): void {
     const el = app.querySelector<HTMLElement>(`#mvp-photos-${player}`);
     if (!el) continue;
     const chosen = mvpDraft[player].photo;
-    el.hidden = turns.length === 0;
+    // Its own photo first, taken now: the table's photos show the whole battle, rarely the unit
+    const own = mvpShot(player);
+    const shots = [...(endPhotos.has(turnId(own)) ? [own] : []), ...turns];
+    const shoot = endPhotos.has(turnId(own)) ? t("mvpRetake") : t(CAN_SHOOT.matches ? "mvpShoot" : "mvpAddPhoto");
     el.innerHTML = `<span>${t("mvpPhoto")} <em>${t("mvpOptional")}</em></span>
       <div class="mvp-pick" role="radiogroup" aria-label="${t("mvpPhoto")}">
-        <button type="button" role="radio" class="mvp-pick__none" data-mvp-pick="${player}" data-turn="" aria-checked="${!chosen}">${t("mvpNoPhoto")}</button>
-        ${turns
+        <button type="button" role="radio" class="mvp-pick__none" data-mvp-pick="${player}" data-turn="" aria-checked="${!chosen}">${ICON_NO_PHOTO}<span>${t("mvpNoPhoto")}</span></button>
+        <button type="button" class="mvp-pick__shoot" data-mvp-shoot="${player}">${ICON_CAMERA}<span>${shoot}</span></button>
+        ${shots
           .map(
             (turn) =>
               `<button type="button" role="radio" data-mvp-pick="${player}" data-turn="${turnId(turn)}" aria-checked="${!!chosen && sameTurn(chosen, turn)}" aria-label="${shotTitle(turn)}"><img src="${endPhotos.get(turnId(turn))!.thumb}" alt="" /><span>${shotLabel(turn)}</span></button>`,
@@ -2103,7 +2127,7 @@ async function sharePhoto(photo: Photo): Promise<void> {
 
 /** A photo taken on another device of the room, or left out there */
 async function receivePhoto(key: string, value: { at: number; data: string } | null): Promise<void> {
-  const match = /^([a-z0-9]+)_([0-5])_([12])$/.exec(key);
+  const match = /^([a-z0-9]+)_([0-59])_([12])$/.exec(key);
   if (!match) return;
   const [, gameId, round, player] = match;
   const turn: PhotoTurn = { round: Number(round), player: player === "1" ? 1 : 2 };
@@ -2573,11 +2597,16 @@ function fitScreen(): void {
   const { innerWidth: w, innerHeight: h } = window;
   if (root.dataset.uiSize === "auto") {
     // By the screen's area, never under Standard (a laptop's window would get less) unless the
-    // screen can't hold it; up to Ultra wide on a 3440 px ultrawide. Neither side may overflow, and
-    // a phone keeps the size its screens were drawn for
+    // screen can't hold it; up to Ultra wide on a 3440 px ultrawide. Neither side may overflow. A
+    // player's phone is read at arm's length on the table: its dialogs and cards a size larger. A
+    // phone showing the board keeps the size its screens were drawn for
     const standard = 1.12;
     const fits = Math.min(h / 560, w / 1100);
-    const scale = PHONE.matches ? standard : Math.max(0.86, Math.min(Math.max(Math.sqrt(w * h) / 1020, standard), fits, 2.12));
+    const scale = PHONE.matches
+      ? root.dataset.seat
+        ? 1.25
+        : standard
+      : Math.max(0.86, Math.min(Math.max(Math.sqrt(w * h) / 1020, standard), fits, 2.12));
     root.style.setProperty("--ui-scale", scale.toFixed(3));
   } else root.style.removeProperty("--ui-scale");
   // Twice as wide as tall, an ultrawide: the players side by side
@@ -2602,12 +2631,17 @@ const THEMES = new Set(["clean", "warzone", "factions"]);
 
 function applyTheme(theme: string): void {
   const v = THEMES.has(theme) ? theme : THEME_DEFAULT;
-  document.documentElement.dataset.theme = v;
+  const root = document.documentElement;
+  root.classList.add("is-retheming");
+  root.dataset.theme = v;
   setSegmentedValue(themeOptions, v);
   // The faction menu comes and goes inside the open panel: the panel grows or shrinks to it
   glideHeight(settingsPanel, () => {
     factionsSection.hidden = v !== "factions";
   });
+  // The new colors are computed without transitions, then the transitions come back with nothing to fade
+  void document.body.offsetWidth;
+  root.classList.remove("is-retheming");
   try {
     localStorage.setItem(THEME_STORAGE_KEY, v);
   } catch {
@@ -2841,7 +2875,8 @@ function loadTheme(): void {
 
 /** Set on <html> so the tooltips, appended to <body>, scale too */
 function applyUiSize(size: string): void {
-  const v = UI_SIZES.has(size) ? size : UI_SIZE_DEFAULT;
+  // XL and Ultra wide are gone: a screen set to one keeps the largest size left
+  const v = UI_SIZES.has(size) ? size : size === "xl" || size === "uw" ? "l" : UI_SIZE_DEFAULT;
   document.documentElement.dataset.uiSize = v;
   setSegmentedValue(uiSizeOptions, v);
   try {
@@ -2896,7 +2931,22 @@ function applyMusic(value: string): void {
   setMusic(track);
   setSegmentedValue(musicOptions, track);
   store(MUSIC_STORAGE_KEY, track);
-  seatMusic.hidden = track === "off";
+  renderMusicHere();
+}
+
+let musicPlaysElsewhere = false;
+
+/** With the shared screen in the room the music plays there: the phone keeps no control for it */
+function setMusicHere(elsewhere: boolean): void {
+  musicPlaysElsewhere = elsewhere;
+  setMusicElsewhere(elsewhere);
+  renderMusicHere();
+}
+
+function renderMusicHere(): void {
+  musicOptions.closest<HTMLElement>(".settings-row")!.hidden = musicPlaysElsewhere;
+  musicElsewhereNote.hidden = !musicPlaysElsewhere;
+  seatMusic.hidden = musicPlaysElsewhere || musicOptions.querySelector('[aria-pressed="true"]')?.getAttribute("data-value") === "off";
 }
 
 function applyMusicMuted(value: boolean): void {
@@ -3997,6 +4047,10 @@ function cpCoinEl(ability: Ability): HTMLElement {
 }
 
 function renderAbilities(player: Player): void {
+  if (phoneView() && online?.seat === player) {
+    abilitiesEl[player].replaceChildren(...cpTilesEl(player));
+    return;
+  }
   const coins = document.createElement("div");
   coins.className = "abilities__coins";
   const chips = document.createElement("div");
@@ -4013,6 +4067,50 @@ function renderAbilities(player: Player): void {
     }
   }
   abilitiesEl[player].replaceChildren(...[coins, chips].filter((group) => group.childElementCount > 0));
+}
+
+/**
+ * A player's own phone: one tile per ability, side by side. The stratagem one is tapped when the
+ * discount is used (again to take it back), the +1 CP one works by itself. A lost unit is said on
+ * its tile and set in the CP generation dialog, never by a tap here that could slip
+ */
+function cpTilesEl(player: Player): HTMLElement[] {
+  const abilities = [...game.abilities[player]].sort((a, b) => Number(isCpKind(a.kind)) - Number(isCpKind(b.kind)));
+  return abilities.map((ability) => {
+    const discount = !isCpKind(ability.kind);
+    const tile = document.createElement(discount ? "button" : "div");
+    tile.className = `cp-tile${discount ? " cp-tile--use" : ""}`;
+    tile.classList.toggle("is-spent", discount && ability.spent && !ability.lost);
+    tile.classList.toggle("is-lost", ability.lost);
+    tile.dataset.abilityId = String(ability.id);
+    if (tile instanceof HTMLButtonElement) {
+      tile.type = "button";
+      tile.disabled = ability.lost || !inGame(game);
+    }
+    const state = ability.lost
+      ? t("unitLost")
+      : !discount
+        ? t("cpTileAuto")
+        : !inGame(game)
+          ? t("onceARound")
+          : ability.spent
+            ? t("cpTileUsed")
+            : t("cpTileUse");
+    tile.innerHTML = `
+      <b class="cp-tile__value">${discount ? "−1" : "+1"}<small>${t("cpUnit")}</small></b>
+      <span class="cp-tile__what">${t(discount ? "stratagem" : ABILITY_KINDS[ability.kind].hint)}</span>
+      <span class="cp-tile__state">${discount && ability.spent && !ability.lost ? ICON_CHECK : ""}${state}</span>`;
+    return tile;
+  });
+}
+
+/** The stratagem tile: used, or taken back by a second tap */
+function useCpTile(player: Player, id: number): void {
+  const ability = game.abilities[player].find((candidate) => candidate.id === id);
+  if (!inGame(game) || !ability || ability.lost) return;
+  ability.spent = !ability.spent;
+  playSound(ability.spent ? "coinSpend" : "coinRestore");
+  renderAbilities(player);
 }
 
 function prefersReducedMotion(): boolean {
@@ -4146,8 +4244,21 @@ function renderAbilityList(): void {
     }
     cpRow.appendChild(timing);
   }
+  // In a game, a unit can die: its ability stops, until it is set back
+  if (inGame(game)) {
+    if (discount) discountRow.insertAdjacentHTML("beforeend", abilityLostHtml(discount));
+    if (cp) cpRow.insertAdjacentHTML("beforeend", abilityLostHtml(cp));
+  }
   revealCpTiming = false;
   abilityList.replaceChildren(discountRow, cpRow);
+}
+
+function abilityLostHtml(ability: Ability): string {
+  return `
+    <button type="button" class="ability-lost" data-ability-id="${ability.id}" aria-pressed="${ability.lost}">
+      <span><b>${t("unitLost")}</b><small>${t("unitLostHint")}</small></span>
+      <span class="toggle-chip__switch" aria-hidden="true"></span>
+    </button>`;
 }
 
 function toggleAbilitySlot(player: Player, slot: AbilitySlot): void {
@@ -4161,6 +4272,7 @@ function toggleAbilitySlot(player: Player, slot: AbilitySlot): void {
   // The +1 CP timing comes and goes under its tile: the list, and the dialog with it, follow
   glideHeight(abilityList, renderAbilityList);
   renderAbilities(player);
+  if (phoneView()) renderSeat();
 }
 
 /** `change` makes `el` taller or shorter: it grows or shrinks to its new height, clipped meanwhile */
@@ -5832,6 +5944,11 @@ for (const player of [1, 2] as const) {
   app.querySelector<HTMLButtonElement>(`#p${player}-abilities-btn`)!.addEventListener("click", () => openAbilities(player));
   abilitiesEl[player].addEventListener("click", (e) => {
     const target = e.target as HTMLElement;
+    const tile = target.closest<HTMLButtonElement>(".cp-tile--use");
+    if (tile) {
+      useCpTile(player, Number(tile.dataset.abilityId));
+      return;
+    }
     const unit = target.closest<HTMLButtonElement>(".unit-toggle");
     if (unit) {
       toggleAbilityLost(player, Number(unit.dataset.abilityId));
@@ -5847,6 +5964,11 @@ abilityList.addEventListener("click", (e) => {
   const timing = target.closest<HTMLButtonElement>(".ability-timing .segmented__option");
   if (timing) {
     setCpTiming(abilitiesPlayer, timing.dataset.value as AbilityKind);
+    return;
+  }
+  const lost = target.closest<HTMLButtonElement>(".ability-lost");
+  if (lost) {
+    toggleAbilityLost(abilitiesPlayer, Number(lost.dataset.abilityId));
     return;
   }
   const toggle = target.closest<HTMLButtonElement>(".ability-toggle");
@@ -5921,6 +6043,7 @@ cardsRow.addEventListener(
     e.preventDefault();
     e.stopPropagation();
     frontCardKey = cardKey(card);
+    playSound("slide");
     if (!piled) {
       placeFrontCard();
       return;
@@ -5990,6 +6113,7 @@ cardsRow.addEventListener("click", (e) => {
       const min = field === "count" && "per" in item ? 1 : 0;
       const max = field === "bonus" ? Number(row.dataset.count) : 99;
       const value = Math.max(min, Math.min(max, Number(row.dataset[field]) + Number(button.dataset.delta)));
+      if (String(value) !== row.dataset[field]) playSound(Number(button.dataset.delta) > 0 ? "stepUp" : "stepDown");
       row.dataset[field] = String(value);
       // Fewer things than bonus things makes no sense
       if (Number(row.dataset.bonus) > Number(row.dataset.count)) row.dataset.bonus = row.dataset.count;
@@ -6026,6 +6150,7 @@ cardsRow.addEventListener("click", (e) => {
       const maxCount = Math.ceil(Number(option.dataset.max) / per);
       const delta = button.dataset.action === "more" ? 1 : -1;
       const count = Math.max(1, Math.min(maxCount, Number(option.dataset.count) + delta));
+      if (String(count) !== option.dataset.count) playSound(delta > 0 ? "stepUp" : "stepDown");
       option.dataset.count = String(count);
       option.querySelector(".sec-option__count")!.textContent = String(count);
       option.querySelector(".sec-option__go")!.textContent = `${t("scoreIt")} ${repeatTotal(option)} ${t("vpUnit")}`;
@@ -6177,6 +6302,7 @@ resultOverlay.addEventListener("click", (e) => {
     // Both players at once, to compare their cards; remembered on this device
     const index = [...resultOverlay.querySelectorAll("[data-report-fold]")].indexOf(target.closest("[data-report-fold]")!);
     reportDetailOpen = !reportDetail();
+    playSound("slide");
     store(REPORT_DETAIL_STORAGE_KEY, reportDetailOpen ? "open" : "folded");
     const players = resultOverlay.querySelector<HTMLElement>(".report-players")!;
     const spent = timeByRound();
@@ -6204,12 +6330,29 @@ mvpOverlay.addEventListener("click", (e) => {
     closeMvp();
     return;
   }
+  const shoot = (e.target as HTMLElement).closest<HTMLButtonElement>("[data-mvp-shoot]");
+  if (shoot) {
+    mvpShooting = shoot.dataset.mvpShoot === "2" ? 2 : 1;
+    mvpPhotoInput.click();
+    return;
+  }
   const pick = (e.target as HTMLElement).closest<HTMLButtonElement>("[data-mvp-pick]");
   if (!pick || !mvpDraft) return;
   const player: Player = pick.dataset.mvpPick === "2" ? 2 : 1;
   const [round, by] = (pick.dataset.turn ?? "").split("_").map(Number);
   mvpDraft[player].photo = pick.dataset.turn ? { round, player: by === 2 ? 2 : 1 } : null;
   pick.parentElement!.querySelectorAll("[data-mvp-pick]").forEach((each) => each.setAttribute("aria-checked", String(each === pick)));
+});
+/** The player whose MVP the camera is shooting */
+let mvpShooting: Player = 1;
+// Taken, it becomes the MVP's photo at once; it shows in the picks once kept
+mvpPhotoInput.addEventListener("change", () => {
+  const file = mvpPhotoInput.files?.[0];
+  mvpPhotoInput.value = "";
+  if (!file || !mvpDraft) return;
+  const player = mvpShooting;
+  mvpDraft[player].photo = mvpShot(player);
+  void keepPhoto(mvpShot(player), file);
 });
 app.querySelector("#btn-mvp-cancel")!.addEventListener("click", closeMvp);
 btnMvpCrown.addEventListener("click", crownMvps);
@@ -6832,7 +6975,7 @@ async function connectRoom(seat: Seat, code?: string, preferFree = false): Promi
     // This phone's screen at once: the board for two would flash while the room answers
     if (online.phone) document.documentElement.dataset.seat = String(seat);
   }
-  renderMe();
+  fitScreen();
   renderSeat();
   renderOnlineDialog();
   const events: RoomEvents = {
@@ -6853,7 +6996,7 @@ async function connectRoom(seat: Seat, code?: string, preferFree = false): Promi
       if (arrived.length > 0 && table) playSound("joined");
       if (online && seats.board && !before?.board) showToast(t("onlineBoardJoined"));
       session.seats = seats;
-      setMusicElsewhere(phoneView() && seats.board);
+      setMusicHere(phoneView() && seats.board);
       renderSeat();
       renderOnlineDialog();
     },
@@ -6907,12 +7050,12 @@ function leaveRoom(): void {
   roomSession()?.room?.leave();
   online = null;
   table = null;
-  setMusicElsewhere(false);
+  setMusicHere(false);
   synced = { rev: 0, json: "" };
   latestRemote = null;
   forget(ONLINE_STORAGE_KEY);
   delete document.documentElement.dataset.seat;
-  renderMe();
+  fitScreen();
   renderSeat();
   renderOnlineButton();
 }
@@ -6999,7 +7142,10 @@ function renderSeat(): void {
   for (const player of [1, 2] as const) {
     const inSeat = phoneView() && online?.seat === player;
     const home = inSeat ? seatAbilities : abilitiesHome[player];
-    if (abilitiesEl[player].parentElement !== home) home.append(abilitiesEl[player]);
+    if (abilitiesEl[player].parentElement !== home) {
+      home.append(abilitiesEl[player]);
+      renderAbilities(player);
+    }
     const toastHome = inSeat ? seatCpCard : cpToastHome[player];
     if (cpToastEl[player].parentElement !== toastHome) toastHome.append(cpToastEl[player]);
   }
@@ -7019,9 +7165,12 @@ function renderSeat(): void {
   // Before the battle, on the player's own screen: the moment to say which units generate CP
   const cpInvite = !seatSetup.hidden && game.abilities[me].length === 0;
   const cpButton = app.querySelector<HTMLElement>("#seat-abilities-btn")!;
+  // Once set, the abilities show as tiles: the button only edits them, a pencil in the card's corner
+  const edits = game.abilities[me].length > 0;
   cpButton.classList.toggle("is-invited", cpInvite);
-  cpButton.dataset.i18n = cpInvite ? "abilitiesInvite" : "abilities";
-  cpButton.textContent = t(cpInvite ? "abilitiesInvite" : "abilities");
+  cpButton.classList.toggle("is-edit", edits);
+  delete cpButton.dataset.i18n;
+  cpButton.innerHTML = edits ? `${ICON_EDIT}<span>${t("abilitiesEdit")}</span>` : esc(t(cpInvite ? "abilitiesInvite" : "abilities"));
   const them = other(me);
   const running = isRunning();
   const mine = running && game.clock.active === me;

@@ -1,0 +1,7 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 32 32">
+  <!-- The seal redrawn for a browser tab (16 to 32 px): full bleed, thick strokes, no ticks -->
+  <rect width="32" height="32" rx="7" fill="#07090d"/>
+  <path d="M23.78 10.55 A9.5 9.5 0 1 0 23.78 21.45" fill="none" stroke="#e8dfcb" stroke-width="4.5"/>
+  <path d="M16 16 L24.5 12.8" stroke="#b08d57" stroke-width="3.2" stroke-linecap="round"/>
+  <circle cx="16" cy="16" r="2.8" fill="#b08d57"/>
+</svg>

@@ -38,7 +38,7 @@
         "photos": {
           ".write": "auth != null && ((root.child('rooms').child($code).child('seats/1').val() === auth.uid || root.child('rooms').child($code).child('seats/2').val() === auth.uid || root.child('rooms').child($code).child('boards').child(auth.uid).exists()) || (!newData.exists() && root.child('photoRooms').child($code).val() < now - 172800000))",
           "$key": {
-            ".validate": "$key.matches(/^[a-z0-9]{1,20}_[0-5]_[12]$/) && newData.hasChildren(['at', 'data'])",
+            ".validate": "$key.matches(/^[a-z0-9]{1,20}_[0-59]_[12]$/) && newData.hasChildren(['at', 'data'])",
             "at": {
               ".validate": "newData.isNumber()"
             },

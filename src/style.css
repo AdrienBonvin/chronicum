@@ -73,6 +73,14 @@
   --hazard: repeating-linear-gradient(-45deg, #f2b705 0 8px, #0b0b0a 8px 16px);
 }
 
+/* Switching theme: every color changes in the same frame. Otherwise the buttons' hover fades all
+   replay at once over the page, a flicker on phones (applyTheme sets this for one style pass) */
+:root.is-retheming *,
+:root.is-retheming *::before,
+:root.is-retheming *::after {
+  transition: none !important;
+}
+
 html,
 body {
   margin: 0;
@@ -640,6 +648,27 @@ body {
   color: var(--muted);
   font-size: 0.75rem;
   font-weight: 600;
+}
+
+.settings-row[hidden],
+.settings-note[hidden] {
+  display: none;
+}
+
+/* Said instead of a control that does nothing here */
+.settings-note {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  margin: 0;
+  color: var(--muted);
+  font-size: 0.8rem;
+}
+
+.settings-note svg {
+  width: 1rem;
+  height: 1rem;
+  flex: none;
 }
 
 /* A switch: the whole row turns it, the switch sits at the right end */
@@ -2623,6 +2652,50 @@ kbd {
 }
 
 /* When the +1 CP comes: under its tile, once it is on */
+/* In a game: the unit that generated it is lost, the ability stops until it is set back */
+.ability-lost {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 0.75rem;
+  width: 100%;
+  margin-top: 0.4rem;
+  padding: 0.55rem 0.85rem;
+  border: 1px solid var(--line);
+  border-radius: 5px;
+  background: transparent;
+  color: var(--text);
+  text-align: left;
+}
+
+.ability-lost b {
+  display: block;
+  font-size: 0.85rem;
+  font-weight: 600;
+}
+
+.ability-lost small {
+  color: var(--muted);
+  font-size: 0.72rem;
+}
+
+.ability-lost .toggle-chip__switch {
+  flex: none;
+}
+
+.ability-lost[aria-pressed="true"] {
+  border-color: color-mix(in srgb, var(--danger) 55%, transparent);
+}
+
+.ability-lost[aria-pressed="true"] .toggle-chip__switch {
+  background: var(--danger);
+}
+
+.ability-lost[aria-pressed="true"] .toggle-chip__switch::after {
+  background: #fff;
+  transform: translateX(0.85rem);
+}
+
 .ability-timing {
   display: grid;
   grid-template-columns: 1fr 1fr;
@@ -2807,13 +2880,6 @@ kbd {
   transition: opacity 0.2s ease;
 }
 
-/* Faded out, nothing of it is drawn any more (hideCards then takes the cards off the page) */
-.overlay.overlay--cards:not(.is-visible) {
-  visibility: hidden;
-  transition:
-    opacity 0.2s ease,
-    visibility 0s linear 0.2s;
-}
 
 .cards-stage {
   zoom: var(--ui-scale);
@@ -4935,6 +5001,15 @@ button.sec-option:hover:not(:disabled) {
   pointer-events: auto;
 }
 
+/* Faded out, nothing of it is drawn any more: a closed overlay keeps no full-screen blur for the
+   phone to recompose on every repaint (hideCards then takes the cards off the page) */
+.overlay:not(.is-visible) {
+  visibility: hidden;
+  transition:
+    opacity 0.2s ease,
+    visibility 0s linear 0.2s;
+}
+
 /* Above the cards: undoing a score is asked over them */
 .overlay.overlay--turn-confirm {
   z-index: 13;
@@ -5522,7 +5597,7 @@ h2.report-hero__result {
   --pc: var(--p2);
 }
 
-.mvp-card:hover {
+.mvp-card:hover:not(.is-elsewhere) {
   border-color: var(--line-strong);
   border-top-color: var(--pc);
 }
@@ -6033,10 +6108,39 @@ h2.report-hero__result {
   text-align: left;
 }
 
-.mvp-pick .mvp-pick__none {
+/* No photo, and the camera: drawn as choices, not as photos (a black tile read as a failed one) */
+.mvp-pick :is(.mvp-pick__none, .mvp-pick__shoot) {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 0.25rem;
   border: 1px dashed var(--line-strong);
+  background: none;
   color: var(--muted);
-  font-size: 0.7rem;
+}
+
+.mvp-pick .mvp-pick__shoot {
+  border: 1px solid color-mix(in srgb, var(--pc) 55%, transparent);
+  background: color-mix(in srgb, var(--pc) 10%, transparent);
+  color: var(--text);
+}
+
+.mvp-pick :is(.mvp-pick__none, .mvp-pick__shoot) svg {
+  width: 1.25rem;
+  height: 1.25rem;
+}
+
+.mvp-pick :is(.mvp-pick__none, .mvp-pick__shoot) span {
+  position: static;
+  padding: 0 0.2rem;
+  background: none;
+  color: inherit;
+  font-family: var(--font-ui);
+  font-size: 0.62rem;
+  font-weight: 600;
+  line-height: 1.15;
+  text-align: center;
 }
 
 .mvp-pick button[aria-checked="true"] {
@@ -7829,9 +7933,14 @@ h2.report-hero__result {
   font-size: 0.85rem;
 }
 
-/* The board's own settings say nothing about a player's screen */
-:root[data-seat] .settings__section--board {
+/* The board's layout says nothing about a player's screen. Its size does: dialogs and cards */
+:root[data-seat] .settings-row--layout {
   display: none;
+}
+
+/* On a player's phone, Large is a real step above Auto (1.25) */
+:root[data-seat][data-ui-size="l"] {
+  --ui-scale: 1.4;
 }
 
 :root[data-seat] .seat {
@@ -7846,8 +7955,10 @@ h2.report-hero__result {
   width: 100%;
   max-width: 34rem;
   margin: 0 auto;
+  /* At the bottom, room above the home bar of an iPhone, not just its height: the start button
+     would otherwise sit right on it */
   padding: max(0.6rem, env(safe-area-inset-top, 0px)) max(1rem, env(safe-area-inset-right, 0px))
-    max(1.25rem, env(safe-area-inset-bottom, 0px)) max(1rem, env(safe-area-inset-left, 0px));
+    calc(0.75rem + max(0.5rem, env(safe-area-inset-bottom, 0px))) max(1rem, env(safe-area-inset-left, 0px));
   /* Everything fits the screen: the clock gives up height first. Scrolling is only a last resort */
   overflow-y: auto;
 }
@@ -8007,34 +8118,56 @@ h2.report-hero__result {
 }
 
 /*
- * Packed under the game it sets up: the time on its own line, the two options side by side, the
- * start button under them. The screen above already shows what the game will look like
+ * Packed under the game it sets up: the time, the photo breaks and the cards side by side, three
+ * tiles of one height, the start button under them. The screen above already shows the game
  */
 .seat-setup .toolbar__group {
   display: grid;
-  grid-template-columns: 1fr 1fr;
-  gap: 0.5rem;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 0.45rem;
 }
 
-.seat-setup .setting {
-  grid-column: 1 / -1;
-}
-
-.seat-setup .setting {
-  justify-content: space-between;
-}
-
-.seat-setup .picker,
+.seat-setup .setting,
 .seat-setup .toggle-chip {
-  min-height: 2.6rem;
+  flex-direction: column;
+  flex-wrap: nowrap;
+  justify-content: center;
+  gap: 0.35rem;
+  min-height: 4.4rem;
+  padding: 0.45rem 0.3rem;
+  border: 1px solid var(--line-strong);
+  border-radius: 6px;
+  background: var(--surface);
+  text-align: center;
+}
+
+.seat-setup .setting__label {
+  gap: 0.3rem;
+  font-size: 0.66rem;
+  letter-spacing: 0.08em;
+}
+
+.seat-setup .picker {
+  gap: 0.3rem;
+  padding: 0.2rem 0.45rem 0.2rem 0.55rem;
 }
 
 .seat-setup .toggle-chip {
-  justify-content: space-between;
-  gap: 0.4rem;
-  padding-inline: 0.6rem;
-  font-size: 0.78rem;
-  white-space: nowrap;
+  font-size: 0.72rem;
+  line-height: 1.15;
+  letter-spacing: 0.02em;
+  white-space: normal;
+}
+
+.seat-setup .toggle-chip:has(input:checked) {
+  border-color: var(--pc-line);
+  background: var(--pc-soft);
+  color: var(--text);
+}
+
+.seat-setup .toggle-chip > svg {
+  width: 1.1rem;
+  height: 1.1rem;
 }
 
 .seat-setup .toolbar__start {
@@ -8363,11 +8496,170 @@ h2.report-hero__result {
   display: none;
 }
 
+/*
+ * The player's abilities as tiles of one size, side by side: the stratagem one to tap when used,
+ * the +1 CP one working by itself
+ */
 .seat-abilities .abilities {
-  display: flex;
-  flex-wrap: wrap;
-  justify-content: center;
+  display: grid;
+  grid-auto-flow: column;
+  grid-auto-columns: minmax(0, 1fr);
   gap: 0.5rem;
+}
+
+.cp-tile {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 0.25rem;
+  min-height: 5rem;
+  padding: 0.55rem 0.4rem;
+  border: 1px solid var(--line-strong);
+  border-radius: 8px;
+  background: var(--surface);
+  color: var(--text);
+  font: inherit;
+  text-align: center;
+}
+
+.cp-tile__value {
+  display: inline-flex;
+  align-items: baseline;
+  gap: 0.2rem;
+  font-family: var(--font-num);
+  font-size: 1.45rem;
+  font-weight: 700;
+  line-height: 1;
+}
+
+.cp-tile__value small {
+  color: var(--muted);
+  font-size: 0.72rem;
+}
+
+.cp-tile__what {
+  color: var(--muted);
+  font-size: 0.8rem;
+  line-height: 1.2;
+}
+
+.cp-tile__state {
+  color: var(--muted);
+  font-size: 0.74rem;
+  font-weight: 600;
+  line-height: 1.25;
+}
+
+/* In the line of text, so it wraps with it */
+.cp-tile__state svg {
+  width: 0.85rem;
+  height: 0.85rem;
+  margin-right: 0.2rem;
+  vertical-align: -0.15em;
+}
+
+/* Before the battle it only says what it will do: readable, not greyed out */
+.cp-tile--use:disabled:not(.is-lost) {
+  opacity: 1;
+  color: var(--text);
+}
+
+/* Ready to use: the player's color, the one thing on the card that asks for a tap */
+.cp-tile--use:not(:disabled) {
+  border-color: var(--pc-line);
+  background: var(--pc-soft);
+  cursor: pointer;
+}
+
+.cp-tile--use:not(:disabled) .cp-tile__state {
+  color: var(--pc);
+}
+
+.cp-tile--use:active:not(:disabled) {
+  transform: scale(0.97);
+}
+
+/* Used this round: drawn as a hole where the tile was, back at the next round */
+.cp-tile--use.is-spent {
+  border-style: dashed;
+  border-color: var(--line-strong);
+  background: none;
+}
+
+.cp-tile--use.is-spent .cp-tile__value {
+  color: var(--muted);
+  text-decoration: line-through;
+}
+
+.cp-tile--use.is-spent .cp-tile__state {
+  color: var(--muted);
+}
+
+.cp-tile.is-lost {
+  border-style: dashed;
+  background: none;
+  color: var(--muted);
+}
+
+.cp-tile.is-lost .cp-tile__value {
+  text-decoration: line-through;
+}
+
+/* Once set, the abilities edit from a pencil under the card's title, the count beside them both */
+.seat-cp:has(.abilities-btn.is-edit) .seat-cp__row {
+  grid-column: 2;
+  grid-row: 1 / span 2;
+}
+
+.seat-cp .abilities-btn.is-edit {
+  grid-column: 1;
+  justify-self: start;
+  display: inline-flex;
+  align-items: center;
+  gap: 0.3rem;
+  margin: 0;
+  padding: 0.3rem 0;
+  border: 0;
+  color: var(--muted);
+  font-size: 0.68rem;
+  letter-spacing: 0.08em;
+}
+
+.seat-cp .abilities-btn.is-edit svg {
+  width: 0.85rem;
+  height: 0.85rem;
+}
+
+/* A player's phone: the CP generation rises from the bottom, under the thumb, and goes back down */
+:root[data-seat] .overlay--abilities {
+  align-items: flex-end;
+}
+
+:root[data-seat] .overlay--abilities .overlay-inner {
+  width: 100%;
+  max-width: calc(100vw / var(--ui-scale));
+  padding-bottom: calc(1.25rem + env(safe-area-inset-bottom, 0px) / var(--ui-scale));
+  border-bottom: 0;
+  border-radius: 14px 14px 0 0;
+  transform: translateY(40%);
+  transition: transform 0.2s ease;
+}
+
+:root[data-seat] .overlay--abilities.is-visible .overlay-inner {
+  transform: none;
+}
+
+:root[data-seat] .overlay--abilities .overlay-actions .btn-primary {
+  flex: 1;
+  justify-content: center;
+  min-height: 2.9rem;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  :root[data-seat] .overlay--abilities .overlay-inner {
+    transform: none;
+  }
 }
 
 /* One row: the decks, pause and judge side by side; ending the turn, on its own line under them */
@@ -9483,9 +9775,9 @@ h2.report-hero__result {
     grid-template-columns: 6.5rem 1fr;
   }
 
-  .seat-setup .picker,
+  .seat-setup .setting,
   .seat-setup .toggle-chip {
-    min-height: 2.3rem;
+    min-height: 3.8rem;
   }
 
   .seat-setup .toolbar__start {
