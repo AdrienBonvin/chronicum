@@ -1796,7 +1796,7 @@ function crownMvps(): void {
 /* ---------- The chronicle: each battle this device sees to its end gets the next number ---------- */
 
 const CHRONICLES_STORAGE_KEY = "warhammerClock.chronicles";
-/** Where a shared report leads: its QR code and the address under it */
+/** Where a shared report leads: the address at its foot */
 const APP_URL = "https://chronicum.web.app/";
 /** The brand's seal: a C that is also a dial, bone and brass (public/icon.svg without its square) */
 const SEAL_SVG = `<svg viewBox="0 0 100 100" aria-hidden="true"><g fill="none" stroke="#e8dfcb"><path d="M74.04 25.96 A34 34 0 1 0 74.04 74.04" stroke-width="8"/><path d="M50 22 V28 M22 50 H28 M50 72 V78" stroke-width="3"/><path d="M50 50 L74 41" stroke="#b08d57" stroke-width="5" stroke-linecap="round"/><circle cx="50" cy="50" r="5" fill="#b08d57" stroke="none"/></g></svg>`;
@@ -1829,20 +1829,9 @@ function chronicleNo(): number {
 
 const chronicleTitle = (): string => t("chronicle", { n: String(chronicleNo()).padStart(3, "0") });
 
-/** At the foot of the shared picture: who made it, and a code to start one's own */
-async function reportSignHtml(): Promise<string> {
-  const { default: qrcode } = await import("qrcode-generator");
-  const qr = qrcode(0, "M");
-  qr.addData(APP_URL);
-  qr.make();
-  // Ink on bone: the dark image keeps a code every camera reads
-  const code = qr.createSvgTag({ cellSize: 4, margin: 2, scalable: true }).replace('fill="white"', 'fill="#e8dfcb"').replace('fill="black"', 'fill="#07090d"');
-  return `<footer class="report-sign">
-    <span class="report-sign__seal">${SEAL_SVG}</span>
-    <span class="report-sign__name"><b>Chronicum</b><small>${t("brandLine")}</small></span>
-    <span class="report-sign__qr">${code}</span>
-    <span class="report-sign__scan"><b>${t("scanToPlay")}</b><small>${APP_URL.replace(/^https:\/\/|\/$/g, "")}</small></span>
-  </footer>`;
+/** At the foot of the shared picture, kept small: the battle is what people share, not the app */
+function reportSignHtml(): string {
+  return `<footer class="report-sign">${SEAL_SVG}<span>${APP_URL.replace(/^https:\/\/|\/$/g, "")}</span></footer>`;
 }
 
 /* ---------- The report, on screen and as a picture ---------- */
@@ -1900,7 +1889,7 @@ async function reportImage(): Promise<Blob | null> {
   const sheet = document.createElement("div");
   sheet.className = "report-export";
   const spent = timeByRound();
-  sheet.innerHTML = `<article class="report">${reportHeroHtml(false)}${mvpImageHtml()}<div class="report-players">${reportPlayer(1, spent, true)}${reportPlayer(2, spent, true)}</div>${reportLegend()}</article>${await reportSignHtml()}`;
+  sheet.innerHTML = `<article class="report">${reportHeroHtml(false)}${mvpImageHtml()}<div class="report-players">${reportPlayer(1, spent, true)}${reportPlayer(2, spent, true)}</div>${reportLegend()}</article>${reportSignHtml()}`;
   document.body.append(sheet);
   try {
     const { toBlob } = await import("html-to-image");

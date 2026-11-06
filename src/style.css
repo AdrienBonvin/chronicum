@@ -5417,74 +5417,24 @@ h2.report-hero__result {
   grid-template-columns: 1fr;
 }
 
-/* The picture's signature: the seal and the name, a code to start one's own chronicle */
+/* The picture's signature, in a corner like a photographer's mark */
 .report-sign {
   display: flex;
   align-items: center;
-  gap: 14px;
-  margin: 16px 0 0;
-  padding: 16px 4px 0;
-  border-top: 1px solid var(--line);
-}
-
-.report-sign__seal svg {
-  display: block;
-  width: 40px;
-  height: 40px;
-}
-
-.report-sign__name,
-.report-sign__scan {
-  display: flex;
-  flex-direction: column;
-  gap: 3px;
-}
-
-.report-sign__name {
-  flex: 1;
-}
-
-.report-sign__name b {
-  color: var(--bone);
-  font-family: var(--font-brand);
-  font-size: 1.05rem;
-  letter-spacing: 0.12em;
-}
-
-.report-sign__name small {
-  color: var(--brass);
-  font-family: var(--font-num);
-  font-size: 0.62rem;
-  letter-spacing: 0.14em;
-  text-transform: uppercase;
-}
-
-.report-sign__scan {
-  align-items: flex-end;
-  order: 1;
-  text-align: right;
-}
-
-.report-sign__scan b {
-  color: var(--text);
-  font-size: 0.8rem;
-}
-
-.report-sign__scan small {
+  justify-content: flex-end;
+  gap: 6px;
+  margin: 12px 0 0;
   color: var(--muted);
   font-family: var(--font-num);
-  font-size: 0.66rem;
+  font-size: 0.6rem;
+  letter-spacing: 0.08em;
+  opacity: 0.7;
 }
 
-.report-sign__qr {
-  order: 2;
-}
-
-.report-sign__qr svg {
+.report-sign svg {
   display: block;
-  width: 72px;
-  height: 72px;
-  border-radius: 4px;
+  width: 14px;
+  height: 14px;
 }
 
 /* ---------- End screen: the MVPs, the battle story, the folded secondaries ---------- */
