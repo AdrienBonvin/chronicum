@@ -566,7 +566,6 @@ app.innerHTML = `
     </div>
     <div class="seat-army" id="seat-army"></div>
     <button type="button" class="seat-clock" id="seat-clock">
-      <span class="seat-clock__icon" aria-hidden="true">${ICON_CLOCK}</span>
       <span class="seat-clock__edit" aria-hidden="true">${ICON_EDIT}</span>
       <span class="seat-clock__who" id="seat-who"></span>
       <span class="time seat-clock__time" id="seat-time"></span>
@@ -1146,8 +1145,6 @@ const btnOnline = app.querySelector<HTMLButtonElement>("#btn-online")!;
 const stripRoom = app.querySelector<HTMLButtonElement>("#strip-room")!;
 const seatClock = app.querySelector<HTMLButtonElement>("#seat-clock")!;
 const seatEl = app.querySelector<HTMLElement>("#seat")!;
-const seatStats = app.querySelector<HTMLElement>(".seat-stats")!;
-const seatSharedTitle = app.querySelector<HTMLElement>("#seat-shared-title")!;
 const seatLaunch = app.querySelector<HTMLElement>("#seat-launch")!;
 const seatLaunchHint = app.querySelector<HTMLElement>("#seat-launch-hint")!;
 const seatMusic = app.querySelector<HTMLButtonElement>("#seat-music")!;
@@ -8254,16 +8251,8 @@ function renderSeat(): void {
   seatArmy.hidden = seatSetup.hidden;
   seatLaunch.hidden = seatSetup.hidden;
   const setup = !seatSetup.hidden;
+  // Before the game the clock and the CP show as they will in the battle: the player sees their screen
   seatEl.classList.toggle("is-setup", setup);
-  // Before the game, three groups: the army with its CP units, the settings both players share
-  // (the clock among them, as the time), the start. In the battle, the clock is back in the middle
-  if (setup) {
-    if (seatStats.parentElement !== seatArmy) seatArmy.append(seatStats);
-    if (seatClock.previousElementSibling !== seatSharedTitle) seatSharedTitle.after(seatClock);
-  } else {
-    if (seatClock.parentElement !== seatEl) seatArmy.after(seatClock);
-    if (seatStats.parentElement !== seatEl) seatClock.after(seatStats);
-  }
   const me = online.seat;
   // Before the battle, on the player's own screen: the moment to say which units generate CP
   const cpInvite = !seatSetup.hidden && game.abilities[me].length === 0;
@@ -8299,11 +8288,11 @@ function renderSeat(): void {
   const hint = deploying
     ? t(myDeploy ? "seatDeployHint" : "seatTheirDeployHint")
     : !inGame(game)
-      ? inPreBattle()
-        ? ""
-        : eventLocks().time
-          ? `${t("timeAria")} · ${t("eventLockedBy")}`
-          : t("timeAria")
+      ? timeSettable()
+        ? t("seatSetup")
+        : eventLocks().time && !inPreBattle()
+          ? t("eventLockedBy")
+          : ""
     : isOver()
       ? t("gameOver")
       : !running
@@ -8501,7 +8490,6 @@ function renderSeatInvite(them: Player): void {
   // The opponent joins: the invite folds away, the clock and the rest rise into its room
   const inviting = away && !inGame(game);
   slideRow(invite, inviting);
-  app.querySelector<HTMLElement>("#seat-room")!.classList.toggle("is-compact", inviting);
   seatLaunchHint.hidden = !inviting;
   // Nobody to show yet: their strip comes in with them, as the invite folds away
   slideRow(seatOpp, !inviting);
