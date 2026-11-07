@@ -355,7 +355,7 @@ app.innerHTML = `
         <span class="event-badge__name" id="event-badge-name"></span>
         <button type="button" class="event-badge__leave" id="event-leave" data-i18n-aria="eventLeave" data-i18n-title="eventLeave">×</button>
       </div>
-      <div class="setting">
+      <div class="setting setting--time">
         <span class="setting__label">${ICON_CLOCK}<span data-i18n="time"></span></span>
         <div class="time-picker" id="time-picker">
           <button type="button" class="picker" id="btn-time" aria-haspopup="true" data-i18n-aria="timeAria">

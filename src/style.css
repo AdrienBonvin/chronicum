@@ -8447,24 +8447,33 @@ h2.report-hero__result {
 }
 
 /*
- * Packed under the game it sets up: the time, the photo breaks and the cards side by side, three
- * tiles of one height, the start button under them. The screen above already shows the game
+ * Packed under the game it sets up: the photo breaks and the cards, a line each, the start button
+ * under them. The screen above already shows the game, and its clock sets the time
  */
 .seat-setup .toolbar__group {
-  display: grid;
-  grid-template-columns: repeat(2, minmax(0, 1fr));
+  display: flex;
+  flex-direction: column;
+  align-items: stretch;
   gap: 0.45rem;
 }
 
-/* None / By the app / Your decks: three words, too wide for a third of a phone */
-.seat-setup .setting--cards {
-  grid-column: 1 / -1;
+/* No tile for the time: a tap on the clock opens its sheet, which stays here, out of the flow */
+.seat-setup .setting--time,
+.seat-setup .setting--time .time-picker {
+  display: contents;
 }
 
+.seat-setup .setting--time > .setting__label,
+.seat-setup #btn-time {
+  display: none;
+}
+
+/* None / By the app / Your decks: on the right of their label, or under it when the line is short */
 .seat-setup .segmented--cards {
   display: grid;
   grid-template-columns: repeat(3, minmax(0, 1fr));
-  width: min(100%, 18rem);
+  flex: 1 1 13.5rem;
+  max-width: 17rem;
 }
 
 .seat-setup .segmented--cards .segmented__option {
@@ -8474,16 +8483,16 @@ h2.report-hero__result {
 
 .seat-setup .setting,
 .seat-setup .toggle-chip {
-  flex-direction: column;
-  flex-wrap: nowrap;
-  justify-content: center;
-  gap: 0.35rem;
-  min-height: 4.4rem;
-  padding: 0.45rem 0.3rem;
+  flex-direction: row;
+  flex-wrap: wrap;
+  justify-content: space-between;
+  gap: 0.4rem 0.6rem;
+  min-height: 3rem;
+  padding: 0.4rem 0.45rem 0.4rem 0.75rem;
   border: 1px solid var(--line-strong);
   border-radius: 6px;
   background: var(--surface);
-  text-align: center;
+  text-align: left;
 }
 
 .seat-setup .setting__label {
@@ -8498,10 +8507,15 @@ h2.report-hero__result {
 }
 
 .seat-setup .toggle-chip {
-  font-size: 0.72rem;
+  font-size: 0.78rem;
   line-height: 1.15;
   letter-spacing: 0.02em;
   white-space: normal;
+}
+
+/* The label takes the line, the switch goes to its end */
+.seat-setup .toggle-chip > span:not(.toggle-chip__switch) {
+  flex: 1;
 }
 
 .seat-setup .toggle-chip:has(input:checked) {
@@ -10085,6 +10099,19 @@ h2.report-hero__result {
   min-height: 2.75rem;
 }
 
+/* A phone's line is too short for the status and two buttons: it takes its own, above them */
+@media (max-width: 640px) {
+  .overlay--dispo .overlay-actions {
+    flex-wrap: wrap;
+  }
+
+  .overlay-inner p.dispo-status {
+    flex-basis: 100%;
+    margin: 0;
+    text-align: center;
+  }
+}
+
 /* Most phones once the browser's bars are counted: tighter, every block kept */
 @media (max-height: 720px) {
   :root[data-seat] .seat {
@@ -10116,7 +10143,7 @@ h2.report-hero__result {
 
   .seat-setup .setting,
   .seat-setup .toggle-chip {
-    min-height: 3.8rem;
+    min-height: 2.75rem;
   }
 
   .seat-setup .toolbar__start {
