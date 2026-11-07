@@ -366,6 +366,10 @@ body {
     border-color 0.15s ease;
 }
 
+.toggle-chip__hint {
+  display: none;
+}
+
 .toggle-chip input {
   position: absolute;
   opacity: 0;
@@ -8231,14 +8235,11 @@ h2.report-hero__result {
   display: none;
 }
 
-/* Before the game, the player's army comes first, under the invite: it colors all below it */
+/* Your army: its list, then its CP units under a hairline. Above the shared settings, its list over them */
 .seat-army {
   position: relative;
   z-index: 6;
-  padding: 0.6rem 0.7rem;
-  border: 1px solid var(--line);
-  border-radius: 6px;
-  background: var(--surface);
+  padding-bottom: 0.75rem;
 }
 
 .seat-army[hidden],
@@ -8247,11 +8248,8 @@ h2.report-hero__result {
 }
 
 .seat-army .faction-row {
-  grid-template-columns: 6.5rem 1fr;
-}
-
-.seat-army .faction-row__player {
-  color: var(--me);
+  grid-template-columns: 1fr;
+  gap: 0.35rem;
 }
 
 /* At the top of the screen, the list opens downward, over the clock */
@@ -8259,6 +8257,107 @@ h2.report-hero__result {
   top: calc(100% + 4px);
   bottom: auto;
   box-shadow: 0 14px 36px rgba(0, 0, 0, 0.6);
+}
+
+/* The CP units belong to the army: a line of its group, the count waits for the battle */
+.seat-army .seat-stats {
+  display: block;
+  margin-top: 0.75rem;
+  padding-top: 0.55rem;
+  border-top: 1px solid var(--line);
+}
+
+.seat-army .seat-card.seat-cp {
+  row-gap: 0.45rem;
+  padding: 0;
+  border: 0;
+  background: transparent;
+}
+
+.seat-army .seat-cp__row,
+.seat-army .seat-cp:not(:has(.abilities-btn.is-edit)) .seat-card__head {
+  display: none;
+}
+
+/* Set: a line, "Command points" and its pencil, then each unit in a line of its own, not a box */
+.seat-army .seat-cp .seat-card__head {
+  grid-column: 1;
+  grid-row: 1;
+  align-self: center;
+  color: var(--text);
+  font-size: 0.88rem;
+  font-weight: 500;
+  letter-spacing: 0;
+  text-transform: none;
+}
+
+.seat-army .seat-cp .abilities-btn.is-edit {
+  grid-column: 2;
+  grid-row: 1;
+  justify-self: end;
+  color: var(--muted);
+  font-size: 0.82rem;
+  font-weight: 500;
+  letter-spacing: 0;
+  text-transform: none;
+}
+
+.seat-army .seat-abilities .abilities {
+  grid-auto-flow: row;
+  gap: 0.15rem;
+}
+
+.seat-army .cp-tile {
+  display: grid;
+  grid-template-columns: 3.4rem 1fr;
+  column-gap: 0.6rem;
+  align-items: center;
+  justify-items: start;
+  min-height: 0;
+  padding: 0.2rem 0;
+  border: 0;
+  background: transparent;
+  text-align: left;
+}
+
+.seat-army .cp-tile__value {
+  grid-row: 1 / span 2;
+  font-size: 1.15rem;
+}
+
+.seat-army .cp-tile__what,
+.seat-army .cp-tile__state {
+  grid-column: 2;
+  font-size: 0.75rem;
+}
+
+.seat-army .seat-cp .seat-abilities {
+  grid-column: 1 / -1;
+}
+
+/* Asking for them: a quiet line with an arrow, the army list keeps the eye */
+.seat-army .abilities-btn.is-invited {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 0.75rem;
+  margin: 0;
+  padding: 0.35rem 0;
+  border: 0;
+  background: transparent;
+  color: var(--text);
+  font-size: 0.88rem;
+  font-weight: 500;
+  letter-spacing: 0;
+  text-align: left;
+  animation: none;
+}
+
+.seat-army .abilities-btn.is-invited::after {
+  content: "›";
+  color: var(--muted);
+  font-size: 1.3rem;
+  line-height: 1;
 }
 
 /* No army yet: the list asks for it, in the player's color */
@@ -8343,6 +8442,21 @@ h2.report-hero__result {
 .seat-bar .btn-icon {
   width: 2.75rem;
   height: 2.75rem;
+  border-color: transparent;
+}
+
+/* While the invite shows the code, the bar keeps only the connection's dot, unframed like the tools */
+.seat-room.is-compact {
+  justify-content: center;
+  width: 2.75rem;
+  height: 2.75rem;
+  padding: 0;
+  border-color: transparent;
+  background: transparent;
+}
+
+.seat-room.is-compact #seat-code {
+  display: none;
 }
 
 #seat-music[hidden] {
@@ -8431,33 +8545,44 @@ h2.report-hero__result {
   min-height: 2.5rem;
 }
 
-/* Before the game: its setup, under the thumb, ending on the start */
+/*
+ * Before the game, on a phone: groups, each one card of lines split by a hairline, never a box in
+ * a box. Your army (and its CP units), then what both players share (the time, photo breaks,
+ * cards), then the start, under the thumb
+ */
+.seat-army,
 .seat-setup {
   display: flex;
   flex-direction: column;
-  gap: 0.6rem;
-  padding: 0.7rem;
+  padding: 0.15rem 0.85rem 0.35rem;
   border: 1px solid var(--line);
-  border-radius: 6px;
+  border-radius: 10px;
   background: var(--surface);
 }
 
-.seat-setup[hidden] {
+.seat-setup[hidden],
+.seat-launch[hidden] {
   display: none;
 }
 
-/*
- * Packed under the game it sets up: the photo breaks and the cards, a line each, the start button
- * under them. The screen above already shows the game, and its clock sets the time
- */
+/* A group's title: the only words in capitals, small, above its lines */
+.seat-group__title,
+.seat-army .faction-row__player {
+  margin: 0.55rem 0 0.15rem;
+  color: var(--muted);
+  font-size: 0.62rem;
+  font-weight: 600;
+  letter-spacing: 0.16em;
+  text-transform: uppercase;
+}
+
 .seat-setup .toolbar__group {
   display: flex;
   flex-direction: column;
   align-items: stretch;
-  gap: 0.45rem;
 }
 
-/* No tile for the time: a tap on the clock opens its sheet, which stays here, out of the flow */
+/* No tile for the time: the clock is its line, and its sheet stays here, out of the flow */
 .seat-setup .setting--time,
 .seat-setup .setting--time .time-picker {
   display: contents;
@@ -8468,75 +8593,136 @@ h2.report-hero__result {
   display: none;
 }
 
-/* None / By the app / Your decks: on the right of their label, or under it when the line is short */
+/* A line: its icon and name on the left, its control on the right */
+.seat-setup .setting,
+.seat-setup .toolbar__group > .toggle-chip {
+  flex-direction: row;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: space-between;
+  gap: 0.4rem 0.75rem;
+  min-height: 3.1rem;
+  padding: 0.55rem 0;
+  border: 0;
+  border-top: 1px solid var(--line);
+  border-radius: 0;
+  background: transparent;
+  color: var(--text);
+  font-size: 0.88rem;
+  font-weight: 500;
+  letter-spacing: 0;
+  text-align: left;
+  white-space: normal;
+}
+
+.seat-setup .setting__label {
+  gap: 0.6rem;
+  color: var(--text);
+  font-size: 0.88rem;
+  font-weight: 500;
+  letter-spacing: 0;
+  text-transform: none;
+}
+
+.seat-setup .setting__label .icon,
+.seat-setup .toolbar__group > .toggle-chip > svg {
+  width: 1.15rem;
+  height: 1.15rem;
+  color: var(--muted);
+}
+
+.seat-setup .toggle-chip__text {
+  display: flex;
+  flex: 1;
+  flex-direction: column;
+  gap: 0.15rem;
+}
+
+.seat-setup .toggle-chip__hint {
+  display: block;
+  color: var(--muted);
+  font-size: 0.72rem;
+  font-weight: 400;
+  line-height: 1.3;
+}
+
+/* A switch that reads off as well as on: a lit track in the player's color, a clear knob (the time sheet's too) */
+.seat-setup .toggle-chip .toggle-chip__switch {
+  flex: none;
+  width: 2.6rem;
+  height: 1.5rem;
+  border-color: color-mix(in srgb, var(--text) 28%, transparent);
+  background: color-mix(in srgb, var(--text) 10%, transparent);
+}
+
+.seat-setup .toggle-chip .toggle-chip__switch::after {
+  width: calc(1.5rem - 6px);
+  height: calc(1.5rem - 6px);
+  background: color-mix(in srgb, var(--text) 70%, transparent);
+}
+
+.seat-setup .toggle-chip:has(input:checked) .toggle-chip__switch {
+  border-color: var(--pc);
+  background: var(--pc);
+}
+
+.seat-setup .toggle-chip:has(input:checked) .toggle-chip__switch::after {
+  background: #fff;
+  transform: translateX(1.1rem);
+}
+
+/* None / By the app / Your decks: on the right of their name, or under it when the line is short */
 .seat-setup .segmented--cards {
   display: grid;
   grid-template-columns: repeat(3, minmax(0, 1fr));
   flex: 1 1 13.5rem;
-  max-width: 17rem;
+  max-width: 16rem;
 }
 
 .seat-setup .segmented--cards .segmented__option {
   justify-content: center;
+  min-height: 2.25rem;
   padding-inline: 0.3rem;
 }
 
-.seat-setup .setting,
-.seat-setup .toggle-chip {
-  flex-direction: row;
-  flex-wrap: wrap;
-  justify-content: space-between;
-  gap: 0.4rem 0.6rem;
-  min-height: 3rem;
-  padding: 0.4rem 0.45rem 0.4rem 0.75rem;
-  border: 1px solid var(--line-strong);
-  border-radius: 6px;
-  background: var(--surface);
-  text-align: left;
-}
-
-.seat-setup .setting__label {
-  gap: 0.3rem;
-  font-size: 0.66rem;
-  letter-spacing: 0.08em;
-}
-
-.seat-setup .picker {
-  gap: 0.3rem;
-  padding: 0.2rem 0.45rem 0.2rem 0.55rem;
-}
-
-.seat-setup .toggle-chip {
-  font-size: 0.78rem;
-  line-height: 1.15;
-  letter-spacing: 0.02em;
-  white-space: normal;
-}
-
-/* The label takes the line, the switch goes to its end */
-.seat-setup .toggle-chip > span:not(.toggle-chip__switch) {
-  flex: 1;
-}
-
-.seat-setup .toggle-chip:has(input:checked) {
-  border-color: var(--pc-line);
-  background: var(--pc-soft);
+/* Picked, as everywhere on a player's phone: in their color, outlined, never filled white */
+.seat-setup .segmented--cards .segmented__option[aria-pressed="true"] {
+  background: color-mix(in srgb, var(--pc) 18%, transparent);
+  box-shadow: inset 0 0 0 1px var(--pc);
   color: var(--text);
 }
 
-.seat-setup .toggle-chip > svg {
-  width: 1.1rem;
-  height: 1.1rem;
+/* The start, apart from the groups, at the bottom of the screen: under the thumb */
+.seat-launch {
+  display: flex;
+  flex-direction: column;
+  gap: 0.35rem;
+  margin-top: auto;
 }
 
-.seat-setup .toolbar__start {
+.seat-launch .toolbar__start {
   justify-content: center;
   min-height: 3rem;
   margin: 0;
+  font-size: 1rem;
+  letter-spacing: 0.04em;
+  text-transform: none;
+}
+
+.seat-launch__hint {
+  margin: 0;
+  color: var(--muted);
+  font-size: 0.72rem;
+  text-align: center;
+}
+
+.seat-launch__hint[hidden] {
+  display: none;
 }
 
 /* In the time sheet, deploying with the clock is a line of the list, not a fourth tile */
 .seat-setup .time-panel .toggle-chip {
+  display: flex;
   flex-direction: row;
   justify-content: space-between;
   min-height: 0;
@@ -10062,41 +10248,89 @@ h2.report-hero__result {
   pointer-events: none;
 }
 
-/*
- * Before the battle the whole game shows, as it will be played, with the setup under it: what is
- * only a preview gets smaller. The clock reads the time picked, the counters have nothing to count
- */
-.seat:has(> .seat-setup:not([hidden])) .seat-clock__time.time {
-  font-size: clamp(2.2rem, min(12vw, 6dvh), 3.6rem);
-}
-
-/* Nothing scored yet: the score comes with the battle, the setup moves up into its room */
-.seat:has(> .seat-setup:not([hidden])) .seat-score {
+/* Nothing scored yet: the score comes with the battle */
+.seat.is-setup .seat-score {
   display: none;
 }
 
-.seat:has(> .seat-setup:not([hidden])) .mini-counter__btn {
-  height: 1.75rem;
-}
-
-.seat:has(> .seat-setup:not([hidden])) .seat-invite {
+.seat.is-setup .seat-invite {
   grid-template-columns: 6.5rem 1fr;
   padding: 0.6rem;
 }
 
-.seat:has(> .seat-setup:not([hidden])) .seat-invite__text {
+.seat.is-setup .seat-invite__text {
   gap: 0.25rem;
 }
 
-/* Before the game the clock is the time set, and a tap on it changes it: the room it takes is a
-   large target, not a gap */
-.seat:has(> .seat-setup:not([hidden])) .seat-clock {
-  gap: 0.25rem;
-  padding-block: 0.5rem;
+/* Groups further apart than the lines within them */
+:root[data-seat] .seat.is-setup {
+  gap: 0.8rem;
 }
 
-.seat-setup .toolbar__start {
-  min-height: 2.75rem;
+/* The clock's icon and pencil show only when it is the time line */
+.seat-clock__icon,
+.seat-clock__edit {
+  display: none;
+}
+
+/* Before the game the clock is the time both players get: a line like the others, a pencil to set it */
+.seat-setup .seat-clock {
+  flex: none;
+  flex-direction: row;
+  align-items: center;
+  justify-content: flex-start;
+  gap: 0.6rem;
+  min-height: 3.1rem;
+  padding: 0.55rem 0;
+  border: 0;
+  border-radius: 0;
+  background: transparent;
+  box-shadow: none;
+  text-align: left;
+}
+
+.seat-setup .seat-clock__icon,
+.seat-setup .seat-clock__edit {
+  display: inline-flex;
+  color: var(--muted);
+}
+
+.seat-setup .seat-clock__icon .icon,
+.seat-setup .seat-clock__edit .icon {
+  width: 1.15rem;
+  height: 1.15rem;
+}
+
+.seat-setup .seat-clock__edit {
+  order: 3;
+}
+
+.seat-setup .seat-clock__who {
+  display: none;
+}
+
+.seat-setup .seat-clock__hint {
+  flex: 1;
+  color: var(--text);
+  font-size: 0.88rem;
+  font-weight: 500;
+  letter-spacing: 0;
+}
+
+.seat-setup .seat-clock__time.time {
+  order: 2;
+  color: var(--text);
+  font-size: 1.3rem;
+  opacity: 1;
+}
+
+.seat-setup .seat-clock[aria-disabled="true"] .seat-clock__edit {
+  visibility: hidden;
+}
+
+.seat-setup .seat-clock:active:not([aria-disabled="true"]) {
+  transform: none;
+  opacity: 0.7;
 }
 
 /* A phone's line is too short for the status and two buttons: it takes its own, above them */
@@ -10114,6 +10348,18 @@ h2.report-hero__result {
 
 /* Most phones once the browser's bars are counted: tighter, every block kept */
 @media (max-height: 720px) {
+  /* The photo breaks' line keeps its name: what they do is for a taller screen */
+  .seat-setup .toggle-chip__hint {
+    display: none;
+  }
+
+  .seat-setup .setting,
+  .seat-setup .toolbar__group > .toggle-chip,
+  .seat-setup .seat-clock {
+    min-height: 2.9rem;
+    padding-block: 0.45rem;
+  }
+
   :root[data-seat] .seat {
     gap: 0.45rem;
   }
@@ -10142,16 +10388,22 @@ h2.report-hero__result {
   }
 
   .seat-setup .setting,
-  .seat-setup .toggle-chip {
+  .seat-setup .toolbar__group > .toggle-chip,
+  .seat-setup .seat-clock {
     min-height: 2.75rem;
+    padding-block: 0.4rem;
   }
 
-  .seat-setup .toolbar__start {
+  .seat-launch .toolbar__start {
     min-height: 2.75rem;
   }
 
   :root[data-seat] .seat {
     gap: 0.45rem;
+  }
+
+  :root[data-seat] .seat.is-setup {
+    gap: 0.55rem;
   }
 
   .seat .mini-counter__btn {

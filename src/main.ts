@@ -389,7 +389,10 @@ app.innerHTML = `
       <label class="toggle-chip">
         <input type="checkbox" id="photo-breaks" />
         ${ICON_CAMERA}
-        <span data-i18n="photoBreaks"></span>
+        <span class="toggle-chip__text">
+          <span data-i18n="photoBreaks"></span>
+          <small class="toggle-chip__hint" data-i18n="photoBreaksHint"></small>
+        </span>
         <span class="toggle-chip__switch" aria-hidden="true"></span>
       </label>
       <div class="setting setting--cards">
@@ -563,6 +566,8 @@ app.innerHTML = `
     </div>
     <div class="seat-army" id="seat-army"></div>
     <button type="button" class="seat-clock" id="seat-clock">
+      <span class="seat-clock__icon" aria-hidden="true">${ICON_CLOCK}</span>
+      <span class="seat-clock__edit" aria-hidden="true">${ICON_EDIT}</span>
       <span class="seat-clock__who" id="seat-who"></span>
       <span class="time seat-clock__time" id="seat-time"></span>
       <span class="seat-clock__hint" id="seat-hint"></span>
@@ -621,7 +626,12 @@ app.innerHTML = `
       <button type="button" class="btn-primary" id="seat-end" data-i18n="seatEndTurn"></button>
       <button type="button" class="btn-primary" id="seat-deploy-done" data-i18n="deployDone" hidden></button>
     </nav>
-    <div class="seat-setup" id="seat-setup"></div>
+    <div class="seat-setup" id="seat-setup">
+      <p class="seat-group__title" id="seat-shared-title" data-i18n="sharedSettings"></p>
+    </div>
+    <div class="seat-launch" id="seat-launch">
+      <p class="seat-launch__hint" id="seat-launch-hint" data-i18n="launchBeforeJoin" hidden></p>
+    </div>
   </section>
   <div class="cp-burn" id="cp-burn" aria-hidden="true">
     <div class="cp-burn__veil"></div>
@@ -1135,6 +1145,11 @@ const deployClockToggle = app.querySelector<HTMLInputElement>("#deploy-clock")!;
 const btnOnline = app.querySelector<HTMLButtonElement>("#btn-online")!;
 const stripRoom = app.querySelector<HTMLButtonElement>("#strip-room")!;
 const seatClock = app.querySelector<HTMLButtonElement>("#seat-clock")!;
+const seatEl = app.querySelector<HTMLElement>("#seat")!;
+const seatStats = app.querySelector<HTMLElement>(".seat-stats")!;
+const seatSharedTitle = app.querySelector<HTMLElement>("#seat-shared-title")!;
+const seatLaunch = app.querySelector<HTMLElement>("#seat-launch")!;
+const seatLaunchHint = app.querySelector<HTMLElement>("#seat-launch-hint")!;
 const seatMusic = app.querySelector<HTMLButtonElement>("#seat-music")!;
 const seatMute = app.querySelector<HTMLButtonElement>("#seat-mute")!;
 const seatSettings = app.querySelector<HTMLButtonElement>("#seat-settings")!;
@@ -8209,7 +8224,7 @@ function renderSeat(): void {
     if (cpToastEl[player].parentElement !== toastHome) toastHome.append(cpToastEl[player]);
     // A phone picks its own army first, under the invite: it colors everything below it. The
     // menu keeps both for a screen
-    if (inSeat && factionRow[player].parentElement !== seatArmy) seatArmy.append(factionRow[player]);
+    if (inSeat && factionRow[player].parentElement !== seatArmy) seatArmy.prepend(factionRow[player]);
   }
   // A screen picks each army in its player's half before the battle, where the eyes are; once it
   // starts, the choice goes back to the menu
@@ -8226,7 +8241,10 @@ function renderSeat(): void {
   // hides its bar during a game: the menu opens from the strip then, over the board, unscaled
   const panelHome = phoneView() ? seatSettingsAnchor : inGame(game) ? gameSettingsAnchor : btnSettings.parentElement!;
   if (settingsPanel.parentElement !== panelHome) panelHome.append(settingsPanel);
-  if (phoneView() && setupGroup.parentElement !== seatSetup) seatSetup.append(setupGroup, btnStart);
+  if (phoneView() && setupGroup.parentElement !== seatSetup) {
+    seatSetup.append(setupGroup);
+    seatLaunch.prepend(btnStart);
+  }
   else if (!phoneView() && setupGroup.parentElement === seatSetup) {
     toolbar.prepend(setupGroup);
     toolbarEnd.append(btnStart);
@@ -8234,6 +8252,18 @@ function renderSeat(): void {
   if (!online?.phone) return;
   seatSetup.hidden = inGame(game) || inPreBattle();
   seatArmy.hidden = seatSetup.hidden;
+  seatLaunch.hidden = seatSetup.hidden;
+  const setup = !seatSetup.hidden;
+  seatEl.classList.toggle("is-setup", setup);
+  // Before the game, three groups: the army with its CP units, the settings both players share
+  // (the clock among them, as the time), the start. In the battle, the clock is back in the middle
+  if (setup) {
+    if (seatStats.parentElement !== seatArmy) seatArmy.append(seatStats);
+    if (seatClock.previousElementSibling !== seatSharedTitle) seatSharedTitle.after(seatClock);
+  } else {
+    if (seatClock.parentElement !== seatEl) seatArmy.after(seatClock);
+    if (seatStats.parentElement !== seatEl) seatClock.after(seatStats);
+  }
   const me = online.seat;
   // Before the battle, on the player's own screen: the moment to say which units generate CP
   const cpInvite = !seatSetup.hidden && game.abilities[me].length === 0;
@@ -8251,6 +8281,7 @@ function renderSeat(): void {
   room.classList.toggle("is-offline", !online.connected);
   room.title = online.connected ? "" : t("onlineOffline");
   seatText("seat-code", online.room?.code ?? t("onlineConnecting"));
+  room.setAttribute("aria-label", online.room?.code ?? t("onlineConnecting"));
   renderSeatInvite(them);
   seatText("seat-round", inGame(game) ? `${t("round")} ${game.round}` : "");
   seatText("seat-opp-name", t("player", { n: them }));
@@ -8268,11 +8299,11 @@ function renderSeat(): void {
   const hint = deploying
     ? t(myDeploy ? "seatDeployHint" : "seatTheirDeployHint")
     : !inGame(game)
-      ? timeSettable()
-        ? t("seatSetup")
-        : eventLocks().time && !inPreBattle()
-          ? t("eventLockedBy")
-          : ""
+      ? inPreBattle()
+        ? ""
+        : eventLocks().time
+          ? `${t("timeAria")} · ${t("eventLockedBy")}`
+          : t("timeAria")
     : isOver()
       ? t("gameOver")
       : !running
@@ -8470,6 +8501,8 @@ function renderSeatInvite(them: Player): void {
   // The opponent joins: the invite folds away, the clock and the rest rise into its room
   const inviting = away && !inGame(game);
   slideRow(invite, inviting);
+  app.querySelector<HTMLElement>("#seat-room")!.classList.toggle("is-compact", inviting);
+  seatLaunchHint.hidden = !inviting;
   // Nobody to show yet: their strip comes in with them, as the invite folds away
   slideRow(seatOpp, !inviting);
   if (!inviting) return;
