@@ -6,7 +6,8 @@ import { FACTION_BY_ID, FACTIONS, SPACE_MARINES, SPACE_MARINES_NAME, sideLooks, 
 import { applyUpdateIfIdle, setupPwa } from "./pwa";
 import type { Room, RoomEvents, Seat, Seats } from "./room";
 import { merge } from "./sync";
-import { startAnalytics, track } from "./analytics";
+import { appKind, startAnalytics, track } from "./analytics";
+import { installLater, installWay, offerAfter, onInstallChange, promptInstall } from "./install";
 import {
   ALL_LOCKED,
   EVENT_MAX_MINUTES,
@@ -257,6 +258,7 @@ const ICON_PREV = svgIcon('<path d="M15 5l-7 7 7 7" />');
 const ICON_NEXT = svgIcon('<path d="M9 5l7 7-7 7" />');
 const ICON_PHONE = svgIcon('<rect x="7" y="3" width="10" height="18" rx="2" /><path d="M11 18h2" />');
 const ICON_SCREEN = svgIcon('<rect x="3" y="4" width="18" height="12" rx="1.5" /><path d="M8 20h8M12 16v4" />');
+const ICON_INSTALL = svgIcon('<rect x="6.5" y="2.5" width="11" height="19" rx="2" /><path d="M12 7v7M9 11l3 3 3-3M10.5 18.5h3" />');
 const ICON_SWAP = svgIcon('<path d="M8 20V4M4.5 7.5L8 4l3.5 3.5M16 4v16M12.5 16.5L16 20l3.5-3.5" />');
 const ICON_LOG = svgIcon('<path d="M9 6h11M9 12h11M9 18h11" /><path d="M4.5 6h.01M4.5 12h.01M4.5 18h.01" />');
 const ICON_ROWS = svgIcon('<rect x="2" y="2" width="24" height="7" rx="1" /><rect x="2" y="11" width="24" height="7" rx="1" />', "0 0 28 20");
@@ -467,6 +469,10 @@ app.innerHTML = `
               </div>
             </div>
           </div>
+          <div class="settings__section settings__section--install" id="settings-install" hidden>
+            <button type="button" class="btn-secondary settings-install" id="btn-install-settings">${ICON_INSTALL}<span data-i18n="installSettings"></span></button>
+            <p class="settings-note" id="install-settings-steps" hidden></p>
+          </div>
           <div class="settings__section settings__section--event">
             <button type="button" class="btn-secondary settings-event" id="btn-event-setup" data-i18n="eventSetup"></button>
           </div>
@@ -658,6 +664,14 @@ app.innerHTML = `
   <div class="overlay overlay--result" id="result-overlay" role="dialog" aria-modal="true" aria-labelledby="result-title" aria-hidden="true">
     <div class="overlay-inner">
       <article class="report" id="battle-report"></article>
+      <aside class="install-offer" id="install-offer" hidden>
+        <span class="install-offer__icon">${ICON_INSTALL}</span>
+        <p class="install-offer__text"><b data-i18n="installTitle"></b><span id="install-offer-line" data-i18n="installLine"></span></p>
+        <div class="install-offer__actions">
+          <button type="button" class="btn-ghost" id="install-offer-later" data-i18n="installLater"></button>
+          <button type="button" class="btn-secondary" id="install-offer-go" data-i18n="installGo"></button>
+        </div>
+      </aside>
       <div class="overlay-actions">
         <button type="button" class="btn-ghost btn-log result-log" id="btn-result-log" data-i18n-aria="clockLog">${ICON_LOG}<span data-i18n="clockLog"></span></button>
         <button type="button" class="btn-secondary btn-log" id="btn-result-export">${ICON_IMAGE}<span class="label-long" data-i18n="reportExport"></span><span class="label-short" data-i18n="reportShort"></span></button>
@@ -2192,6 +2206,7 @@ function showResultOverlay(): void {
   resultOverlay.querySelector(".overlay-inner")!.scrollTop = 0;
   btnResultDismiss.focus({ preventScroll: true });
   void refreshEndPhotos();
+  renderInstallOffer();
 }
 
 /** How the game is played, for the audience measure: one screen, phones, a shared screen, apart */
@@ -2216,7 +2231,7 @@ function finishGameByScore(): void {
   stopClock(game.clock);
   logClock("end");
   // Counted once, by the device that ends the battle
-  track("Partie terminée", { chronique: chronicleStep(chronicleNo()), mode: playMode(), abandon: !!game.concededBy });
+  track("Partie terminée", { chronique: chronicleStep(chronicleNo()), mode: playMode(), abandon: !!game.concededBy, app: appKind() });
   lastSpaceTime = 0;
   stopLoop();
   syncInputsFromState();
@@ -3993,7 +4008,7 @@ function start(): void {
   if (!game.preBattle) game.clockLog = {};
   logClock("start");
   // Counted once, by the device that starts the battle
-  track("Partie lancée", { mode: playMode(), cartes: cardsLabel(), tournoi: eventLocked() });
+  track("Partie lancée", { mode: playMode(), cartes: cardsLabel(), tournoi: eventLocked(), app: appKind() });
   // A new game: its photos (unless the deployment's already started them) and its MVPs start afresh
   newGamePhotos();
   game.mvp = { 1: null, 2: null };
@@ -7042,6 +7057,81 @@ finalPhotoInput.addEventListener("change", () => {
   if (file) void keepPhoto(lastTurn(), file);
 });
 
+/* ---------- Installing the app: offered at the end of a battle, never when the app opens ---------- */
+
+const installOffer = app.querySelector<HTMLElement>("#install-offer")!;
+const installOfferLine = app.querySelector<HTMLElement>("#install-offer-line")!;
+const installOfferLater = app.querySelector<HTMLButtonElement>("#install-offer-later")!;
+const installOfferGo = app.querySelector<HTMLButtonElement>("#install-offer-go")!;
+const installSettings = app.querySelector<HTMLElement>("#settings-install")!;
+const installSettingsSteps = app.querySelector<HTMLElement>("#install-settings-steps")!;
+/** The battle whose offer was put away; whether the offer shows the steps; whether it was counted */
+let installOfferClosed = 0;
+let installOfferSteps = false;
+let installOfferSeen = false;
+
+const installStepsKey = (): StringKey => (installWay() === "apple" ? "installApple" : "installMenu");
+
+function setI18n(el: HTMLElement, key: StringKey): void {
+  el.dataset.i18n = key;
+  el.textContent = t(key);
+}
+
+/** At the foot of the report on a touch screen, until the app is installed or put away twice */
+function renderInstallOffer(): void {
+  const way = installWay();
+  // A computer has the browser's own window or nothing: the settings line only shows when it opens it
+  installSettings.hidden = way === null || (way !== "prompt" && !coarsePointer());
+  const battle = isOver() ? chronicleNo() : 0;
+  const show = way !== null && battle > 0 && coarsePointer() && installOfferClosed !== battle && offerAfter(battle);
+  installOffer.hidden = !show;
+  if (!show) return;
+  setI18n(installOfferLine, installOfferSteps ? installStepsKey() : "installLine");
+  setI18n(installOfferLater, installOfferSteps ? "installGotIt" : "installLater");
+  installOfferGo.hidden = installOfferSteps;
+  if (!installOfferSeen) {
+    installOfferSeen = true;
+    track("Invitation installation", { réponse: "vue", appareil: way });
+  }
+}
+
+/** The browser's own install window when it has one; false when the steps have to be shown instead */
+async function openInstall(from: string): Promise<boolean> {
+  const way = installWay();
+  track("Invitation installation", { réponse: "installer", appareil: way ?? "installée", depuis: from });
+  if (way !== "prompt") return false;
+  const outcome = await promptInstall();
+  if (outcome === "dismissed" && from === "fin de partie") installLater(chronicleNo());
+  return true;
+}
+
+installOfferGo.addEventListener("click", async () => {
+  if (await openInstall("fin de partie")) installOfferClosed = chronicleNo();
+  else installOfferSteps = true;
+  renderInstallOffer();
+});
+
+installOfferLater.addEventListener("click", () => {
+  const battle = chronicleNo();
+  // "Got it" after the steps is not a "Later"
+  if (!installOfferSteps) {
+    installLater(battle);
+    track("Invitation installation", { réponse: "plus tard", appareil: installWay() ?? "installée" });
+  }
+  installOfferSteps = false;
+  installOfferClosed = battle;
+  renderInstallOffer();
+});
+
+app.querySelector("#btn-install-settings")!.addEventListener("click", async () => {
+  if (await openInstall("réglages")) return;
+  setI18n(installSettingsSteps, installStepsKey());
+  installSettingsSteps.hidden = !installSettingsSteps.hidden;
+});
+
+onInstallChange(renderInstallOffer);
+window.addEventListener("appinstalled", () => showToast(t("installDone"), true));
+
 mvpOverlay.addEventListener("input", (e) => {
   const input = e.target as HTMLInputElement;
   const match = /^mvp-(unit|feat)-([12])$/.exec(input.id);
@@ -8690,6 +8780,7 @@ window.addEventListener("pageshow", (e) => {
 // Paused or over still counts as a game: its board stays until a reset
 setupPwa(() => inGame(game));
 restoreFinished();
+renderInstallOffer();
 // Before the links' parameters are read and cleared: the visit's source is in them
 startAnalytics();
 resumeOnline();

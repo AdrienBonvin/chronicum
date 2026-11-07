@@ -5,7 +5,9 @@
  * "chronicum.track" set to "on")
  */
 
-const WEBSITE_ID = "ddc780b6-3334-484f-a783-1db680e83b76";
+import { runsInstalled } from "./install";
+
+const WEBSITE_ID ="ddc780b6-3334-484f-a783-1db680e83b76";
 const SCRIPT_URL = "https://cloud.umami.is/script.js";
 
 type EventData = Record<string, string | number | boolean>;
@@ -43,11 +45,15 @@ export function startAnalytics(): void {
     for (const [event, data] of queue.splice(0)) window.umami?.track(event, data);
   });
   document.head.append(script);
-  // Where a visit comes from: the poster, the report's QR code, a forum post (?ref=…)
+  // Where a visit comes from (the poster, the report's QR code, a forum post: ?ref=…), and each
+  // opening from the home screen: Safari says nothing when the app is installed, this counts them
   const ref = new URLSearchParams(location.search).get("ref");
-  if (ref) track("Arrivée", { source: ref.slice(0, 40) });
+  if (ref || runsInstalled()) track("Arrivée", { app: appKind(), ...(ref ? { source: ref.slice(0, 40) } : {}) });
   window.addEventListener("appinstalled", () => track("App installée"));
 }
+
+/** Played in the installed app or in a browser tab */
+export const appKind = (): string => (runsInstalled() ? "installée" : "navigateur");
 
 export function track(event: string, data?: EventData): void {
   if (!counted()) return;

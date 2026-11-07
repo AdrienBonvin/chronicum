@@ -5999,6 +5999,84 @@ h2.report-hero__result {
   margin-right: auto;
 }
 
+/* ---------- Installing the app: one line at the foot of the report, never in the way ---------- */
+
+.install-offer {
+  display: flex;
+  align-items: center;
+  gap: 0.8rem;
+  margin-top: 1rem;
+  padding: 0.75rem 0.9rem;
+  border: 1px solid var(--line-strong);
+  border-radius: 8px;
+  background: color-mix(in srgb, var(--brass) 6%, transparent);
+}
+
+.install-offer[hidden],
+.install-offer button[hidden] {
+  display: none;
+}
+
+.install-offer__icon {
+  display: grid;
+  flex-shrink: 0;
+  color: var(--brass);
+}
+
+.install-offer__text {
+  display: grid;
+  flex: 1;
+  gap: 0.15rem;
+  min-width: 0;
+  margin: 0;
+}
+
+.install-offer__text b {
+  font-size: 0.95rem;
+}
+
+.install-offer__text span {
+  color: var(--muted);
+  font-size: 0.85rem;
+  line-height: 1.4;
+}
+
+.install-offer__actions {
+  display: flex;
+  flex-shrink: 0;
+  gap: 0.4rem;
+}
+
+.settings-install {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.5rem;
+}
+
+.settings__section--install[hidden] {
+  display: none;
+}
+
+@media (max-width: 640px) {
+  .install-offer {
+    flex-wrap: wrap;
+    align-items: flex-start;
+  }
+
+  .install-offer__text {
+    flex-basis: calc(100% - 2.5rem);
+  }
+
+  .install-offer__actions {
+    width: 100%;
+  }
+
+  .install-offer__actions button {
+    flex: 1;
+    justify-content: center;
+  }
+}
+
 /* ---------- End screen dialogs: MVPs and saving, over the report ---------- */
 
 .overlay.overlay--end {
