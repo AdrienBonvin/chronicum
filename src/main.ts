@@ -4866,6 +4866,8 @@ const IMPACT_MS = 650;
 function revealCard(cardEl: HTMLElement, id: string): void {
   playSound("flip");
   const done = () => {
+    // Piled, the card picked stays the open one: its impact is seen in full, not folded away
+    if (cardsRow.classList.contains("is-piled")) frontCardKey = id;
     renderCards();
     renderHandButtons();
     const card = [...cardsRow.querySelectorAll<HTMLElement>(".sec-card")].find((el) => el.dataset.cardId === id);
@@ -4891,17 +4893,41 @@ function revealCard(cardEl: HTMLElement, id: string): void {
   halfTurn(cardEl, 0, 90, REVEAL_HALF_MS, "cubic-bezier(0.4, 0, 1, 1)").then(done, done);
 }
 
+/** Piled, the card picked stays open a beat, its impact seen, before the next blank comes forward */
+const REVEAL_LINGER_MS = 750;
+
 /**
- * Once a card is revealed: the next blank opens its list at once, two picks for two taps. With
- * none left, Continue comes alive: the turn can go on
+ * Once a card is revealed: the next blank opens its list, two picks for two taps. In a row it
+ * opens at once, both cards in sight; piled, the card picked folds back as the blank opens, the
+ * way a tap pulls a card out of the pile. With none left, Continue comes alive: the turn can go on
  */
 function afterReveal(): void {
   const next = cardsRow.querySelector<HTMLElement>(".sec-card.is-blank");
   if (next) {
     if (cardsPlayer === null || !canEdit(cardsPlayer)) return;
-    frontCardKey = cardKey(next);
-    placeFrontCard();
-    openChooser(next, !coarsePointer());
+    if (!cardsRow.classList.contains("is-piled") || prefersReducedMotion()) {
+      frontCardKey = cardKey(next);
+      placeFrontCard();
+      openChooser(next, !coarsePointer());
+      return;
+    }
+    const picked = frontCardKey;
+    const key = cardKey(next);
+    window.setTimeout(() => {
+      const blank = [...cardsRow.querySelectorAll<HTMLElement>(".sec-card.is-blank")].find((card) => cardKey(card) === key);
+      // Closed, or the player has moved on meanwhile: left as they set it
+      if (!blank || cardsPlayer === null || cardsMode !== "draw" || frontCardKey !== picked || cardsRow.querySelector(".sec-card.is-choosing")) {
+        return;
+      }
+      frontCardKey = key;
+      playSound("slide");
+      morphCards(() => {
+        placeFrontCard();
+        showChooser(blank);
+      }, cardShowsInFull);
+      if (!coarsePointer()) blank.querySelector<HTMLInputElement>(".card-chooser__search")!.focus({ preventScroll: true });
+      window.setTimeout(() => blank.scrollIntoView({ block: "nearest", behavior: "smooth" }), CARD_SLIDE_MS);
+    }, REVEAL_LINGER_MS);
     return;
   }
   btnCardsClose.classList.remove("is-ready");
@@ -5569,17 +5595,30 @@ function blankCardEl(player: Player, blank: string, index: number, deal: boolean
 /** A finger on a phone: the list opens without the keyboard, which would cover half of it */
 const coarsePointer = (): boolean => matchMedia("(pointer: coarse)").matches;
 
-/** The blank card becomes the list of the deck's cards, the search on top */
+/** The blank card becomes the list of the deck's cards, the search on top: the card grows to it */
 function openChooser(cardEl: HTMLElement, focusSearch: boolean): void {
   cardsRow.querySelectorAll<HTMLElement>(".sec-card.is-choosing").forEach((card) => card !== cardEl && closeChooser(card));
+  glideHeight(cardEl.querySelector<HTMLElement>(".sec-card__inner")!, () => showChooser(cardEl));
+  playSound("slide");
+  if (focusSearch) cardEl.querySelector<HTMLInputElement>(".card-chooser__search")!.focus({ preventScroll: true });
+}
+
+/** How long the list's cards take to come in, one after the other (style.css, .card-chooser.is-entering) */
+const CHOOSER_ENTER_MS = 500;
+
+/** The list in place of the question mark, its cards coming in one after the other */
+function showChooser(cardEl: HTMLElement): void {
   cardEl.classList.add("is-choosing");
   cardEl.querySelector<HTMLElement>(".sec-card__blank")!.hidden = true;
-  cardEl.querySelector<HTMLElement>(".card-chooser")!.hidden = false;
-  const search = cardEl.querySelector<HTMLInputElement>(".card-chooser__search")!;
-  search.value = "";
+  const chooser = cardEl.querySelector<HTMLElement>(".card-chooser")!;
+  chooser.hidden = false;
+  chooser.querySelector<HTMLInputElement>(".card-chooser__search")!.value = "";
   renderChooserList(cardEl, "");
-  playSound("slide");
-  if (focusSearch) search.focus({ preventScroll: true });
+  if (prefersReducedMotion()) return;
+  chooser.querySelectorAll<HTMLElement>(".card-chooser__option").forEach((option, k) => option.style.setProperty("--k", String(k)));
+  // On opening only: a search typed lists the cards again, at once
+  chooser.classList.add("is-entering");
+  window.setTimeout(() => chooser.classList.remove("is-entering"), CHOOSER_ENTER_MS);
 }
 
 function closeChooser(cardEl: HTMLElement): void {

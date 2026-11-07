@@ -4210,6 +4210,30 @@ button.sec-option:hover:not(:disabled) {
   box-shadow: inset 0 0 0 1px var(--pc);
 }
 
+/* Opening: the search slides in, then the cards of the list one after the other */
+.card-chooser.is-entering {
+  animation: chooserIn 0.24s cubic-bezier(0.2, 0.8, 0.2, 1) both;
+}
+
+.card-chooser.is-entering .card-chooser__option {
+  animation: chooserIn 0.26s cubic-bezier(0.2, 0.8, 0.2, 1) both;
+  animation-delay: calc(min(var(--k, 0), 8) * 25ms + 60ms);
+}
+
+@keyframes chooserIn {
+  from {
+    opacity: 0;
+    transform: translateY(0.45rem);
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .card-chooser.is-entering,
+  .card-chooser.is-entering .card-chooser__option {
+    animation: none;
+  }
+}
+
 .card-chooser__none {
   margin: 0.5rem 0;
   font-size: 0.8rem;
