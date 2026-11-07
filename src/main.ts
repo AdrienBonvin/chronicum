@@ -360,26 +360,27 @@ app.innerHTML = `
             <span class="picker__value" id="time-value"></span>
             ${ICON_CHEVRON}
           </button>
+          <div class="time-scrim" id="time-scrim" aria-hidden="true"></div>
           <div class="time-panel">
+            <p class="time-panel__title" data-i18n="timeAria"></p>
             <div class="segmented" id="time-presets" role="group" data-i18n-aria="timeAria">
               ${PRESETS.map((p) => `<button type="button" class="segmented__option" data-value="${p.sec}">${p.label}</button>`).join("")}
               <button type="button" class="segmented__option" data-value="${CUSTOM_PRESET_VALUE}" data-i18n="custom"></button>
             </div>
             <div id="manual-time-wrap" class="toolbar-manual" hidden>
-              <label>
-                <span data-i18n="playerMinutes" data-v-n="1"></span>
-                <input id="m1" type="number" min="0" max="999" step="1" value="${DEFAULT_TIME_SEC / 60}" />
-              </label>
-              <label>
-                <span data-i18n="playerMinutes" data-v-n="2"></span>
-                <input id="m2" type="number" min="0" max="999" step="1" value="${DEFAULT_TIME_SEC / 60}" />
-              </label>
+              <div class="time-step">
+                <button type="button" class="time-step__btn" data-step="-5" aria-label="−5 min">−</button>
+                <input id="time-minutes" type="number" inputmode="numeric" min="0" max="999" step="1" value="${DEFAULT_TIME_SEC / 60}" data-i18n-aria="timeAria" />
+                <span class="time-step__unit">min</span>
+                <button type="button" class="time-step__btn" data-step="5" aria-label="+5 min">+</button>
+              </div>
             </div>
             <label class="toggle-chip time-deploy">
               <input type="checkbox" id="deploy-clock" checked />
               <span data-i18n="deployClock"></span>
               <span class="toggle-chip__switch" aria-hidden="true"></span>
             </label>
+            <button type="button" class="btn-primary time-panel__done" id="time-done" data-i18n="ok"></button>
           </div>
         </div>
       </div>
@@ -556,6 +557,7 @@ app.innerHTML = `
       <span class="seat-opp__time" id="seat-opp-time"></span>
       <button type="button" class="seat-opp__primary" id="seat-opp-primary" data-i18n-aria="oppPrimary" data-i18n-title="oppPrimary">${ICON_TARGET}</button>
     </div>
+    <div class="seat-army" id="seat-army"></div>
     <button type="button" class="seat-clock" id="seat-clock">
       <span class="seat-clock__who" id="seat-who"></span>
       <span class="time seat-clock__time" id="seat-time"></span>
@@ -997,8 +999,8 @@ const btnSettings = app.querySelector<HTMLButtonElement>("#btn-settings")!;
 const settingsPanel = app.querySelector<HTMLElement>("#settings-panel")!;
 const btnStart = app.querySelector<HTMLButtonElement>("#btn-start")!;
 const manualTimeWrap = app.querySelector<HTMLDivElement>("#manual-time-wrap")!;
-const m1 = app.querySelector<HTMLInputElement>("#m1")!;
-const m2 = app.querySelector<HTMLInputElement>("#m2")!;
+/** The time each player gets: always the same for both */
+const minutesInput = app.querySelector<HTMLInputElement>("#time-minutes")!;
 const btnReset = app.querySelector<HTMLButtonElement>("#btn-reset")!;
 const btnFullscreen = app.querySelector<HTMLButtonElement>("#btn-fullscreen")!;
 const panel1 = app.querySelector<HTMLElement>("#panel-1")!;
@@ -1124,6 +1126,8 @@ const seatSettingsAnchor = app.querySelector<HTMLElement>("#seat-settings-anchor
 const stripSettings = app.querySelector<HTMLButtonElement>("#strip-settings")!;
 const gameSettingsAnchor = app.querySelector<HTMLElement>("#game-settings-anchor")!;
 const seatSetup = app.querySelector<HTMLElement>("#seat-setup")!;
+const seatArmy = app.querySelector<HTMLElement>("#seat-army")!;
+const seatOpp = app.querySelector<HTMLElement>("#seat-opp")!;
 const toolbar = app.querySelector<HTMLElement>(".toolbar")!;
 const toolbarEnd = app.querySelector<HTMLElement>(".toolbar__group--end")!;
 const setupGroup = app.querySelector<HTMLElement>(".toolbar__group:not(.toolbar__group--end)")!;
@@ -2766,11 +2770,8 @@ saveOverlay.addEventListener("change", (e) => {
   saveSheet.querySelector<HTMLInputElement>("#save-report")?.focus();
 });
 
-function readMinutes(): { a: number; b: number } {
-  return {
-    a: Math.max(0, Number(m1.value) || 0),
-    b: Math.max(0, Number(m2.value) || 0),
-  };
+function readMinutes(): number {
+  return Math.max(0, Number(minutesInput.value) || 0);
 }
 
 /** A row of buttons acting as one choice: the chosen one is aria-pressed */
@@ -3447,16 +3448,19 @@ function syncPresetSelectFromState(): void {
 
 function applyPresetSeconds(totalSeconds: number): void {
   const min = Math.round(totalSeconds / 60);
-  m1.value = String(min);
-  m2.value = String(min);
+  minutesInput.value = String(min);
   game.clock.left = { 1: totalSeconds, 2: totalSeconds };
   applyTimesToDisplay();
   syncPresetSelectFromState();
 }
 
+/**
+ * The time set, as the room has it. Only before the game: once it starts the clocks hold the time
+ * left, and a new game starts again from the time set, not from what was left of the last one
+ */
 function syncInputsFromState(): void {
-  m1.value = String(Math.round(timeLeft(1) / 60));
-  m2.value = String(Math.round(timeLeft(2) / 60));
+  if (inGame(game) || inPreBattle()) return;
+  minutesInput.value = String(Math.round(timeLeft(1) / 60));
 }
 
 /** The hour digit is dimmed under an hour, like an unlit segment; a clock out of time reads in full */
@@ -3509,8 +3513,7 @@ function setInputsEnabled(on: boolean): void {
   // What a tournament's organiser imposes stays as set: the players read it, they don't change it
   const locks = eventLocks();
   btnTime.disabled = !on || locks.time;
-  m1.disabled = !on || locks.time;
-  m2.disabled = !on || locks.time;
+  minutesInput.disabled = !on || locks.time;
   photoBreaksToggle.disabled = !on || locks.photoBreaks;
   deployClockToggle.disabled = !on || locks.deployClock;
   cardsSourcePicker.querySelectorAll<HTMLButtonElement>(".segmented__option").forEach((option) => {
@@ -3983,8 +3986,8 @@ function switchTurn(): void {
 
 /** The clocks as set in the bar, stopped, Player 1's first */
 function clockFromInputs(): GameState["clock"] {
-  const { a, b } = readMinutes();
-  return { left: { 1: a * 60, 2: b * 60 }, active: 1, since: null };
+  const seconds = readMinutes() * 60;
+  return { left: { 1: seconds, 2: seconds }, active: 1, since: null };
 }
 
 function start(): void {
@@ -4878,6 +4881,8 @@ const IMPACT_MS = 650;
 function revealCard(cardEl: HTMLElement, id: string): void {
   playSound("flip");
   const done = () => {
+    // Piled, the card picked stays the open one: its impact is seen in full, not folded away
+    if (cardsRow.classList.contains("is-piled")) frontCardKey = id;
     renderCards();
     renderHandButtons();
     const card = [...cardsRow.querySelectorAll<HTMLElement>(".sec-card")].find((el) => el.dataset.cardId === id);
@@ -4903,17 +4908,41 @@ function revealCard(cardEl: HTMLElement, id: string): void {
   halfTurn(cardEl, 0, 90, REVEAL_HALF_MS, "cubic-bezier(0.4, 0, 1, 1)").then(done, done);
 }
 
+/** Piled, the card picked stays open a beat, its impact seen, before the next blank comes forward */
+const REVEAL_LINGER_MS = 750;
+
 /**
- * Once a card is revealed: the next blank opens its list at once, two picks for two taps. With
- * none left, Continue comes alive: the turn can go on
+ * Once a card is revealed: the next blank opens its list, two picks for two taps. In a row it
+ * opens at once, both cards in sight; piled, the card picked folds back as the blank opens, the
+ * way a tap pulls a card out of the pile. With none left, Continue comes alive: the turn can go on
  */
 function afterReveal(): void {
   const next = cardsRow.querySelector<HTMLElement>(".sec-card.is-blank");
   if (next) {
     if (cardsPlayer === null || !canEdit(cardsPlayer)) return;
-    frontCardKey = cardKey(next);
-    placeFrontCard();
-    openChooser(next, !coarsePointer());
+    if (!cardsRow.classList.contains("is-piled") || prefersReducedMotion()) {
+      frontCardKey = cardKey(next);
+      placeFrontCard();
+      openChooser(next, !coarsePointer());
+      return;
+    }
+    const picked = frontCardKey;
+    const key = cardKey(next);
+    window.setTimeout(() => {
+      const blank = [...cardsRow.querySelectorAll<HTMLElement>(".sec-card.is-blank")].find((card) => cardKey(card) === key);
+      // Closed, or the player has moved on meanwhile: left as they set it
+      if (!blank || cardsPlayer === null || cardsMode !== "draw" || frontCardKey !== picked || cardsRow.querySelector(".sec-card.is-choosing")) {
+        return;
+      }
+      frontCardKey = key;
+      playSound("slide");
+      morphCards(() => {
+        placeFrontCard();
+        showChooser(blank);
+      }, cardShowsInFull);
+      if (!coarsePointer()) blank.querySelector<HTMLInputElement>(".card-chooser__search")!.focus({ preventScroll: true });
+      window.setTimeout(() => blank.scrollIntoView({ block: "nearest", behavior: "smooth" }), CARD_SLIDE_MS);
+    }, REVEAL_LINGER_MS);
     return;
   }
   btnCardsClose.classList.remove("is-ready");
@@ -5581,17 +5610,30 @@ function blankCardEl(player: Player, blank: string, index: number, deal: boolean
 /** A finger on a phone: the list opens without the keyboard, which would cover half of it */
 const coarsePointer = (): boolean => matchMedia("(pointer: coarse)").matches;
 
-/** The blank card becomes the list of the deck's cards, the search on top */
+/** The blank card becomes the list of the deck's cards, the search on top: the card grows to it */
 function openChooser(cardEl: HTMLElement, focusSearch: boolean): void {
   cardsRow.querySelectorAll<HTMLElement>(".sec-card.is-choosing").forEach((card) => card !== cardEl && closeChooser(card));
+  glideHeight(cardEl.querySelector<HTMLElement>(".sec-card__inner")!, () => showChooser(cardEl));
+  playSound("slide");
+  if (focusSearch) cardEl.querySelector<HTMLInputElement>(".card-chooser__search")!.focus({ preventScroll: true });
+}
+
+/** How long the list's cards take to come in, one after the other (style.css, .card-chooser.is-entering) */
+const CHOOSER_ENTER_MS = 500;
+
+/** The list in place of the question mark, its cards coming in one after the other */
+function showChooser(cardEl: HTMLElement): void {
   cardEl.classList.add("is-choosing");
   cardEl.querySelector<HTMLElement>(".sec-card__blank")!.hidden = true;
-  cardEl.querySelector<HTMLElement>(".card-chooser")!.hidden = false;
-  const search = cardEl.querySelector<HTMLInputElement>(".card-chooser__search")!;
-  search.value = "";
+  const chooser = cardEl.querySelector<HTMLElement>(".card-chooser")!;
+  chooser.hidden = false;
+  chooser.querySelector<HTMLInputElement>(".card-chooser__search")!.value = "";
   renderChooserList(cardEl, "");
-  playSound("slide");
-  if (focusSearch) search.focus({ preventScroll: true });
+  if (prefersReducedMotion()) return;
+  chooser.querySelectorAll<HTMLElement>(".card-chooser__option").forEach((option, k) => option.style.setProperty("--k", String(k)));
+  // On opening only: a search typed lists the cards again, at once
+  chooser.classList.add("is-entering");
+  window.setTimeout(() => chooser.classList.remove("is-entering"), CHOOSER_ENTER_MS);
 }
 
 function closeChooser(cardEl: HTMLElement): void {
@@ -7498,8 +7540,11 @@ onSegmentedPick(timePresets, (value) => {
   if (isRunning()) return;
   if (value === CUSTOM_PRESET_VALUE) {
     setTimePreset(value);
-    m1.focus();
-    m1.select();
+    // A phone sets it with the − and + buttons: a keyboard would cover the sheet
+    if (!SHEET.matches) {
+      minutesInput.focus();
+      minutesInput.select();
+    }
     return;
   }
   applyPresetSeconds(Number(value));
@@ -7513,22 +7558,35 @@ timePicker.addEventListener("mouseenter", () => {
   if (!timePicker.matches(":focus-within")) timePicker.classList.remove("is-folded");
 });
 
-[m1, m2].forEach((input) => {
-  input.addEventListener("input", () => {
-    if (isRunning()) return;
-    // Also while paused: the time left can be corrected mid-game
-    const { a, b } = readMinutes();
-    game.clock.left = { 1: a * 60, 2: b * 60 };
-    applyTimesToDisplay();
-    renderTimeValue();
-  });
-  // Enter validates the custom time and gives the keyboard back to the game
-  input.addEventListener("keydown", (e) => {
-    if (e.key !== "Enter") return;
-    e.preventDefault();
-    foldTimePicker();
-  });
+minutesInput.addEventListener("input", () => {
+  // The setup is fixed once the tosses start
+  if (inGame(game) || inPreBattle()) return;
+  const seconds = readMinutes() * 60;
+  game.clock.left = { 1: seconds, 2: seconds };
+  applyTimesToDisplay();
+  renderTimeValue();
 });
+// Enter validates the custom time and gives the keyboard back to the game
+minutesInput.addEventListener("keydown", (e) => {
+  if (e.key !== "Enter") return;
+  e.preventDefault();
+  foldTimePicker();
+});
+
+/** − and + move a custom time to the 5 minutes below or above */
+manualTimeWrap.addEventListener("click", (e) => {
+  const button = (e.target as HTMLElement).closest<HTMLButtonElement>("[data-step]");
+  if (!button) return;
+  const step = Number(button.dataset.step);
+  const minutes = readMinutes();
+  const next = step > 0 ? Math.floor(minutes / step) * step + step : Math.ceil(minutes / -step) * -step + step;
+  minutesInput.value = String(Math.min(999, Math.max(0, next)));
+  minutesInput.dispatchEvent(new Event("input"));
+});
+
+// A phone's sheet closes on OK, or on a tap on the dimmed screen around it
+app.querySelector("#time-done")!.addEventListener("click", foldTimePicker);
+app.querySelector("#time-scrim")!.addEventListener("click", foldTimePicker);
 
 app.querySelector("#faction-swap")!.addEventListener("click", swapFactions);
 for (const picker of factionPickers) {
@@ -7594,13 +7652,15 @@ seatMute.addEventListener("click", () => {
   renderSeatSound();
 });
 seatMusic.addEventListener("click", toggleMusicMute);
-// A touch screen has no hover to unfold the times: a tap opens them, another tap or a pick closes them
-btnTime.addEventListener("click", () => {
-  const open = !timePicker.classList.contains("is-open");
+/** The times unfold: over the bar on a screen, as a sheet from the bottom on a phone */
+function showTimePicker(open: boolean): void {
   closePopovers();
   timePicker.classList.toggle("is-open", open);
   if (open) timePicker.classList.remove("is-folded");
-});
+}
+
+// A touch screen has no hover to unfold the times: a tap opens them, another tap or a pick closes them
+btnTime.addEventListener("click", () => showTimePicker(!timePicker.classList.contains("is-open")));
 // An army list outside the menu (a phone's setup) closes on its own, after its pick
 document.addEventListener("pointerdown", (e) => {
   if (!(e.target as HTMLElement).closest(".popover-anchor, .time-picker, .picker")) closePopovers();
@@ -7838,6 +7898,14 @@ async function connectRoom(seat: Seat, code?: string, resume = false): Promise<v
     online = Object.assign(session, { seat, phone: PHONE.matches });
     // This phone's screen at once: the board for two would flash while the room answers
     if (online.phone) document.documentElement.dataset.seat = String(seat);
+    // A phone creating a game brings its own army only: the other side is the opponent's to pick,
+    // not the last army a shared screen saw on this device
+    if (!code && online.phone) {
+      const mine = stored(MY_ARMY_STORAGE_KEY);
+      const own = mine && FACTION_BY_ID.has(mine) ? mine : null;
+      game.factions = seat === 1 ? { 1: own, 2: null } : { 1: null, 2: own };
+      renderFactions();
+    }
   }
   fitScreen();
   renderSeat();
@@ -8048,8 +8116,9 @@ function renderSeat(): void {
     }
     const toastHome = inSeat ? seatCpCard : cpToastHome[player];
     if (cpToastEl[player].parentElement !== toastHome) toastHome.append(cpToastEl[player]);
-    // A phone picks its own army at the top of its setup; the menu keeps both for a screen
-    if (inSeat && factionRow[player].parentElement !== seatSetup) seatSetup.prepend(factionRow[player]);
+    // A phone picks its own army first, under the invite: it colors everything below it. The
+    // menu keeps both for a screen
+    if (inSeat && factionRow[player].parentElement !== seatArmy) seatArmy.append(factionRow[player]);
   }
   // A screen picks each army in its player's half before the battle, where the eyes are; once it
   // starts, the choice goes back to the menu
@@ -8073,6 +8142,7 @@ function renderSeat(): void {
   }
   if (!online?.phone) return;
   seatSetup.hidden = inGame(game) || inPreBattle();
+  seatArmy.hidden = seatSetup.hidden;
   const me = online.seat;
   // Before the battle, on the player's own screen: the moment to say which units generate CP
   const cpInvite = !seatSetup.hidden && game.abilities[me].length === 0;
@@ -8094,8 +8164,8 @@ function renderSeat(): void {
   seatText("seat-round", inGame(game) ? `${t("round")} ${game.round}` : "");
   seatText("seat-opp-name", t("player", { n: them }));
   seatText("seat-opp-score", String(shownScore(them)));
-  app.querySelector("#seat-opp")!.classList.toggle("is-running", running && game.clock.active === them);
-  app.querySelector("#seat-opp")!.classList.toggle("is-flag", inGame(game) && timeLeft(them) <= 0);
+  seatOpp.classList.toggle("is-running", running && game.clock.active === them);
+  seatOpp.classList.toggle("is-flag", inGame(game) && timeLeft(them) <= 0);
   const deploying = isDeploying();
   const myDeploy = deploying && game.clock.active === me;
   const turn = deploying
@@ -8107,7 +8177,11 @@ function renderSeat(): void {
   const hint = deploying
     ? t(myDeploy ? "seatDeployHint" : "seatTheirDeployHint")
     : !inGame(game)
-      ? t("seatSetup")
+      ? timeSettable()
+        ? t("seatSetup")
+        : eventLocks().time && !inPreBattle()
+          ? t("eventLockedBy")
+          : ""
     : isOver()
       ? t("gameOver")
       : !running
@@ -8119,7 +8193,7 @@ function renderSeat(): void {
   seatClock.classList.toggle("is-running", mine || (myDeploy && deploymentTimed()));
   slideRow(app.querySelector<HTMLElement>("#seat-deploy-done")!, deploying);
   seatClock.classList.toggle("is-flag", inGame(game) && timeLeft(me) <= 0);
-  seatClock.setAttribute("aria-disabled", String(!mine && !myDeploy));
+  seatClock.setAttribute("aria-disabled", String(!mine && !myDeploy && !timeSettable()));
   renderSeatTimes();
 
   const turnIdx = scoringTurnIdx(me);
@@ -8147,8 +8221,17 @@ function renderSeat(): void {
   app.querySelector<HTMLElement>("#seat-reset")!.hidden = !inGame(game);
 }
 
-/** A tap on this phone's own running clock passes it to the opponent */
+/** The time can still be set: before the game, unless a tournament imposes it */
+function timeSettable(): boolean {
+  return !inGame(game) && !inPreBattle() && !eventLocks().time;
+}
+
+/** A tap on this phone's own running clock passes it to the opponent; before the game, it sets its time */
 seatClock.addEventListener("click", () => {
+  if (timeSettable()) {
+    showTimePicker(true);
+    return;
+  }
   if (isDeploying()) {
     passDeployment();
     return;
@@ -8296,6 +8379,8 @@ function renderSeatInvite(them: Player): void {
   // The opponent joins: the invite folds away, the clock and the rest rise into its room
   const inviting = away && !inGame(game);
   slideRow(invite, inviting);
+  // Nobody to show yet: their strip comes in with them, as the invite folds away
+  slideRow(seatOpp, !inviting);
   if (!inviting) return;
   seatText("seat-invite-title", t("onlineWaiting", { n: them }));
   seatText("seat-invite-code", room?.code ?? t("onlineConnecting"));
