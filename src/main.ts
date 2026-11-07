@@ -358,26 +358,35 @@ app.innerHTML = `
             <span class="picker__value" id="time-value"></span>
             ${ICON_CHEVRON}
           </button>
+          <div class="time-scrim" id="time-scrim" aria-hidden="true"></div>
           <div class="time-panel">
+            <p class="time-panel__title" data-i18n="timeAria"></p>
             <div class="segmented" id="time-presets" role="group" data-i18n-aria="timeAria">
               ${PRESETS.map((p) => `<button type="button" class="segmented__option" data-value="${p.sec}">${p.label}</button>`).join("")}
               <button type="button" class="segmented__option" data-value="${CUSTOM_PRESET_VALUE}" data-i18n="custom"></button>
             </div>
             <div id="manual-time-wrap" class="toolbar-manual" hidden>
-              <label>
-                <span data-i18n="playerMinutes" data-v-n="1"></span>
-                <input id="m1" type="number" min="0" max="999" step="1" value="${DEFAULT_TIME_SEC / 60}" />
-              </label>
-              <label>
-                <span data-i18n="playerMinutes" data-v-n="2"></span>
-                <input id="m2" type="number" min="0" max="999" step="1" value="${DEFAULT_TIME_SEC / 60}" />
-              </label>
+              ${([1, 2] as const)
+                .map(
+                  (n) => `
+              <div class="time-step">
+                <label for="m${n}" data-i18n="player" data-v-n="${n}"></label>
+                <div class="time-step__ctrl">
+                  <button type="button" class="time-step__btn" data-step="-5" data-for="m${n}" aria-label="−5 min">−</button>
+                  <input id="m${n}" type="number" inputmode="numeric" min="0" max="999" step="1" value="${DEFAULT_TIME_SEC / 60}" />
+                  <span class="time-step__unit">min</span>
+                  <button type="button" class="time-step__btn" data-step="5" data-for="m${n}" aria-label="+5 min">+</button>
+                </div>
+              </div>`,
+                )
+                .join("")}
             </div>
             <label class="toggle-chip time-deploy">
               <input type="checkbox" id="deploy-clock" checked />
               <span data-i18n="deployClock"></span>
               <span class="toggle-chip__switch" aria-hidden="true"></span>
             </label>
+            <button type="button" class="btn-primary time-panel__done" id="time-done" data-i18n="ok"></button>
           </div>
         </div>
       </div>
@@ -550,6 +559,7 @@ app.innerHTML = `
       <span class="seat-opp__time" id="seat-opp-time"></span>
       <button type="button" class="seat-opp__primary" id="seat-opp-primary" data-i18n-aria="oppPrimary" data-i18n-title="oppPrimary">${ICON_TARGET}</button>
     </div>
+    <div class="seat-army" id="seat-army"></div>
     <button type="button" class="seat-clock" id="seat-clock">
       <span class="seat-clock__who" id="seat-who"></span>
       <span class="time seat-clock__time" id="seat-time"></span>
@@ -1110,6 +1120,8 @@ const seatSettingsAnchor = app.querySelector<HTMLElement>("#seat-settings-anchor
 const stripSettings = app.querySelector<HTMLButtonElement>("#strip-settings")!;
 const gameSettingsAnchor = app.querySelector<HTMLElement>("#game-settings-anchor")!;
 const seatSetup = app.querySelector<HTMLElement>("#seat-setup")!;
+const seatArmy = app.querySelector<HTMLElement>("#seat-army")!;
+const seatOpp = app.querySelector<HTMLElement>("#seat-opp")!;
 const toolbar = app.querySelector<HTMLElement>(".toolbar")!;
 const toolbarEnd = app.querySelector<HTMLElement>(".toolbar__group--end")!;
 const setupGroup = app.querySelector<HTMLElement>(".toolbar__group:not(.toolbar__group--end)")!;
@@ -7408,8 +7420,11 @@ onSegmentedPick(timePresets, (value) => {
   if (isRunning()) return;
   if (value === CUSTOM_PRESET_VALUE) {
     setTimePreset(value);
-    m1.focus();
-    m1.select();
+    // A phone sets it with the − and + buttons: a keyboard would cover the sheet
+    if (!SHEET.matches) {
+      m1.focus();
+      m1.select();
+    }
     return;
   }
   applyPresetSeconds(Number(value));
@@ -7439,6 +7454,22 @@ timePicker.addEventListener("mouseenter", () => {
     foldTimePicker();
   });
 });
+
+/** − and + move a custom time to the 5 minutes below or above */
+manualTimeWrap.addEventListener("click", (e) => {
+  const button = (e.target as HTMLElement).closest<HTMLButtonElement>("[data-step]");
+  if (!button) return;
+  const input = button.dataset.for === "m2" ? m2 : m1;
+  const step = Number(button.dataset.step);
+  const minutes = Math.max(0, Number(input.value) || 0);
+  const next = step > 0 ? Math.floor(minutes / step) * step + step : Math.ceil(minutes / -step) * -step + step;
+  input.value = String(Math.min(999, Math.max(0, next)));
+  input.dispatchEvent(new Event("input"));
+});
+
+// A phone's sheet closes on OK, or on a tap on the dimmed screen around it
+app.querySelector("#time-done")!.addEventListener("click", foldTimePicker);
+app.querySelector("#time-scrim")!.addEventListener("click", foldTimePicker);
 
 app.querySelector("#faction-swap")!.addEventListener("click", swapFactions);
 for (const picker of factionPickers) {
@@ -7748,6 +7779,14 @@ async function connectRoom(seat: Seat, code?: string, resume = false): Promise<v
     online = Object.assign(session, { seat, phone: PHONE.matches });
     // This phone's screen at once: the board for two would flash while the room answers
     if (online.phone) document.documentElement.dataset.seat = String(seat);
+    // A phone creating a game brings its own army only: the other side is the opponent's to pick,
+    // not the last army a shared screen saw on this device
+    if (!code && online.phone) {
+      const mine = stored(MY_ARMY_STORAGE_KEY);
+      const own = mine && FACTION_BY_ID.has(mine) ? mine : null;
+      game.factions = seat === 1 ? { 1: own, 2: null } : { 1: null, 2: own };
+      renderFactions();
+    }
   }
   fitScreen();
   renderSeat();
@@ -7958,8 +7997,9 @@ function renderSeat(): void {
     }
     const toastHome = inSeat ? seatCpCard : cpToastHome[player];
     if (cpToastEl[player].parentElement !== toastHome) toastHome.append(cpToastEl[player]);
-    // A phone picks its own army at the top of its setup; the menu keeps both for a screen
-    if (inSeat && factionRow[player].parentElement !== seatSetup) seatSetup.prepend(factionRow[player]);
+    // A phone picks its own army first, under the invite: it colors everything below it. The
+    // menu keeps both for a screen
+    if (inSeat && factionRow[player].parentElement !== seatArmy) seatArmy.append(factionRow[player]);
   }
   // A screen picks each army in its player's half before the battle, where the eyes are; once it
   // starts, the choice goes back to the menu
@@ -7983,6 +8023,7 @@ function renderSeat(): void {
   }
   if (!online?.phone) return;
   seatSetup.hidden = inGame(game) || inPreBattle();
+  seatArmy.hidden = seatSetup.hidden;
   const me = online.seat;
   // Before the battle, on the player's own screen: the moment to say which units generate CP
   const cpInvite = !seatSetup.hidden && game.abilities[me].length === 0;
@@ -8004,8 +8045,8 @@ function renderSeat(): void {
   seatText("seat-round", inGame(game) ? `${t("round")} ${game.round}` : "");
   seatText("seat-opp-name", t("player", { n: them }));
   seatText("seat-opp-score", String(shownScore(them)));
-  app.querySelector("#seat-opp")!.classList.toggle("is-running", running && game.clock.active === them);
-  app.querySelector("#seat-opp")!.classList.toggle("is-flag", inGame(game) && timeLeft(them) <= 0);
+  seatOpp.classList.toggle("is-running", running && game.clock.active === them);
+  seatOpp.classList.toggle("is-flag", inGame(game) && timeLeft(them) <= 0);
   const deploying = isDeploying();
   const myDeploy = deploying && game.clock.active === me;
   const turn = deploying
@@ -8206,6 +8247,8 @@ function renderSeatInvite(them: Player): void {
   // The opponent joins: the invite folds away, the clock and the rest rise into its room
   const inviting = away && !inGame(game);
   slideRow(invite, inviting);
+  // Nobody to show yet: their strip comes in with them, as the invite folds away
+  slideRow(seatOpp, !inviting);
   if (!inviting) return;
   seatText("seat-invite-title", t("onlineWaiting", { n: them }));
   seatText("seat-invite-code", room?.code ?? t("onlineConnecting"));

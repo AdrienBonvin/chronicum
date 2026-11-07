@@ -300,7 +300,8 @@ body {
   height: 1.6rem;
 }
 
-.toolbar input[type="number"] {
+.toolbar input[type="number"],
+.time-panel input[type="number"] {
   width: 4.25rem;
   padding: 0.35rem 0.5rem;
   border-radius: 4px;
@@ -313,12 +314,15 @@ body {
 }
 
 .toolbar input[type="number"]::-webkit-outer-spin-button,
-.toolbar input[type="number"]::-webkit-inner-spin-button {
+.toolbar input[type="number"]::-webkit-inner-spin-button,
+.time-panel input[type="number"]::-webkit-outer-spin-button,
+.time-panel input[type="number"]::-webkit-inner-spin-button {
   -webkit-appearance: none;
   margin: 0;
 }
 
-.toolbar input[type="number"]:focus-visible {
+.toolbar input[type="number"]:focus-visible,
+.time-panel input[type="number"]:focus-visible {
   outline: 2px solid var(--text);
   outline-offset: 1px;
 }
@@ -993,8 +997,61 @@ body {
   display: none;
 }
 
-.time-panel .toolbar-manual label {
+/* A custom time: each player's name, then − minutes + */
+.time-step {
+  display: flex;
+  align-items: center;
   justify-content: space-between;
+  gap: 0.75rem;
+  font-size: 0.72rem;
+  color: var(--muted);
+}
+
+.time-step label {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.time-step__ctrl {
+  display: flex;
+  align-items: center;
+  gap: 0.3rem;
+}
+
+.time-step__btn {
+  width: 1.9rem;
+  height: 1.9rem;
+  padding: 0;
+  border: 1px solid var(--line-strong);
+  border-radius: 4px;
+  background: transparent;
+  color: var(--text);
+  font-family: var(--font-num);
+  font-size: 1rem;
+  line-height: 1;
+}
+
+.time-step__btn:hover {
+  background: rgba(255, 255, 255, 0.06);
+}
+
+.time-step input[type="number"] {
+  width: 3.4rem;
+  text-align: center;
+}
+
+.time-step__unit {
+  margin-right: 0.15rem;
+  font-family: var(--font-num);
+}
+
+/* The sheet's title, its OK and the dim around it are a phone's: a screen's menu folds on its own */
+.time-panel__title,
+.time-panel__done,
+.time-scrim {
+  display: none;
 }
 
 /* A phone: the times rise from the bottom, in a grid a thumb can hit */
@@ -1018,6 +1075,69 @@ body {
 
   .time-panel .segmented__option {
     min-height: 2.75rem;
+    justify-content: center;
+    border: 1px solid var(--line-strong);
+    border-radius: 6px;
+    color: var(--text);
+  }
+
+  /* Every time is a tile; the one picked is outlined in the player's color, not filled white like a
+     button or a field */
+  .time-panel .segmented__option[aria-pressed="true"] {
+    border-color: var(--pc, var(--text));
+    background: color-mix(in srgb, var(--pc, var(--text)) 16%, transparent);
+    box-shadow: inset 0 0 0 1px var(--pc, var(--text));
+    color: var(--text);
+  }
+
+  .time-panel__title {
+    display: block;
+    margin: 0;
+    font-size: 0.68rem;
+    font-weight: 600;
+    letter-spacing: 0.16em;
+    text-transform: uppercase;
+    color: var(--muted);
+  }
+
+  .time-panel .toolbar-manual {
+    gap: 0.6rem;
+    padding: 0.8rem 0 0;
+  }
+
+  .time-step {
+    font-size: 0.85rem;
+    color: var(--text);
+  }
+
+  .time-step__ctrl {
+    gap: 0.4rem;
+  }
+
+  .time-step__btn {
+    width: 2.75rem;
+    height: 2.75rem;
+    font-size: 1.3rem;
+  }
+
+  .time-step input[type="number"] {
+    width: 3.6rem;
+    height: 2.75rem;
+    font-size: 1.15rem;
+  }
+
+  .time-panel__done {
+    display: flex;
+    justify-content: center;
+    min-height: 3rem;
+  }
+
+  .time-picker.is-open .time-scrim {
+    display: block;
+    position: fixed;
+    inset: 0;
+    z-index: 19;
+    background: rgba(0, 0, 0, 0.55);
   }
 }
 
@@ -8024,16 +8144,38 @@ h2.report-hero__result {
   display: none;
 }
 
-.seat-setup .faction-row {
+/* Before the game, the player's army comes first, under the invite: it colors all below it */
+.seat-army {
+  position: relative;
+  z-index: 6;
+  padding: 0.6rem 0.7rem;
+  border: 1px solid var(--line);
+  border-radius: 6px;
+  background: var(--surface);
+}
+
+.seat-army[hidden],
+.seat-opp[hidden] {
+  display: none;
+}
+
+.seat-army .faction-row {
   grid-template-columns: 6.5rem 1fr;
 }
 
-.seat-setup .faction-row__player {
+.seat-army .faction-row__player {
   color: var(--me);
 }
 
+/* At the top of the screen, the list opens downward, over the clock */
+.seat-army .picker__list {
+  top: calc(100% + 4px);
+  bottom: auto;
+  box-shadow: 0 14px 36px rgba(0, 0, 0, 0.6);
+}
+
 /* No army yet: the list asks for it, in the player's color */
-.seat-setup .faction-row.is-empty .picker__button {
+.seat-army .faction-row.is-empty .picker__button {
   border-color: var(--me);
   box-shadow: 0 0 0 3px color-mix(in srgb, var(--me) 22%, transparent);
 }
@@ -8223,8 +8365,24 @@ h2.report-hero__result {
  */
 .seat-setup .toolbar__group {
   display: grid;
-  grid-template-columns: repeat(3, minmax(0, 1fr));
+  grid-template-columns: repeat(2, minmax(0, 1fr));
   gap: 0.45rem;
+}
+
+/* None / By the app / Your decks: three words, too wide for a third of a phone */
+.seat-setup .setting--cards {
+  grid-column: 1 / -1;
+}
+
+.seat-setup .segmented--cards {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  width: min(100%, 18rem);
+}
+
+.seat-setup .segmented--cards .segmented__option {
+  justify-content: center;
+  padding-inline: 0.3rem;
 }
 
 .seat-setup .setting,
@@ -8274,6 +8432,26 @@ h2.report-hero__result {
   justify-content: center;
   min-height: 3rem;
   margin: 0;
+}
+
+/* In the time sheet, deploying with the clock is a line of the list, not a fourth tile */
+.seat-setup .time-panel .toggle-chip {
+  flex-direction: row;
+  justify-content: space-between;
+  min-height: 0;
+  margin: 0;
+  padding: 0.8rem 0 0;
+  border: none;
+  border-top: 1px solid var(--line);
+  border-radius: 0;
+  background: transparent;
+  font-size: 0.85rem;
+  text-align: left;
+}
+
+.seat-setup .time-panel .toggle-chip:has(input:checked) {
+  border-color: var(--line);
+  background: transparent;
 }
 
 /* The opponent: one discreet line, every piece on the same middle line */
@@ -9789,6 +9967,11 @@ h2.report-hero__result {
  */
 .seat:has(> .seat-setup:not([hidden])) .seat-clock__time.time {
   font-size: clamp(2.2rem, min(12vw, 6dvh), 3.6rem);
+}
+
+/* Nothing scored yet: the score comes with the battle, the setup moves up into its room */
+.seat:has(> .seat-setup:not([hidden])) .seat-score {
+  display: none;
 }
 
 .seat:has(> .seat-setup:not([hidden])) .mini-counter__btn {
