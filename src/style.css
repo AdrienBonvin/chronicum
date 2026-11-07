@@ -998,26 +998,14 @@ body {
 }
 
 /* A custom time: each player's name, then − minutes + */
+/* A custom time, the same for both players: − minutes + */
 .time-step {
   display: flex;
   align-items: center;
-  justify-content: space-between;
-  gap: 0.75rem;
+  justify-content: center;
+  gap: 0.3rem;
   font-size: 0.72rem;
   color: var(--muted);
-}
-
-.time-step label {
-  min-width: 0;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-}
-
-.time-step__ctrl {
-  display: flex;
-  align-items: center;
-  gap: 0.3rem;
 }
 
 .time-step__btn {
@@ -1106,12 +1094,9 @@ body {
   }
 
   .time-step {
+    gap: 0.5rem;
     font-size: 0.85rem;
     color: var(--text);
-  }
-
-  .time-step__ctrl {
-    gap: 0.4rem;
   }
 
   .time-step__btn {
@@ -1121,9 +1106,9 @@ body {
   }
 
   .time-step input[type="number"] {
-    width: 3.6rem;
+    width: 4.5rem;
     height: 2.75rem;
-    font-size: 1.15rem;
+    font-size: 1.3rem;
   }
 
   .time-panel__done {
@@ -9987,6 +9972,8 @@ h2.report-hero__result {
   gap: 0.25rem;
 }
 
+/* Before the game the clock is the time set, and a tap on it changes it: the room it takes is a
+   large target, not a gap */
 .seat:has(> .seat-setup:not([hidden])) .seat-clock {
   gap: 0.25rem;
   padding-block: 0.5rem;

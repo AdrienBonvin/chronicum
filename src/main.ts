@@ -366,20 +366,12 @@ app.innerHTML = `
               <button type="button" class="segmented__option" data-value="${CUSTOM_PRESET_VALUE}" data-i18n="custom"></button>
             </div>
             <div id="manual-time-wrap" class="toolbar-manual" hidden>
-              ${([1, 2] as const)
-                .map(
-                  (n) => `
               <div class="time-step">
-                <label for="m${n}" data-i18n="player" data-v-n="${n}"></label>
-                <div class="time-step__ctrl">
-                  <button type="button" class="time-step__btn" data-step="-5" data-for="m${n}" aria-label="−5 min">−</button>
-                  <input id="m${n}" type="number" inputmode="numeric" min="0" max="999" step="1" value="${DEFAULT_TIME_SEC / 60}" />
-                  <span class="time-step__unit">min</span>
-                  <button type="button" class="time-step__btn" data-step="5" data-for="m${n}" aria-label="+5 min">+</button>
-                </div>
-              </div>`,
-                )
-                .join("")}
+                <button type="button" class="time-step__btn" data-step="-5" aria-label="−5 min">−</button>
+                <input id="time-minutes" type="number" inputmode="numeric" min="0" max="999" step="1" value="${DEFAULT_TIME_SEC / 60}" data-i18n-aria="timeAria" />
+                <span class="time-step__unit">min</span>
+                <button type="button" class="time-step__btn" data-step="5" aria-label="+5 min">+</button>
+              </div>
             </div>
             <label class="toggle-chip time-deploy">
               <input type="checkbox" id="deploy-clock" checked />
@@ -993,8 +985,8 @@ const btnSettings = app.querySelector<HTMLButtonElement>("#btn-settings")!;
 const settingsPanel = app.querySelector<HTMLElement>("#settings-panel")!;
 const btnStart = app.querySelector<HTMLButtonElement>("#btn-start")!;
 const manualTimeWrap = app.querySelector<HTMLDivElement>("#manual-time-wrap")!;
-const m1 = app.querySelector<HTMLInputElement>("#m1")!;
-const m2 = app.querySelector<HTMLInputElement>("#m2")!;
+/** The time each player gets: always the same for both */
+const minutesInput = app.querySelector<HTMLInputElement>("#time-minutes")!;
 const btnReset = app.querySelector<HTMLButtonElement>("#btn-reset")!;
 const btnFullscreen = app.querySelector<HTMLButtonElement>("#btn-fullscreen")!;
 const panel1 = app.querySelector<HTMLElement>("#panel-1")!;
@@ -2763,11 +2755,8 @@ saveOverlay.addEventListener("change", (e) => {
   saveSheet.querySelector<HTMLInputElement>("#save-report")?.focus();
 });
 
-function readMinutes(): { a: number; b: number } {
-  return {
-    a: Math.max(0, Number(m1.value) || 0),
-    b: Math.max(0, Number(m2.value) || 0),
-  };
+function readMinutes(): number {
+  return Math.max(0, Number(minutesInput.value) || 0);
 }
 
 /** A row of buttons acting as one choice: the chosen one is aria-pressed */
@@ -3444,16 +3433,19 @@ function syncPresetSelectFromState(): void {
 
 function applyPresetSeconds(totalSeconds: number): void {
   const min = Math.round(totalSeconds / 60);
-  m1.value = String(min);
-  m2.value = String(min);
+  minutesInput.value = String(min);
   game.clock.left = { 1: totalSeconds, 2: totalSeconds };
   applyTimesToDisplay();
   syncPresetSelectFromState();
 }
 
+/**
+ * The time set, as the room has it. Only before the game: once it starts the clocks hold the time
+ * left, and a new game starts again from the time set, not from what was left of the last one
+ */
 function syncInputsFromState(): void {
-  m1.value = String(Math.round(timeLeft(1) / 60));
-  m2.value = String(Math.round(timeLeft(2) / 60));
+  if (inGame(game) || inPreBattle()) return;
+  minutesInput.value = String(Math.round(timeLeft(1) / 60));
 }
 
 /** The hour digit is dimmed under an hour, like an unlit segment; a clock out of time reads in full */
@@ -3506,8 +3498,7 @@ function setInputsEnabled(on: boolean): void {
   // What a tournament's organiser imposes stays as set: the players read it, they don't change it
   const locks = eventLocks();
   btnTime.disabled = !on || locks.time;
-  m1.disabled = !on || locks.time;
-  m2.disabled = !on || locks.time;
+  minutesInput.disabled = !on || locks.time;
   photoBreaksToggle.disabled = !on || locks.photoBreaks;
   deployClockToggle.disabled = !on || locks.deployClock;
   cardsSourcePicker.querySelectorAll<HTMLButtonElement>(".segmented__option").forEach((option) => {
@@ -3980,8 +3971,8 @@ function switchTurn(): void {
 
 /** The clocks as set in the bar, stopped, Player 1's first */
 function clockFromInputs(): GameState["clock"] {
-  const { a, b } = readMinutes();
-  return { left: { 1: a * 60, 2: b * 60 }, active: 1, since: null };
+  const seconds = readMinutes() * 60;
+  return { left: { 1: seconds, 2: seconds }, active: 1, since: null };
 }
 
 function start(): void {
@@ -7422,8 +7413,8 @@ onSegmentedPick(timePresets, (value) => {
     setTimePreset(value);
     // A phone sets it with the − and + buttons: a keyboard would cover the sheet
     if (!SHEET.matches) {
-      m1.focus();
-      m1.select();
+      minutesInput.focus();
+      minutesInput.select();
     }
     return;
   }
@@ -7438,33 +7429,30 @@ timePicker.addEventListener("mouseenter", () => {
   if (!timePicker.matches(":focus-within")) timePicker.classList.remove("is-folded");
 });
 
-[m1, m2].forEach((input) => {
-  input.addEventListener("input", () => {
-    if (isRunning()) return;
-    // Also while paused: the time left can be corrected mid-game
-    const { a, b } = readMinutes();
-    game.clock.left = { 1: a * 60, 2: b * 60 };
-    applyTimesToDisplay();
-    renderTimeValue();
-  });
-  // Enter validates the custom time and gives the keyboard back to the game
-  input.addEventListener("keydown", (e) => {
-    if (e.key !== "Enter") return;
-    e.preventDefault();
-    foldTimePicker();
-  });
+minutesInput.addEventListener("input", () => {
+  // The setup is fixed once the tosses start
+  if (inGame(game) || inPreBattle()) return;
+  const seconds = readMinutes() * 60;
+  game.clock.left = { 1: seconds, 2: seconds };
+  applyTimesToDisplay();
+  renderTimeValue();
+});
+// Enter validates the custom time and gives the keyboard back to the game
+minutesInput.addEventListener("keydown", (e) => {
+  if (e.key !== "Enter") return;
+  e.preventDefault();
+  foldTimePicker();
 });
 
 /** − and + move a custom time to the 5 minutes below or above */
 manualTimeWrap.addEventListener("click", (e) => {
   const button = (e.target as HTMLElement).closest<HTMLButtonElement>("[data-step]");
   if (!button) return;
-  const input = button.dataset.for === "m2" ? m2 : m1;
   const step = Number(button.dataset.step);
-  const minutes = Math.max(0, Number(input.value) || 0);
+  const minutes = readMinutes();
   const next = step > 0 ? Math.floor(minutes / step) * step + step : Math.ceil(minutes / -step) * -step + step;
-  input.value = String(Math.min(999, Math.max(0, next)));
-  input.dispatchEvent(new Event("input"));
+  minutesInput.value = String(Math.min(999, Math.max(0, next)));
+  minutesInput.dispatchEvent(new Event("input"));
 });
 
 // A phone's sheet closes on OK, or on a tap on the dimmed screen around it
@@ -7535,13 +7523,15 @@ seatMute.addEventListener("click", () => {
   renderSeatSound();
 });
 seatMusic.addEventListener("click", toggleMusicMute);
-// A touch screen has no hover to unfold the times: a tap opens them, another tap or a pick closes them
-btnTime.addEventListener("click", () => {
-  const open = !timePicker.classList.contains("is-open");
+/** The times unfold: over the bar on a screen, as a sheet from the bottom on a phone */
+function showTimePicker(open: boolean): void {
   closePopovers();
   timePicker.classList.toggle("is-open", open);
   if (open) timePicker.classList.remove("is-folded");
-});
+}
+
+// A touch screen has no hover to unfold the times: a tap opens them, another tap or a pick closes them
+btnTime.addEventListener("click", () => showTimePicker(!timePicker.classList.contains("is-open")));
 // An army list outside the menu (a phone's setup) closes on its own, after its pick
 document.addEventListener("pointerdown", (e) => {
   if (!(e.target as HTMLElement).closest(".popover-anchor, .time-picker, .picker")) closePopovers();
@@ -8058,7 +8048,11 @@ function renderSeat(): void {
   const hint = deploying
     ? t(myDeploy ? "seatDeployHint" : "seatTheirDeployHint")
     : !inGame(game)
-      ? t("seatSetup")
+      ? timeSettable()
+        ? t("seatSetup")
+        : eventLocks().time && !inPreBattle()
+          ? t("eventLockedBy")
+          : ""
     : isOver()
       ? t("gameOver")
       : !running
@@ -8070,7 +8064,7 @@ function renderSeat(): void {
   seatClock.classList.toggle("is-running", mine || (myDeploy && deploymentTimed()));
   slideRow(app.querySelector<HTMLElement>("#seat-deploy-done")!, deploying);
   seatClock.classList.toggle("is-flag", inGame(game) && timeLeft(me) <= 0);
-  seatClock.setAttribute("aria-disabled", String(!mine && !myDeploy));
+  seatClock.setAttribute("aria-disabled", String(!mine && !myDeploy && !timeSettable()));
   renderSeatTimes();
 
   const turnIdx = scoringTurnIdx(me);
@@ -8098,8 +8092,17 @@ function renderSeat(): void {
   app.querySelector<HTMLElement>("#seat-reset")!.hidden = !inGame(game);
 }
 
-/** A tap on this phone's own running clock passes it to the opponent */
+/** The time can still be set: before the game, unless a tournament imposes it */
+function timeSettable(): boolean {
+  return !inGame(game) && !inPreBattle() && !eventLocks().time;
+}
+
+/** A tap on this phone's own running clock passes it to the opponent; before the game, it sets its time */
 seatClock.addEventListener("click", () => {
+  if (timeSettable()) {
+    showTimePicker(true);
+    return;
+  }
   if (isDeploying()) {
     passDeployment();
     return;
