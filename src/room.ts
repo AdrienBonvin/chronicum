@@ -2,7 +2,8 @@
  * An online game: a room on Firebase Realtime Database, under a short code. Each device signs in
  * anonymously, takes a seat (Player 1 or 2, or the shared screen) and shares one state, kept as a
  * JSON string. The phone that creates the game plays Player 1, the one that joins it Player 2.
- * Loaded only when a game goes online: the single-screen clock never pulls Firebase in.
+ * Loaded only when a game goes online or a player sends feedback: the single-screen clock never
+ * pulls Firebase in.
  */
 import { initializeApp } from "firebase/app";
 import { connectAuthEmulator, getAuth, signInAnonymously } from "firebase/auth";
@@ -18,6 +19,7 @@ import {
   onDisconnect,
   onValue,
   orderByValue,
+  push,
   query,
   ref,
   remove,
@@ -133,6 +135,12 @@ function connect(): Promise<{ db: Database; uid: string }> {
     throw error;
   });
   return connection;
+}
+
+/** A player's few words about the app: written once, read only in the Firebase console */
+export async function sendFeedback(text: string, context: { lang: string; app: string; screen: string }): Promise<void> {
+  const { db } = await connect();
+  await set(push(ref(db, "feedback")), { text, at: serverTimestamp(), ...context });
 }
 
 function newCode(): string {

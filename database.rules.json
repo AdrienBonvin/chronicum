@@ -64,6 +64,30 @@
         ".validate": "newData.isNumber() && newData.val() <= now"
       }
     },
+    "feedback": {
+      "$id": {
+        ".write": "auth != null && !data.exists()",
+        ".validate": "newData.hasChildren(['text', 'at'])",
+        "text": {
+          ".validate": "newData.isString() && newData.val().length >= 2 && newData.val().length <= 1000"
+        },
+        "at": {
+          ".validate": "newData.val() === now"
+        },
+        "lang": {
+          ".validate": "newData.isString() && newData.val().length <= 5"
+        },
+        "app": {
+          ".validate": "newData.isString() && newData.val().length <= 20"
+        },
+        "screen": {
+          ".validate": "newData.isString() && newData.val().length <= 20"
+        },
+        "$other": {
+          ".validate": false
+        }
+      }
+    },
     "roomsSeen": {
       ".read": "auth != null && query.orderByValue == true && query.startAt == null && query.limitToFirst <= 20",
       ".indexOn": ".value",

@@ -10533,3 +10533,54 @@ h2.report-hero__result {
 .event-lock[aria-pressed="false"] .event-lock__on {
   display: none;
 }
+
+/* ---------- Feedback: a link by the unofficial mention, a small form above everything ---------- */
+
+.feedback-link {
+  align-self: center;
+  padding: 0.2rem 0.4rem;
+  border: 0;
+  background: none;
+  color: var(--muted);
+  font: inherit;
+  font-size: 0.8rem;
+  text-decoration: underline;
+  text-underline-offset: 3px;
+  cursor: pointer;
+}
+
+.feedback-link:hover,
+.feedback-link:focus-visible {
+  color: var(--text);
+}
+
+.overlay.overlay--feedback {
+  z-index: 16;
+}
+
+.overlay--feedback .overlay-inner {
+  width: 30rem;
+}
+
+.feedback-text {
+  width: 100%;
+  min-height: 7rem;
+  margin-top: 0.8rem;
+  padding: 0.6rem 0.7rem;
+  border: 1px solid var(--line-strong);
+  border-radius: 6px;
+  background: var(--surface);
+  color: var(--text);
+  font: inherit;
+  font-size: 0.95rem;
+  line-height: 1.45;
+  resize: vertical;
+  box-sizing: border-box;
+}
+
+.overlay-inner p.feedback-status {
+  min-height: 1.2em;
+  margin: 0.5rem 0 0;
+  color: var(--muted);
+  font-size: 0.8rem;
+}

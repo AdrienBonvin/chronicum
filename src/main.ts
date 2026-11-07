@@ -259,6 +259,8 @@ const ICON_NEXT = svgIcon('<path d="M9 5l7 7-7 7" />');
 const ICON_PHONE = svgIcon('<rect x="7" y="3" width="10" height="18" rx="2" /><path d="M11 18h2" />');
 const ICON_SCREEN = svgIcon('<rect x="3" y="4" width="18" height="12" rx="1.5" /><path d="M8 20h8M12 16v4" />');
 const ICON_INSTALL = svgIcon('<rect x="6.5" y="2.5" width="11" height="19" rx="2" /><path d="M12 7v7M9 11l3 3 3-3M10.5 18.5h3" />');
+/** A feedback message's length, as the database rules allow (database.rules.json) */
+const FEEDBACK_MAX = 1000;
 const ICON_SWAP = svgIcon('<path d="M8 20V4M4.5 7.5L8 4l3.5 3.5M16 4v16M12.5 16.5L16 20l3.5-3.5" />');
 const ICON_LOG = svgIcon('<path d="M9 6h11M9 12h11M9 18h11" /><path d="M4.5 6h.01M4.5 12h.01M4.5 18h.01" />');
 const ICON_ROWS = svgIcon('<rect x="2" y="2" width="24" height="7" rx="1" /><rect x="2" y="11" width="24" height="7" rx="1" />', "0 0 28 20");
@@ -480,6 +482,7 @@ app.innerHTML = `
           <div class="settings__section settings__about">
             <span class="settings__brand">Chronicum</span>
             <p class="brand-unofficial" data-i18n="unofficial"></p>
+            <button type="button" class="feedback-link" data-feedback data-i18n="feedbackOpen"></button>
           </div>
         </div>
       </div>
@@ -529,6 +532,7 @@ app.innerHTML = `
     <p class="phone-home__note" data-i18n="homeScan"></p>
     <p class="phone-home__note" data-i18n="homeBoard"></p>
     <p class="brand-unofficial" data-i18n="unofficial"></p>
+    <button type="button" class="feedback-link" data-feedback data-i18n="feedbackOpen"></button>
   </section>
   <section class="seat" id="seat" aria-live="polite">
     <header class="seat-bar">
@@ -755,6 +759,18 @@ app.innerHTML = `
         <button type="button" class="btn-primary" id="btn-log-close"><span data-i18n="close"></span> <kbd data-i18n="keyEsc"></kbd></button>
       </div>
     </div>
+  </div>
+  <div class="overlay overlay--feedback" id="feedback-overlay" role="dialog" aria-modal="true" aria-labelledby="feedback-title" aria-hidden="true">
+    <form class="overlay-inner" id="feedback-form">
+      <h2 id="feedback-title" data-i18n="feedbackTitle"></h2>
+      <p class="overlay-msg" data-i18n="feedbackIntro"></p>
+      <textarea class="feedback-text" id="feedback-text" rows="5" maxlength="${FEEDBACK_MAX}" data-i18n-placeholder="feedbackPlaceholder"></textarea>
+      <p class="feedback-status" id="feedback-status" aria-live="polite"></p>
+      <div class="overlay-actions">
+        <button type="button" class="btn-secondary" id="btn-feedback-cancel"><span data-i18n="cancel"></span> <kbd data-i18n="keyEsc"></kbd></button>
+        <button type="submit" class="btn-primary" id="btn-feedback-send" data-i18n="feedbackSend"></button>
+      </div>
+    </form>
   </div>
   <div class="popover-anchor game-settings-anchor" id="game-settings-anchor"></div>
   <div class="overlay overlay--toss" id="toss-overlay" role="dialog" aria-modal="true" aria-labelledby="toss-title" aria-hidden="true">
@@ -7174,6 +7190,74 @@ app.querySelector("#btn-install-settings")!.addEventListener("click", async () =
 onInstallChange(renderInstallOffer);
 window.addEventListener("appinstalled", () => showToast(t("installDone"), true));
 
+/* ---------- Feedback: a player's few words, kept in Firebase, read in its console ---------- */
+
+const feedbackOverlay = app.querySelector<HTMLElement>("#feedback-overlay")!;
+const feedbackText = app.querySelector<HTMLTextAreaElement>("#feedback-text")!;
+const feedbackStatus = app.querySelector<HTMLElement>("#feedback-status")!;
+const feedbackSend = app.querySelector<HTMLButtonElement>("#btn-feedback-send")!;
+/** One message a minute from this device, as a courtesy to the free plan */
+const FEEDBACK_GAP_MS = 60 * 1000;
+/** Offline, the database keeps the write waiting: the player is told rather than left hanging */
+const FEEDBACK_TIMEOUT_MS = 10 * 1000;
+let feedbackSentAt = -Infinity;
+
+function openFeedback(): void {
+  closePopovers();
+  feedbackStatus.textContent = "";
+  feedbackOverlay.classList.add("is-visible");
+  feedbackOverlay.setAttribute("aria-hidden", "false");
+  feedbackText.focus({ preventScroll: true });
+}
+
+function closeFeedback(): void {
+  feedbackOverlay.classList.remove("is-visible");
+  feedbackOverlay.setAttribute("aria-hidden", "true");
+  (document.activeElement as HTMLElement | null)?.blur();
+}
+
+const feedbackScreen = (): string => (PHONE.matches ? "téléphone" : coarsePointer() ? "tablette" : "ordinateur");
+
+async function sendFeedbackNow(): Promise<void> {
+  const text = feedbackText.value.trim().slice(0, FEEDBACK_MAX);
+  if (text.length < 2) {
+    feedbackText.focus();
+    return;
+  }
+  if (performance.now() - feedbackSentAt < FEEDBACK_GAP_MS) {
+    feedbackStatus.textContent = t("feedbackWait");
+    return;
+  }
+  feedbackSend.disabled = true;
+  feedbackStatus.textContent = t("feedbackSending");
+  try {
+    const { sendFeedback } = await import("./room");
+    const timeout = new Promise<never>((_, reject) => window.setTimeout(() => reject(new Error("timeout")), FEEDBACK_TIMEOUT_MS));
+    await Promise.race([sendFeedback(text, { lang: getLang(), app: appKind(), screen: feedbackScreen() }), timeout]);
+    feedbackSentAt = performance.now();
+    feedbackText.value = "";
+    closeFeedback();
+    showToast(t("feedbackThanks"), true);
+    track("Avis envoyé", { écran: feedbackScreen() });
+  } catch {
+    feedbackStatus.textContent = t("feedbackFailed");
+  } finally {
+    feedbackSend.disabled = false;
+  }
+}
+
+app.addEventListener("click", (e) => {
+  if ((e.target as HTMLElement).closest("[data-feedback]")) openFeedback();
+});
+app.querySelector("#feedback-form")!.addEventListener("submit", (e) => {
+  e.preventDefault();
+  void sendFeedbackNow();
+});
+app.querySelector("#btn-feedback-cancel")!.addEventListener("click", closeFeedback);
+feedbackOverlay.addEventListener("click", (e) => {
+  if (e.target === feedbackOverlay) closeFeedback();
+});
+
 mvpOverlay.addEventListener("input", (e) => {
   const input = e.target as HTMLInputElement;
   const match = /^mvp-(unit|feat)-([12])$/.exec(input.id);
@@ -7298,7 +7382,14 @@ window.addEventListener("keydown", (e) => {
     toggleMute();
     return;
   }
-  // The tournament dialog is a form: its keys type, Escape closes it
+  // The feedback and tournament dialogs are forms: their keys type, Escape closes them
+  if (feedbackOverlay.classList.contains("is-visible")) {
+    if (e.key === "Escape") {
+      e.preventDefault();
+      closeFeedback();
+    }
+    return;
+  }
   if (eventOverlay.classList.contains("is-visible")) {
     if (e.key === "Escape") {
       e.preventDefault();

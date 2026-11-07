@@ -34,6 +34,8 @@ const OWN_ASSETS = new Set([
   "icon.svg",
   "pwa-192.png",
   "pwa-512.png",
+  // The link preview, made from the seal and the app's fonts (7 Nov 2026, agreed by Adrien)
+  "og.jpg",
   "music/calm.mp3",
   "music/epic.mp3",
   "music/tense.m4a",
