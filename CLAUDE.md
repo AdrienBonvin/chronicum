@@ -24,3 +24,13 @@ Chronicum est un outil de fan non officiel. GW protège sa marque de près et a 
 **Garde-fou** : `scripts/ip-guard.mjs` tourne avant chaque build (`prebuild`) et après chaque fichier écrit par Claude (hook dans `.claude/settings.json`). S'il échoue, corriger le contenu. Ne jamais le contourner, relever `MAX_LABEL_WORDS` ou ajouter un fichier à `OWN_ASSETS` sans l'accord d'Adrien sur l'origine du fichier.
 
 Les clés `warhammerClock.*` du localStorage et le projet Firebase `warhammerclock` restent tels quels : les joueurs ne les voient pas, et les renommer effacerait leurs réglages.
+
+## Déploiement
+
+- Merge ou push sur `main` = prod, par la GitHub Action `deploy-prod.yml` (hosting + règles de la base, comme `npm run deploy`).
+- Une PR = une URL de preview valable 7 jours, postée en commentaire de la PR par `preview-pr.yml`. Les règles de la base ne partent qu'au merge.
+- Adrien travaille depuis son téléphone en session cloud : jamais de `firebase deploy` (aucun accès Firebase dans la session). Pousser la branche, ouvrir la PR, donner le lien de la preview ; Adrien teste et merge.
+
+## Roadmap
+
+Le plan de lancement est l'artifact https://claude.ai/artifact/YZqky8v3xJc1sCyx2U5LSM. Le lire avec l'outil Artifact (`action: "read"`) avant tout conseil sur le lancement ou la suite ; pour le mettre à jour, le lire puis publier sur cette URL.

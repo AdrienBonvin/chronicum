@@ -1,0 +1,30 @@
+# Each pull request gets its own preview URL (7 days), posted as a PR comment.
+# Database rules are not deployed here: they go live on merge.
+name: Preview on pull request
+
+on: pull_request
+
+permissions:
+  checks: write
+  contents: read
+  pull-requests: write
+
+jobs:
+  preview:
+    if: ${{ github.event.pull_request.head.repo.full_name == github.repository }}
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 24
+          cache: npm
+      - run: npm ci
+      - run: npm run build
+      - uses: FirebaseExtended/action-hosting-deploy@v0
+        with:
+          repoToken: ${{ secrets.GITHUB_TOKEN }}
+          firebaseServiceAccount: ${{ secrets.FIREBASE_SERVICE_ACCOUNT }}
+          projectId: warhammerclock
+          target: app
+          expires: 7d
