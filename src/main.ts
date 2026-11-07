@@ -1145,6 +1145,7 @@ const btnOnline = app.querySelector<HTMLButtonElement>("#btn-online")!;
 const stripRoom = app.querySelector<HTMLButtonElement>("#strip-room")!;
 const seatClock = app.querySelector<HTMLButtonElement>("#seat-clock")!;
 const seatEl = app.querySelector<HTMLElement>("#seat")!;
+const seatStats = app.querySelector<HTMLElement>(".seat-stats")!;
 const seatLaunch = app.querySelector<HTMLElement>("#seat-launch")!;
 const seatLaunchHint = app.querySelector<HTMLElement>("#seat-launch-hint")!;
 const seatMusic = app.querySelector<HTMLButtonElement>("#seat-music")!;
@@ -8251,8 +8252,15 @@ function renderSeat(): void {
   seatArmy.hidden = seatSetup.hidden;
   seatLaunch.hidden = seatSetup.hidden;
   const setup = !seatSetup.hidden;
-  // Before the game the clock and the CP show as they will in the battle: the player sees their screen
   seatEl.classList.toggle("is-setup", setup);
+  // Before the game, your side in one card: the army, then the clock and the CP as the battle will
+  // show them. In the battle, the clock and the CP are back in the middle of the screen
+  if (setup) {
+    if (seatClock.parentElement !== seatArmy) seatArmy.append(seatClock, seatStats);
+  } else if (seatClock.parentElement === seatArmy) {
+    seatArmy.after(seatClock);
+    seatClock.after(seatStats);
+  }
   const me = online.seat;
   // Before the battle, on the player's own screen: the moment to say which units generate CP
   const cpInvite = !seatSetup.hidden && game.abilities[me].length === 0;

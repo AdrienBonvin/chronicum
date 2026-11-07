@@ -100,10 +100,10 @@ export const FACTION_BY_ID = new Map(FACTIONS.map((faction) => [faction.id, fact
 /** What a side of the board is drawn in: its color, its clock digits, and the decor's second color */
 export type SideLook = { color: string; time: string; accent: string | null };
 
-/** The colors of a side with no army yet */
+/** The colors of a side with no army yet: brass and steel, the app's own, not a team's blue and red */
 const DEFAULT_LOOKS: Record<1 | 2, SideLook> = {
-  1: { color: "#4a9bff", time: "#d4e6ff", accent: null },
-  2: { color: "#ff5d77", time: "#ffdbe1", accent: null },
+  1: { color: "#d0a85c", time: "#f4e8cf", accent: null },
+  2: { color: "#8eaec4", time: "#e2edf5", accent: null },
 };
 
 /** Two colors closer than this (OKLab) read as one across the table: gold and ochre, two greens */
